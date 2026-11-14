@@ -50,7 +50,15 @@ Arrow._lookFor = lookFor
 -- -> the spot { x, y }, yards to walk, how far off the path you are, the path's height where you are
 -- far: open country (a walk map of 8-yd squares, outdoors), where it may aim as far as the line runs nearly straight
 local function follow(P, px, py, look, far) return ns.Nav.Aim(P, px, py, look or 10, far) end
-local function openCountry(P) return P.nav and (P.cell or 8) >= 8 and not Arrow.Indoors() end
+-- open country: outdoors, on a walk map of 8-yd squares or on the planner's own path (a zone with no walk map:
+-- Arathi), but not in a capital (buildings). The planner's path in the open was followed 8-12 yd at a time, so a few
+-- yards beside its start the arrow sent you onto it at a slant instead of the way it goes - tester, Arathi
+local function openCountry(P)
+  if Arrow.Indoors() then return false end
+  if P.nav then return (P.cell or 8) >= 8 end
+  local m = ns.State and ns.State.Position and ns.State.Position()
+  return not (m and ns.Card and ns.Card.CAPITAL_MAPS and ns.Card.CAPITAL_MAPS[m])
+end
 Arrow._openCountry = openCountry
 Arrow._follow = follow
 local function colorFor(diff)
@@ -211,7 +219,7 @@ local function build()
     end
     if target.leg == "ride" and (dist <= (target.r or 8) or behind) and not target.passing then
       target.passing = true
-      Arrow.passed = { index = target.index, wx = target.wx, wy = target.wy, inst = target.winst }
+      Arrow.passed = { index = target.index, step = target.step, wx = target.wx, wy = target.wy, inst = target.winst }
       C_Timer.After(0, function() Arrow.SetTarget(ns.Engine.Shown(), true) end)
     end
     if arrived ~= target.arrived then
@@ -321,7 +329,9 @@ function Arrow.SetTarget(i, force)
   if f and corpseTarget(i) then return end
   if target and target.corpse then target = nil end -- alive again: the step's target is built afresh
   local s = i and ForeverRouteData and ForeverRouteData.steps[i]
-  if target and s and target.index == i and not force then
+  -- (the same step, not just the same number: a stop inserted before it moves the number on, and the arrow kept the old
+  -- step's trip - "Run to Stranglethorn Vale" while the card said a hand-in in Duskwood, tester)
+  if target and s and target.index == i and target.step == s and not force then
     f:SetShown(visible(i)); noteHidden(not visible(i) and hiddenReason(i, s) or nil)
     return
   end
@@ -360,7 +370,7 @@ function Arrow.SetTarget(i, force)
       -- the crossing reached: carry on toward the step until the next zone takes over (a gate inside one zone
       -- would otherwise hold the arrow on a spot you are standing on)
       local P = Arrow.passed
-      if P and P.index == i and cx and ci == P.inst and math.sqrt((cx - P.wx) ^ 2 + (cy - P.wy) ^ 2) < 30 then useTrip = false end
+      if P and P.index == i and P.step == step and cx and ci == P.inst and math.sqrt((cx - P.wx) ^ 2 + (cy - P.wy) ^ 2) < 30 then useTrip = false end
       -- the planner's own walking path to the step beats "crossing, then straight": follow it while you are on it
       if useTrip and s.wp and px then
         local sx, sy, si = HBD:GetWorldCoordinatesFromZone(s.x, s.y, s.m)
@@ -376,7 +386,7 @@ function Arrow.SetTarget(i, force)
   if s and m and x then
     local wx, wy, winst = HBD:GetWorldCoordinatesFromZone(x, y, m)
     -- a waypoint gets its own small radius: the step's (25 yd for a dungeon, up to 60 for a kill area) belongs to the step
-    target = { index = i, m = m, x = x, y = y, r = leg and 8 or s.r, leg = leg, zone = s.zone, wx = wx, wy = wy, winst = winst, label = label or ns.Card.Plain((ns.Card.Describe(s))) }
+    target = { index = i, step = step, m = m, x = x, y = y, r = leg and 8 or s.r, leg = leg, zone = s.zone, wx = wx, wy = wy, winst = winst, label = label or ns.Card.Plain((ns.Card.Describe(s))) }
     target.path = (not label) and buildPath(s, m, wx, wy) or nil
     if leg == "ride" and endM and endX then local a, b, c = HBD:GetWorldCoordinatesFromZone(endX, endY, endM); if a then target.endW = { a, b, c } end end
     -- the live line (Nav.lua) is for exactly this target: the step itself (with its planned floor height) or a waypoint

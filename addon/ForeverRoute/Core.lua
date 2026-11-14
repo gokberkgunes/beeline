@@ -231,7 +231,7 @@ local starterSaid
 function ns.StarterNote()
   if starterSaid or not (ns.planKey and ns.planKey.starter) then return end
   starterSaid = true
-  C_Timer.After(5, function() ns.Print("No plan of your own for this character yet: following the built-in plan for your race and class (steps you've already done are skipped).") end)
+  C_Timer.After(5, function() ns.Print("Following the plan for your race and class (steps you've already done are skipped). Bored of a zone? /fr paths shows where else you could go.") end)
 end
 
 -- flight masters and vendors come for both factions (FlightMasters.lua, Vendors.lua: ns.FLIGHT_BY, ns.VENDORS_BY);
@@ -302,7 +302,7 @@ ns.On("PLAYER_LOGIN", function()
     ns.StarterNote()
   else
     C_Timer.After(5, function()
-      ns.Print("No plan for " .. tostring(key) .. " in Route.lua" .. (type(ForeverRouteByChar) == "table" and " (plans there: " .. (function() local t = {} for k in pairs(ForeverRouteByChar) do t[#t + 1] = k end return table.concat(t, ", ") end)() .. ")" or "") .. ". Is the companion running for this character?")
+      ns.Print("No plan for " .. tostring(key) .. " in Route.lua" .. (type(ForeverRouteByChar) == "table" and " (plans there: " .. (function() local t = {} for k in pairs(ForeverRouteByChar) do t[#t + 1] = k end return table.concat(t, ", ") end)() .. ")" or "") .. ". /reload to load the plan for your race and class.")
     end)
   end
 end)
@@ -358,30 +358,159 @@ end
 -- dungeon routes are a side trip: remember the path you were on, and go back to it with its progress untouched
 function ns.EnterDungeonRoute(id)
   local r = ns.RouteById(id); if not r then return end
-  if ForeverRouteData and not ForeverRouteData.dungeon then ns.char.returnTo = ForeverRouteData.id end
+  -- (from a zone you picked: your plan stays the way back - the zone route took its place, and "Back to my path" then
+  -- went back to the zone, off the plan for good - state map)
+  if ForeverRouteData and not ForeverRouteData.dungeon and not ForeverRouteData.zoneRoute then ns.char.returnTo = ForeverRouteData.id end
   ns.char.chosenTrip = id -- (you picked it: kept across logins - ns.SavedRoute)
   ns.SelectRoute(id)
   ns.Print((r.special and "Side trip: " or "Dungeon route: ") .. (r.dungeonName or r.title) .. ". Your leveling path is kept - \"Back to my path\" on the card returns you to it.")
 end
 -- a zone you picked (a zone route, ns.ZoneRouteFor): the route you were on is remembered, so "Planned route" in the
 -- zone picker goes back to it - picked up where it still has something for you at your level (UI/Paths.lua)
+-- The zones you have quested in, in order (stage 2.7): ns.char.zoneOrder = "Westfall>Redridge Mountains>*Duskwood", the
+-- last where you are now, * a zone you picked. Written next to the older fields (routeLegs, requestZone, returnTo), which
+-- stay as they were: nothing is migrated, an older save just starts its list from the zone of its next hand-in. For the
+-- planner (the zones you chose, kept when it replans) and the companion's data.
+local ZONE_ORDER_MAX = 12
+function ns.NoteZone(zone, picked)
+  if not (zone and zone ~= "" and ns.char) then return end
+  local list = {}
+  for z in string.gmatch(ns.char.zoneOrder or "", "[^>]+") do list[#list + 1] = z end
+  local last = list[#list]
+  if last and last:gsub("^%*", "") == zone then
+    if picked and last:sub(1, 1) ~= "*" then list[#list] = "*" .. zone end
+  else
+    list[#list + 1] = (picked and "*" or "") .. zone
+  end
+  while #list > ZONE_ORDER_MAX do table.remove(list, 1) end
+  ns.char.zoneOrder = table.concat(list, ">")
+end
+function ns.ZoneOrder()
+  local list = {}
+  for z in string.gmatch((ns.char and ns.char.zoneOrder) or "", "[^>]+") do list[#list + 1] = { zone = z:gsub("^%*", ""), picked = z:sub(1, 1) == "*" } end
+  return list
+end
+-- a quest handed in: the zone of its hand-in on your route goes on the list
+ns.On("QUEST_TURNED_IN", function(q)
+  local d = ForeverRouteData
+  if not (q and d) then return end
+  for _, s in ipairs(ns.Steps(d)) do if s.q == q and s.k == "turnin" and s.zone then ns.NoteZone(s.zone); return end end
+end)
 function ns.EnterZoneRoute(id)
   local d = ForeverRouteData
+  do local r = ns.RouteById(id); if r and r.zoneName then ns.NoteZone(r.zoneName, true) end end
   -- (and where you were on it: "Planned route" picks up from there, not from its first step)
-  if d and not d.dungeon and not d.special and not d.zoneRoute and not d.branch then ns.char.returnTo = d.id; ns.char.returnAt = ns.Engine and ns.Engine.current end
+  -- (where: the first quest step the plan still has for you, as PLANNED NEXT read it - the engine's position can sit
+  -- before a stretch it counts as behind you)
+  if d and not d.dungeon and not d.special and not d.zoneRoute and not d.branch then
+    local E, at = ns.Engine, ns.Engine and ns.Engine.current
+    if E and at and E.Status then local list = ns.Steps(d); for i = at, #list do local s = list[i]; if s and s.q and s.zone and (s.k == "accept" or s.k == "turnin" or s.k == "obj") and E.Status(i) ~= "done" then at = i; break end end end
+    ns.char.returnTo = d.id; ns.char.returnAt = at
+  end
   ns.SelectRoute(id)
 end
 -- the planned route's next zone at your level: the first quest step on it you haven't done that isn't gray to you
 -- (Stranglethorn at 39, after a detour to Arathi, is passed over: the route picks up in the zone after it)
 local QUEST_KIND = { accept = true, turnin = true, obj = true }
+-- the capitals: a pick-up or hand-in there is a stop on the way, never the zone you go to quest in (Ironforge showed as
+-- PLANNED NEXT for Reclaimers' Business in Desolace, picked up there on the way to Desolace)
+local CAPITAL = { ["Stormwind"] = true, ["Stormwind City"] = true, ["Ironforge"] = true, ["Darnassus"] = true,
+  ["Orgrimmar"] = true, ["Undercity"] = true, ["Thunder Bluff"] = true }
+function ns.IsCapital(z) return z ~= nil and CAPITAL[z] == true end
+-- the zone a route's quests are in (most of its quest steps, capitals aside): a zone route the planner named after one
+-- zone can be all in another (the companion's "Shen'dralas" route was 117 steps in Desolace, the same as its Desolace one)
+-- the other zone a route works in for a good share of its quests (a quarter of its main zone's steps, 5 at least):
+-- Hillsbrad's routes do Alterac Mountains' quests too - their givers are in Southshore, so Alterac has no route of its
+-- own and looked left out of the zone list (tester). -> zone name or nil
+function ns.RouteAlso(r)
+  if not r then return nil end
+  if r._also ~= nil then return r._also or nil end
+  local main = ns.RouteZone(r)
+  local n = {}
+  for _, s in ipairs(ns.Steps(r)) do
+    if s.q and QUEST_KIND[s.k] and s.zone and not CAPITAL[s.zone] and s.zone ~= main then n[s.zone] = (n[s.zone] or 0) + 1 end
+  end
+  local mainN = 0
+  for _, s in ipairs(ns.Steps(r)) do if s.q and QUEST_KIND[s.k] and s.zone == main then mainN = mainN + 1 end end
+  local best, bn = nil, 0
+  for z, c in pairs(n) do if c > bn then best, bn = z, c end end
+  r._also = (best and bn >= math.max(5, mainN / 4)) and best or false
+  return r._also or nil
+end
+function ns.RouteZone(r)
+  if not r then return nil end
+  if r._zone ~= nil then return r._zone or nil end
+  local n, best, bestN = {}, nil, 0
+  for _, s in ipairs(ns.Steps(r)) do
+    if s.q and QUEST_KIND[s.k] and s.zone and not CAPITAL[s.zone] then
+      n[s.zone] = (n[s.zone] or 0) + 1
+      if n[s.zone] > bestN then best, bestN = s.zone, n[s.zone] end
+    end
+  end
+  r._zone = best or false
+  return best
+end
+-- a built-in plan's visits (ForeverRouteVisits, from its trunk - tools/pieces.js): the first with a quest it hands in
+-- that you haven't done, that isn't gray to you, and whose requirements you have handed in. By quests, not step
+-- numbers: wherever you wandered, it is where the plan picks up
+local function visitNext()
+  local V = ForeverRouteVisits
+  if type(V) ~= "table" or not (ns.planKey and ns.planKey.starter) then return nil end
+  local S, E = ns.State, ns.Engine
+  local L = (UnitLevel and UnitLevel("player")) or 1
+  local gray = E and E.GrayAt and E.GrayAt(L) or 0
+  -- from the visit you left the plan in, not before it: a stretch of the plan you had already passed (quests you
+  -- skipped) is behind you, as on the plan itself - PLANNED NEXT read Hillsbrad on the plan and Redridge (~1.6k XP)
+  -- once you had picked a zone (review)
+  local startV = 1
+  local r = ns.ResolvePath and ns.ResolvePath(ns.char and ns.char.returnTo)
+  local at = tonumber(ns.char and ns.char.returnAt)
+  if r and at then
+    local list = ns.Steps(r)
+    local q0
+    for j = at, #list do local s = list[j]; if s and s.q and s.k == "turnin" then q0 = s.q; break end end
+    if q0 then
+      for k, v in ipairs(V) do
+        local hit = false
+        for id in string.gmatch(v.grants or "", "%d+") do if tonumber(id) == q0 then hit = true; break end end
+        if hit then startV = k; break end
+      end
+    end
+  end
+  for vi, v in ipairs(V) do
+    local met = vi >= startV and not CAPITAL[v.zone]
+    for id in string.gmatch(v.requires or "", "%d+") do if not S.IsCompleted(tonumber(id)) then met = false; break end end
+    if met then
+      for id in string.gmatch(v.grants or "", "%d+") do
+        local q = tonumber(id)
+        local ql = ns.QuestLevel and ns.QuestLevel(q)
+        -- (as the card has it: a gray hand-in is skipped, carried or not; one you could take only if it is offered to you)
+        if not S.IsCompleted(q) and not (ql and ql <= gray) and (S.OnQuest(q) or ((not ns.PrereqsMet or ns.PrereqsMet(q))
+          and not (ns.Avail and ns.Avail.Unavailable(q)) and not (ns.char.nope and ns.char.nope[q]))) then return v.zone end
+      end
+    end
+  end
+  return nil
+end
+ns.VisitNext = visitNext
 function ns.PlannedNextZone()
   local d, S, E = ForeverRouteData, ns.State, ns.Engine
+  -- on a zone you picked, a built-in plan with visits says it by quests (stage 2.4): wherever you wandered. On the
+  -- plan itself the engine knows where you are (the scan below); a plan without visits keeps the scan of the route you left
+  if d and d.zoneRoute then
+    local vz = visitNext()
+    if vz then return vz, (ns.ResolvePath(ns.char.returnTo) or ns.MainRoutes()[1]) end
+  end
   -- on your planned route: the engine knows what's done - the first quest step from where you are that isn't
   if d and not d.zoneRoute and not d.dungeon and not d.special and E and E.current then
     local list = ns.Steps(d)
+    local via -- (a stop in a capital on the way: the row says so)
     for i = E.current, #list do
       local s = list[i]
-      if s and s.q and s.zone and QUEST_KIND[s.k] and E.Status(i) ~= "done" then return s.zone, d end
+      if s and s.q and s.zone and QUEST_KIND[s.k] and E.Status(i) ~= "done" then
+        if not CAPITAL[s.zone] then return s.zone, d, via end
+        via = via or { name = s.name, zone = s.zone }
+      end
     end
     return nil, d
   end
@@ -394,7 +523,7 @@ function ns.PlannedNextZone()
     local s = list[j]
     if s.q and s.zone and QUEST_KIND[s.k] and not S.IsCompleted(s.q)
       and not (s.k == "accept" and S.OnQuest(s.q)) and not (s.k ~= "accept" and not S.OnQuest(s.q))
-      and not (E and E.Outlevelled and E.Outlevelled(s)) then
+      and not (E and E.Outlevelled and E.Outlevelled(s)) and not CAPITAL[s.zone] then
       return s.zone, r
     end
   end
@@ -409,15 +538,19 @@ local wallCache = {}
 for _, e in ipairs({ "FR_STATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "FR_ROUTE_CHANGED" }) do
   ns.On(e, function() wallCache = {} end)
 end
-function ns.ZoneXpLeft(r, level)
+-- assume: { [quest] = true } handed in before you start (what a zone would hold once you did the chain start it needs)
+-- onlyZone: walk only that zone's steps (your plan's next zone, when it has no zone route of its own)
+function ns.ZoneXpLeft(r, level, assume, onlyZone)
   if not (r and ns.QuestXp) then return nil end
-  local k = tostring(r.id) .. ":" .. tostring(level)
+  local k = tostring(r.id) .. ":" .. tostring(level) .. ":" .. tostring(onlyZone)
+  if assume then local a = {}; for q in pairs(assume) do a[#a + 1] = q end; table.sort(a); k = k .. ":" .. table.concat(a, ",") end
   if wallCache[k] then return wallCache[k] end
   local S, E = ns.State, ns.Engine
   local T = ns.XP_TO_LEVEL or {}
   local L = level
   local xpNow = (UnitXP and UnitXP("player")) or 0
   local total, taken, handed = 0, {}, {}
+  for q in pairs(assume or {}) do handed[q] = true end
   local function gain(n)
     total = total + n; xpNow = xpNow + n
     while L < 60 and T[L] and T[L] > 0 and xpNow >= T[L] do xpNow = xpNow - T[L]; L = L + 1 end
@@ -434,7 +567,7 @@ function ns.ZoneXpLeft(r, level)
   end
   for _, s in ipairs(ns.Steps(r)) do
     local q = s.q
-    if q and not S.IsCompleted(q) and not handed[q] then
+    if q and not S.IsCompleted(q) and not handed[q] and (not onlyZone or s.zone == onlyZone or CAPITAL[s.zone]) then
       if s.k == "accept" and not taken[q] and not S.OnQuest(q) then
         local gray = E and E.GrayAt and tonumber(s.level) and s.level > 0 and s.level <= E.GrayAt(L)
         if not gray and not (s.minLevel and L < s.minLevel) and preMet(q) and not (ns.Avail and ns.Avail.Unavailable(q))
@@ -491,9 +624,9 @@ end
 local function questsLeft(r, level)
   local k = tostring(r.id) .. ":" .. tostring(level)
   local c = leftCache[k]
-  if c then return c.n, c.cont, c.need, c.ids end
+  if c then return c.n, c.cont, c.need, c.ids, c.contQ end
   local n, S, E, seen = 0, ns.State, ns.Engine, {}
-  local cont, need
+  local cont, need, contQ
   local ids = {} -- (the quests counted: for the simulated player's report)
   for _, s in ipairs(ns.Steps(r)) do
     local q = s.q
@@ -505,7 +638,7 @@ local function questsLeft(r, level)
         -- kill done in Stonetalon, his head handed in in Ratchet, made Stonetalon look like it had a quest left)
         local o = s.k == "obj" and not S.QuestReady(q) and (s.unknown or not (E and E.ObjectiveFor and (E.ObjectiveFor(s) or {}).finished))
         -- (and a ready hand-in only when the engine would send you to it: not a gray one, Baron Longshore at 23)
-        if o or (s.k == "turnin" and S.QuestReady(q) and not (E and E.GrayHandIn and E.GrayHandIn(s))) then seen[q] = true; n = n + 1; cont = cont or s.name; ids[#ids + 1] = q end
+        if o or (s.k == "turnin" and S.QuestReady(q) and not (E and E.GrayHandIn and E.GrayHandIn(s))) then seen[q] = true; n = n + 1; cont = cont or s.name; contQ = contQ or q; ids[#ids + 1] = q end
       elseif not need and s.k == "accept" and not (s.minLevel and level < s.minLevel) and not ns.PrereqsMet(q) then
         local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
         for _, p in ipairs((pre and (pre.g or pre.s)) or {}) do if not S.IsCompleted(p) then need = { q = q, pre = p }; break end end
@@ -517,8 +650,8 @@ local function questsLeft(r, level)
           and not (ns.Avail and ns.Avail.Unavailable(q)) then seen[q] = true; n = n + 1; ids[#ids + 1] = q end
     end
   end
-  leftCache[k] = { n = n, cont = cont, need = need, ids = ids }
-  return n, cont, need, ids
+  leftCache[k] = { n = n, cont = cont, need = need, ids = ids, contQ = contQ }
+  return n, cont, need, ids, contQ
 end
 -- a map id's zone: as the plan's own steps name it (each route scanned once), else as the game names the map
 local mapZone, scanned = {}, {}
@@ -548,17 +681,23 @@ function ns.ZoneChoices()
     r.route = r.route or route
     return r
   end
-  for _, r in ipairs(ns.ZoneRoutesAt(level)) do add(r.zoneName, r.xph, r) end
-  for _, z in ipairs((ForeverRoutePlan and ForeverRoutePlan.zones) or {}) do add(z.name, z.xph, ns.ZoneRouteFor(z.name, level)) end
-  local plannedZone = ns.PlannedNextZone()
+  for _, r in ipairs(ns.ZoneRoutesAt(level)) do add(ns.RouteZone(r) or r.zoneName, r.xph, r) end
+  for _, z in ipairs((ForeverRoutePlan and ForeverRoutePlan.zones) or {}) do
+    local zr = ns.ZoneRouteFor(z.name, level)
+    add((zr and ns.RouteZone(zr)) or z.name, z.xph, zr)
+  end
+  local plannedZone, plannedRoute, via = ns.PlannedNextZone()
   local best = add(plannedZone)
-  if best then best.best, best.planned = true, true end
+  if best then best.best, best.planned, best.via, best.planRoute = true, true, via, plannedRoute end
   -- where you are: the zone you picked, else the zone you're standing in (not the next step's: on your way to
   -- Desolace from Gnomeregan, Desolace was marked YOU'RE HERE)
   learnMaps(d); for _, r in ipairs(rows) do learnMaps(r.route) end
   local hereZone = d and d.zoneRoute and d.zoneName
   if not hereZone and ns.Engine and ns.Engine.HereMap then hereZone = zoneOfMap(ns.Engine.HereMap()) end
   local here = hereZone and byKey[zoneKey(hereZone)]
+  -- (standing in a zone whose route is all in another: that one - Shen'dralas is Desolace's)
+  if not here and hereZone then local zr = ns.ZoneRouteFor(hereZone, level); local rz = zr and ns.RouteZone(zr); here = rz and byKey[zoneKey(rz)] end
+  if not here and hereZone then for _, r in ipairs(rows) do if r.route and ns.RouteAlso(r.route) == hereZone then here = r; break end end end
   if here then here.here = true end
   -- quests you finished whose hand-in is in a zone on the list
   if ns.Engine and ns.Engine.LogEnders then
@@ -573,12 +712,23 @@ function ns.ZoneChoices()
   for _, r in ipairs(rows) do
     if r.route then
       local cont, need
-      r.questsLeft, cont, need, r.leftIds = questsLeft(r.route, level)
+      r.questsLeft, cont, need, r.leftIds, r.contQ = questsLeft(r.route, level)
       r.xpLeft = ns.ZoneXpLeft and ns.ZoneXpLeft(r.route, level) or nil
+      r.also = ns.RouteAlso(r.route)
       -- one reason per row: hand-ins waiting, else a quest you carry, else what it needs first (Paths.lua)
       if cont then r.continues = cont end
-      if need then local name, zone = onPlan(need.pre); if name then r.needs = { name = name, zone = zone } end end
+      if need then local name, zone = onPlan(need.pre); if name then
+        r.needs = { name = name, zone = zone, q = need.q }
+        -- what doing it first would open up there (the walk again, with it and what it needs handed in)
+        if ns.Stitch and r.xpLeft then
+          local a = { [need.pre] = true }
+          for _, id in ipairs(ns.Stitch.Closure(need.pre, function(q) return S.IsCompleted(q) end)) do a[id] = true end
+          r.needs.xpMore = math.max(0, (ns.ZoneXpLeft(r.route, level, a) or 0) - r.xpLeft)
+        end
+      end end
     end
+    -- your plan's next zone with no zone route of its own: the XP your plan has for you there
+    if not r.route and r.planRoute and ns.ZoneXpLeft then r.xpLeft = ns.ZoneXpLeft(r.planRoute, level, nil, r.zone) end
     -- (a zone whose quests need a start you haven't done stays, saying so)
     if r.planned or r.here or r.handIns > 0 or not r.route or r.needs or (r.questsLeft or 0) > 0 then out[#out + 1] = r end
   end
@@ -602,6 +752,7 @@ function ns.LeaveDungeonRoute()
   end
   ns.char.returnTo = back.id
   ns.char.chosenTrip = nil
+  ns.char.returnAt, ns.char.requestZone = nil, nil -- (stale after: reused against a rebuilt plan, and "On your way to X" stayed - state map)
   ns.SelectRoute(back.id); ns.Print("Back on your path: " .. (back.title or ""))
 end
 -- a route's steps; branches and dungeon routes are kept packed until needed (see the planner's paths.js)
@@ -725,7 +876,8 @@ function ns.SelectRoute(title, quiet)
   if pick then ns.Steps(pick) end
   ForeverRouteData = pick
   ns.char.routeTitle = pick and (pick.id or pick.title) or nil
-  if pick and not pick.branch and not pick.dungeon and pick.meta and pick.meta.legs then ns.char.routeLegs = pick.meta.legs end
+  -- (not a zone you picked: its one zone is not your path, and the replan read it as the path you follow)
+  if pick and not pick.branch and not pick.dungeon and not pick.zoneRoute and pick.meta and pick.meta.legs then ns.char.routeLegs = pick.meta.legs end
   ns.char.progress = ns.char.progress or {}
   local rid = pick and pick.id or "none"
   local p = ns.char.progress[rid] or {}
@@ -885,7 +1037,7 @@ SlashCmdList.FOREVERROUTE = function(msg)
   elseif msg == "snapshot" then ns.State.Snapshot("manual"); ns.Print("snapshot saved - written to disk on /reload or logout.")
   elseif msg == "options" or msg == "config" then ns.Fire("FR_OPEN_OPTIONS")
   else
-    ns.Print("/fr - card · /fr list - whole route · /fr paths - choose a path · /fr dungeons - dungeon routes · /fr logcheck - what to abandon · /fr rejoin - pick the built-in plan up at your level · /fr report - copy a bug report · /fr news - what changed · /fr log - recent errors · /fr nav - where the game says you, the step and the minimap are · /fr skip · /fr back · /fr undo · /fr lock · /fr arrow · /fr demo · /fr options")
+    ns.Print("/fr - card · /fr list - whole route · /fr paths - where to? (pick a zone) · /fr dungeons - side trips · /fr logcheck - what to abandon · /fr rejoin - pick the built-in plan up at your level · /fr report - copy a bug report · /fr news - what changed · /fr log - recent errors · /fr nav - where the game says you, the step and the minimap are · /fr skip · /fr back · /fr undo · /fr lock · /fr arrow · /fr demo · /fr options")
   end
 end
 

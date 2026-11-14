@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.0 - 2026-11-14
+- Pick a zone whose quests need an earlier part you haven't done, and those steps come first, cut from your own plan, when they're close by. When they aren't, the card says what was left out and what it needs.
+- "Planned route" goes back to where your plan still has quests for you, however much you wandered, not to where you left it.
+- A zone row's tooltip shows the chain behind it: how far you are, the XP left in it, where it goes on and when it turns gray. If it needs a chain start, it says how much more XP doing that first would open up there.
+- Going elsewhere, the tooltip warns when a chain you carry is about to turn gray.
+- Picking a zone no longer replaces your plan's zones with that one zone: the companion's replan kept treating the zone you picked as your whole path.
+- "Where to?" is in the route window for everyone, not only with the companion, and offers many more zones: the built-in plans now carry a ready route for every zone worth going to at your level (Alliance 64, Horde 69, was 45 and 47).
+- Each zone shows the XP it has for you and the level that gets you to ("~71k XP · to 36.4"), and the header how much you need for your next level.
+- A quest picked up in a capital on the way is no longer shown as the zone you go to: Desolace, "pick up Reclaimers' Business in Ironforge first". A zone whose route is all in another zone is listed once (Shen'dralas and Desolace).
+- A zone whose route also works a neighbour says so: "Hillsbrad + Alterac" (Alterac's quests are given in Southshore, so it never had a route of its own).
+- "Not now" on a stop the card pulled forward (a trainer, a hand-in while you're here) holds: it came straight back when a stop was added before it.
+- Inside a dungeon and after leaving one, quest titles from before no longer float over the card.
+- Picking a zone: the zone you picked says YOUR PICK, "Planned route" points where your plan was going before you left it, and the Plan tab shows your plan ahead from there. A zone with no route yet does nothing when clicked.
+- The card names its zone once ("OUT IN REDRIDGE"), and its "Next zone" line agrees with Where to?. A finished zone says what's next on your plan.
+- A chain you carry that is about to turn gray is named at the bottom of Where to?.
+- No more wording about a planner or "Path 1 of 3" for the built-in plans; no side-trip offer inside a dungeon.
+- The card no longer jumps between two next steps as you walk: a quest added to your route (one you finished early) no longer throws off which step it is on, a quest you abandoned once a later part of its chain was handed in is no longer offered again, and nothing on another continent comes first.
+- The arrow: beside a long straight path it points the way the path goes instead of back onto it first, and it follows the step the card shows after a stop is added.
+- The route window no longer makes the game stutter on a flight or when you scroll it.
+- Side trips read as side trips ("Side trip: Felhunter"), the card names its zone once, and its buttons and the "won't do" link no longer overlap.
+- Built-in plans rebuilt with the data for all this; the plans download grew by about 0.3 MB.
+
 ## 1.4.10 - 2026-11-14
 - "Where to?" has two tabs on a rail at its left. Zones lists the zones you could go to now, one row each: about how much XP is left there for you (and what share of your level that is), the quests you can still do there, and one reason - hand-ins waiting, a quest you carry there, or a quest it needs you to do first (and where). The XP counts what you could do there before you run out and have to move on: follow-ups once their first part is done, quests that open as you level, not ones you would outlevel first. Your plan's next zone is marked PLANNED NEXT.
 - Plan shows the zones ahead on your plan with their quests. The companion's other full plans fold under it.

@@ -61,7 +61,7 @@ end
 function LogCheck.Classify()
   local here = ForeverRouteData
   -- on a side trip or branch, quests are also judged against your path (found by zone order if a replan renamed it)
-  local path = here and (here.branch or here.dungeon) and ns.ResolvePath(here.dungeon and ns.char.returnTo or here.parent) or here
+  local path = here and (here.branch or here.dungeon or here.zoneRoute) and ns.ResolvePath((here.dungeon or here.zoneRoute) and ns.char.returnTo or here.parent) or here
   local myLevel = UnitLevel("player")
   local list = {}
   for _, e in ipairs(LogCheck.Entries()) do

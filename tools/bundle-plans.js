@@ -19,13 +19,19 @@ for (const d of fs.readdirSync(path.join(ROOT, 'addon')).sort()) {
   const file = path.join(ROOT, 'addon', d, 'Plan.lua');
   if (!fs.existsSync(file)) continue;
   const key = `${m[1]}-${m[2]}`;
-  sides[HORDE.has(m[1]) ? 'Horde' : 'Alliance'].push({ key, src: fs.readFileSync(file, 'utf8') });
+  // (line endings as LF: a checkout with CRLF matched no zone route, and every plan kept its own copy)
+  sides[HORDE.has(m[1]) ? 'Horde' : 'Alliance'].push({ key, src: fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') });
 }
 // Zone routes (a tree's ready-made route per zone and level band) are the same in every plan of a faction: 45 of them,
 // copied into 28 plans, took the faction's file from about 30 MB to 53. Each is kept once (ForeverRoutePlanShared) and
 // each plan has a one-line marker where it was; the addon puts the text back into your plan only (Core.lua LoadStarter).
 // A marker whose route is missing is a Lua comment: that plan still loads, without that one zone route.
 const ZR_BLOCK = /\n  \{\n    id = "(zone:[^"\n]+)",[\s\S]*?\n  \},?(?=\n)/g;
+// the trunk's visits (paths.js ForeverRouteVisits) are the same in every plan of a faction too: kept once, as "visits"
+const VISITS_BLOCK = /\nForeverRouteVisits = \{\n[\s\S]*?\n\}(?=\n)/g;
+// every block kept once: [text, id]
+const blocksOf = (src) => [...[...src.matchAll(ZR_BLOCK)].map((m) => [m[0], m[1]]), ...[...src.matchAll(VISITS_BLOCK)].map((m) => [m[0], 'visits'])];
+const packBlocks = (src, shared) => src.replace(ZR_BLOCK, (m, id) => (shared[id] === m ? marker(id) : m)).replace(VISITS_BLOCK, (m) => (shared.visits === m ? marker('visits') : m));
 const marker = (id) => `\n--@zr ${id}@`;
 const unpack = (src, shared) => src.replace(/\n--@zr ([^@\n]+)@/g, (m, id) => (id in shared ? shared[id] : m));
 // a long bracket that the text never closes by accident
@@ -47,10 +53,14 @@ for (const [side, plans] of Object.entries(sides)) {
     '', 'Plans.lua', ''].join('\n'));
   // the zone routes every plan here has word for word: kept once
   const seen = {}, shared = {};
-  for (const p of plans) for (const m of p.src.matchAll(ZR_BLOCK)) (seen[m[1]] = seen[m[1]] || new Map()).set(m[0], ((seen[m[1]].get(m[0])) || 0) + 1);
+  for (const p of plans) for (const [text, id] of blocksOf(p.src)) (seen[id] = seen[id] || new Map()).set(text, ((seen[id].get(text)) || 0) + 1);
   for (const [id, texts] of Object.entries(seen)) { const [text, n] = [...texts.entries()].sort((a, b) => b[1] - a[1])[0]; if (n > 1) shared[id] = text; }
+  // a zone route that differs between plans of one faction is kept in each of them: say so (something class-dependent
+  // got into it, and the file grows by a copy per plan)
+  const split = Object.entries(seen).filter(([, texts]) => texts.size > 1).map(([id, texts]) => id + ' (' + texts.size + ' versions)');
+  if (split.length) console.error(`${side}: zone route(s) not the same in every plan: ${split.slice(0, 8).join(', ')}${split.length > 8 ? ' ...' : ''}`);
   for (const p of plans) {
-    p.packed = p.src.replace(ZR_BLOCK, (m, id) => (shared[id] === m ? marker(id) : m));
+    p.packed = packBlocks(p.src, shared);
     if (unpack(p.packed, shared) !== p.src) throw new Error('bundle: ' + p.key + ' does not come back whole from its zone route markers');
   }
   const L = [`-- The built-in ${side} plans (tools/bundle-plans.js from addon/ForeverRoute_Starter_*): each as text, made into code`,

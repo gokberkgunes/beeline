@@ -49,6 +49,9 @@ Nav.MOB_GAP = 5        -- mobs this many levels under you (or more) are left out
 Nav.STRAIGHT_TOL = 5   -- the arrow aims as far along the line as a straight walk stays within this many yards of it
 Nav.STRAIGHT_MAX = 200 -- ...up to this far
 Nav.STRAIGHT_PTS = 24  -- ...over this many of its corners at most
+Nav.STRAIGHT_BESIDE = 10 -- beside the line from this far off (following it round a bend strays less), fully by twice this
+Nav.STRAIGHT_OFF = 40  -- ...and while you are up to this far off the line: the straight walk may then stray from it by as
+                        -- much as you are off it (plus STRAIGHT_TOL) - beside the line, it points the way the line goes
 Nav.AIM_REACH = 1.25   -- far off the line (over Nav.AIM_MERGE_YD), it looks this many times as far as you are off
 Nav.AIM_MERGE = 1.25   -- a little off it, this many (2.5 - a long shallow merge - had followers stray 12 yd from city lines and
 Nav.AIM_MERGE_YD = 20  -- 40 yd from open ones: it cuts the corners the line goes round; the same as far off, for now)
@@ -702,9 +705,12 @@ function Nav.Aim(P, px, py, look, far)
   -- It fades out as you get off the line, blended toward the near spot, rather than switching off (switched, the
   -- arrow swung 30 degrees at once); that also keeps a follower from cutting a bend by more than the near spot does
   local nj, nt = j, t
-  if far and bd < Nav.STRAIGHT_TOL then
+  if far and bd < Nav.STRAIGHT_OFF then
     local nx, ny = ax, ay
-    local tol, maxD2 = Nav.STRAIGHT_TOL, Nav.STRAIGHT_MAX * Nav.STRAIGHT_MAX
+    -- (the slack grows with how far off you are only once you are clearly beside the line, not while following it round
+    -- a bend: there it is as before, so the arrow turns as smoothly)
+    local beside = bd >= Nav.STRAIGHT_BESIDE
+    local tol, maxD2 = Nav.STRAIGHT_TOL + (beside and bd or 0), Nav.STRAIGHT_MAX * Nav.STRAIGHT_MAX
     -- every corner between you and (qx, qy) within tol of the straight run there
     local function fits(qx, qy, upto)
       local dx, dy = qx - px, qy - py
@@ -734,7 +740,11 @@ function Nav.Aim(P, px, py, look, far)
         break
       end
     end
-    local w = 1 - bd / Nav.STRAIGHT_TOL
+    -- (on the line: the far spot; a little off it, blended toward the near one as before, so the arrow doesn't swing;
+    -- further off, the far spot again - the walk to it stays within your distance off the line, so it can't cut a bend
+    -- the line makes round something)
+    local B = Nav.STRAIGHT_BESIDE
+    local w = (bd < Nav.STRAIGHT_TOL and (1 - bd / Nav.STRAIGHT_TOL)) or (bd < B and 0) or math.min(1, (bd - B) / B)
     ax, ay = nx + (ax - nx) * w, ny + (ay - ny) * w
     -- the yards to walk: along the line from the near spot (the blend is only where the arrow points)
     aim[1], aim[2] = ax, ay

@@ -228,7 +228,7 @@ local function build()
     skip = Style.IconButton(f.ctl, "btn-skip", 20, function() ns.Engine.Skip() end, "Skip this step (a skipped quest's later steps go too)"),
     undo = Style.IconButton(f.ctl, "btn-undo", 20, function() ns.Engine.Undo() end, "Undo the last skip / done"),
     list = Style.IconButton(f.ctl, "btn-list", 20, function() ns.Fire("FR_TOGGLE_LIST") end, "The whole route  (/fr list)"),
-    dungeon = Style.IconButton(f.ctl, "icon-kill", 20, function() ns.Fire("FR_TOGGLE_DUNGEONS") end, "Dungeon routes: pick up everything for one dungeon  (/fr dungeons)"),
+    dungeon = Style.IconButton(f.ctl, "icon-kill", 20, function() ns.Fire("FR_TOGGLE_DUNGEONS") end, "Side trips: class quests, bonus items and dungeons  (/fr dungeons)"),
     min = Style.IconButton(f.ctl, "btn-min", 20, function() ns.db.collapsed = not ns.db.collapsed; Card.Update(); if ns.Zones then ns.Zones.Update() end end, "Collapse / expand"),
     opt = Style.IconButton(f.ctl, "btn-gear", 20, function() ns.Fire("FR_OPEN_OPTIONS") end, "Options"),
   }
@@ -255,7 +255,7 @@ local function build()
   -- options that just opened up (a level-up brought new zones): one line, See options, dismiss
   f.offer = CreateFrame("Frame", nil, f); f.offer:SetHeight(20)
   f.offer.text = Style.Text(f.offer, 10, C.gold); f.offer.text:SetPoint("LEFT", 0, 0); f.offer.text:SetWordWrap(false)
-  f.offer.go = Style.Button(f.offer, "See options", 76, 18, function() ns.Fire("FR_TOGGLE_PATHS") end, "Opens the paths, with Start next in... at the bottom. Nothing changes unless you pick something.")
+  f.offer.go = Style.Button(f.offer, "Zones", 56, 18, function() ns.Fire("FR_TOGGLE_PATHS") end, "Where to? - the zones you could go to now. Nothing changes unless you pick one.")
   f.offer.go:SetPoint("RIGHT", f.offer, "RIGHT", -20, 0)
   f.offer.x = Style.Button(f.offer, "x", 16, 16, function() ns.Offers.Dismiss() end, "Hide this until your next level")
   f.offer.x:SetPoint("RIGHT", f.offer, "RIGHT", 0, 0)
@@ -344,17 +344,23 @@ end
 function Card.PlaceDrop(hover)
   if not f or not f.drop then return end
   f.drop:ClearAllPoints()
-  if hover then f.drop:SetPoint("LEFT", f.eta, "LEFT", -6, 0)
+  -- (after "Back to my path" / "Change zone" when it is there: at the footer line's start it sat on that button - tester)
+  if hover and f.home and f.home:IsShown() then f.drop:SetPoint("LEFT", f.home, "RIGHT", 6, 0)
+  elseif hover then f.drop:SetPoint("LEFT", f.eta, "LEFT", -6, 0)
   else f.drop:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 6, f.dropY or 0) end
   f.drop:SetShown(f.dropWanted and true or false)
 end
 function Card.Hover(on)
   if not f then return end
   if not on then
-    C_Timer.After(0.2, function() if f and not f:IsMouseOver() and f.ctl:GetAlpha() > 0 then UIFrameFadeOut(f.ctl, 0.2, f.ctl:GetAlpha(), 0); UIFrameFadeIn(f.eta, 0.2, f.eta:GetAlpha(), 1); Card.PlaceDrop(false) end end)
+    C_Timer.After(0.2, function() if f and not f:IsMouseOver() and f.ctl:GetAlpha() > 0 then Card.hovering = false; UIFrameFadeOut(f.ctl, 0.2, f.ctl:GetAlpha(), 0); UIFrameFadeIn(f.eta, 0.2, f.eta:GetAlpha(), 1); Card.PlaceDrop(false) end end)
     return
   end
-  if f.ctl:GetAlpha() < 1 then UIFrameFadeIn(f.ctl, 0.12, f.ctl:GetAlpha(), 1); UIFrameFadeOut(f.eta, 0.12, f.eta:GetAlpha(), 0); Card.PlaceDrop(true) end
+  -- (the link moves left whenever the controls are up: back over the card before they had faded, it stayed under them -
+  -- '9 won't do' on top of the buttons, tester)
+  Card.hovering = true
+  if f.ctl:GetAlpha() < 1 then UIFrameFadeIn(f.ctl, 0.12, f.ctl:GetAlpha(), 1); UIFrameFadeOut(f.eta, 0.12, f.eta:GetAlpha(), 0) end
+  Card.PlaceDrop(true)
 end
 
 -- "where next?" option rows: zone, XP/h and the zones that follow; the open option is marked, the fastest gets a star
@@ -477,7 +483,9 @@ end
 Card.DUNGEON_BARS = 12 -- bars at most; quests past that are one line each in the note
 local TICK = "|T" .. Style.MEDIA .. "icon-check:12|t "
 local function namesOf(list, max)
-  local t = {}
+  local t, seen, u = {}, {}, {}
+  for _, e in ipairs(list) do if not seen[e.name] then seen[e.name] = true; u[#u + 1] = e end end
+  list = u
   for k, e in ipairs(list) do
     if k > max then t[#t + 1] = string.format("+%d more", #list - max); break end
     t[#t + 1] = e.name .. (e.from and (" |cff8e99ad(" .. e.from .. ")|r") or "")
@@ -541,7 +549,9 @@ function Card.Fill()
   local cur = f.cur
   local i = ns.Engine.Shown()
   for _, b in ipairs(cur.bars) do b:Hide() end
-  for _, h in ipairs(cur.heads) do h:Hide() end
+  -- (pairs: the quest titles are kept by the number of the bar they sit over - 1, 4, 7 - and ipairs stopped at the
+  -- first gap, leaving old titles ("Past Due") floating over the dungeon card - tester)
+  for _, h in pairs(cur.heads) do h:Hide() end
   cur.headAt = {}
   local wasDungeon = cur.dungeon
   cur.dungeon = nil
@@ -561,7 +571,7 @@ function Card.Fill()
   end
   if wasDungeon then Card.Header(); Card.UpdateProgress() end -- back out: the plan's own header again
   if not data then
-    look(C.dim, "icon-note"); cur.titleText:SetText("No route loaded"); cur.detail:SetText("Run the planner on your PC, then /reload."); setNote("")
+    look(C.dim, "icon-note"); cur.titleText:SetText("No route loaded"); cur.detail:SetText("/reload to load the plan for your race and class."); setNote("")
     Card.SetButtons(nil); return
   end
   if not i then
@@ -572,9 +582,10 @@ function Card.Fill()
       -- Only once it has stayed done a few seconds: stops are added just after a login or a route change (a hand-in
       -- you finished, a side quest), and "done" can be true for a moment before they are
       Card.zoneDoneSince = Card.zoneDoneSince or (GetTime and GetTime()) or 0
-      cur.titleText:SetText((data.zoneName or "Zone") .. " done"); cur.detail:SetText("Carry on where your planned route picks up, or pick another zone in the route list.")
+      local nz = ns.PlannedNextZone and ns.PlannedNextZone()
+      cur.titleText:SetText((data.zoneName or "Zone") .. " done"); cur.detail:SetText((nz and ("Next on your plan: " .. Style.ShortZone(nz) .. ". ") or "") .. "Other zones: /fr paths.")
       if C_Timer and not Card.zoneDoneTick then Card.zoneDoneTick = true; C_Timer.After(3.5, function() Card.zoneDoneTick = nil; if ns.Card.Layout then ns.Card.Layout() end end) end
-    else cur.titleText:SetText("Route complete"); cur.detail:SetText("Run the planner again for your next leg.") end
+    else cur.titleText:SetText("Route complete"); cur.detail:SetText("That's the end of the plan.") end
     setNote("")
     Card.SetButtons(nil); return
   end
@@ -604,7 +615,8 @@ function Card.Fill()
   cur.titleText:SetText(title)
   local bits = {}
   if detail and not multi then bits[#bits + 1] = detail end
-  if s.zone then bits[#bits + 1] = s.zone end
+  -- (the zone only when the header names another: "Redridge Mountains" under "OUT IN REDRIDGE" wrapped the coordinates)
+  do local sc = section(i); if s.zone and not (sc and sc.zone == s.zone) then bits[#bits + 1] = Style.ShortZone(s.zone) end end
   -- (an unknown step's spot is only its place in the order: no coordinates, no map button)
   if s.x and s.y and not s.unknown then bits[#bits + 1] = string.format("|cff8e99ad%.0f, %.0f|r", s.x * 100, s.y * 100) end
   -- the walking path knows the floor heights: say when the stop is upstairs (a tower top) or below (a cellar, a cave)
@@ -656,7 +668,17 @@ function Card.Fill()
     elseif status == "later" then
       return "Left for your next dungeon run (what's still to do is inside) - or skip it; the route goes on.", C.sub
     elseif status == "wait" then
-      return string.format("Needs level %d.  %s", s.minLevel or s.until_ or 0, Card.Note(s) or ""), C.warn
+      local lv = s.minLevel or s.until_
+      if not lv and s.q and ns.QUEST_PRE and ns.QUEST_PRE[s.q] then
+        local pre = ns.QUEST_PRE[s.q]
+        for _, p in ipairs(pre.g or pre.s or {}) do
+          if not ns.State.IsCompleted(p) then
+            local n = ns.Engine.QuestName and ns.Engine.QuestName(p) or ("quest " .. p)
+            return "Needs " .. n .. " handed in first - the route goes on, and this comes back when it's done.", C.warn
+          end
+        end
+      end
+      return string.format("Needs level %d.  %s", lv or 0, Card.Note(s) or ""), C.warn
     elseif s.k == "accept" and (status == "full" or ns.State.LogCount() >= ns.State.MaxLog()) then
       -- a warning on the quest itself (elites, an escort) still matters once there is room
       return string.format("Quest log full (%d/%d) - hand in or abandon something first.", ns.State.LogCount(), ns.State.MaxLog())
@@ -1038,7 +1060,8 @@ function Card.Layout()
     f.save:ClearAllPoints(); f.save:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -top); f.save:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
     top = top + 22
   end
-  local sp = (not ns.Engine.view and not (ForeverRouteData and ForeverRouteData.dungeon)) and Card.SpecialOffer() or nil
+  local inside = ns.Dungeon and ns.Dungeon.Inside and select(2, ns.Dungeon.Inside())
+  local sp = (not ns.Engine.view and not inside and not (ForeverRouteData and ForeverRouteData.dungeon)) and Card.SpecialOffer() or nil
   f.special:SetShown(sp and true or false)
   if sp then
     f.special.route = sp.route
@@ -1083,7 +1106,6 @@ function Card.Layout()
   f.ret:SetShown(viewing)
   if viewing then f.ret:ClearAllPoints(); f.ret:SetPoint("TOPLEFT", PAD, -top); top = top + 24 end
   f.dropY = -top - 2
-  Card.PlaceDrop(f.ctl:GetAlpha() > 0) -- (hovering: at the left, the controls have the right)
   f.eta:Show(); f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", PAD, -top - 4); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
   local d = ForeverRouteData
   local onDungeon = d and (d.dungeon or d.zoneRoute)
@@ -1102,6 +1124,7 @@ function Card.Layout()
     f.home:ClearAllPoints(); f.home:SetPoint("TOPLEFT", PAD - 2, -top + 1)
     f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", f.home, "TOPRIGHT", 6, -5); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
   end
+  Card.PlaceDrop(Card.hovering or f.ctl:GetAlpha() > 0.5) -- (hovering: at the left, the controls have the right; after the home button is set)
   f.ctl:ClearAllPoints(); f.ctl:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 4, -top + 1)
   local x = 0
   for _, name in ipairs({ "opt", "min", "dungeon", "list", "undo", "skip", "done", "fwd", "back" }) do
@@ -1286,7 +1309,24 @@ function Card.Header()
   local i = ns.Engine.Shown()
   local sec = i and section(i)
   local dname = ForeverRouteData and ForeverRouteData.dungeon and (ForeverRouteData.dungeonName or ForeverRouteData.title)
-  f.title:SetText((dname and ("|cffff7a6b" .. dname:upper() .. "|r  ") or "") .. (sec and (sec.title:upper() .. (not dname and sec.zone and sec.zone ~= sec.title and ("  |cff8a93a6" .. sec.zone .. "|r") or "")) or (ForeverRouteData and ForeverRouteData.title or "Forever Route")))
+  -- (the zone once: a title that names it - "Out in Redridge Mountains", "Hillsbrad Foothills: Loremaster Dibbs" - with its short
+  -- name, and no zone after it; "OUT IN REDRIDGE MOUNTAINS  Redridge Mou..." said it twice and was cut off - review)
+  local t, z = sec and sec.title, sec and sec.zone
+  -- (a stop in another zone than its stretch - a hand-in pulled in on the way: that zone, not the stretch's - "OUT IN
+  -- STRANGLETHORN" over a hand-in in Duskwood, tester)
+  local st = i and steps()[i]
+  if st and st.zone and z and st.zone ~= z and not dname then t, z = "On the way: " .. st.zone, st.zone end
+  local named = t and z and t:lower():find(z:lower(), 1, true)
+  if named then
+    local a2 = t:lower():find(z:lower(), 1, true)
+    -- (a hub's "Zone: NPC, NPC": the progress on the right names the zone, so just the people - "ELWYNN FOREST: MARSHAL
+    -- MCBRIDE, BR..." was cut off against it)
+    if a2 == 1 and t:sub(#z + 1, #z + 1) == ":" then t = t:sub(#z + 2):gsub("^%s+", "")
+    else t = t:sub(1, a2 - 1) .. Style.ShortZone(z) .. t:sub(a2 + #z) end
+  end
+  -- (a side trip's section that only repeats its name - "VOIDWALKER (WARLOCK 10)  Special: Voidwalker (warlock 10)")
+  if dname and t and t:lower():find(dname:lower(), 1, true) then t = "" end
+  f.title:SetText((dname and ("|cffff7a6b" .. dname:upper() .. "|r  ") or "") .. (sec and (t:upper() .. (not dname and not named and z and z ~= sec.title and ("  |cff8a93a6" .. Style.ShortZone(z) .. "|r") or "")) or (ForeverRouteData and ForeverRouteData.title or "Forever Route")))
 end
 -- The footer line: when you leave this zone and for where - "Next zone: Duskwood, after 4 quests here". It said the
 -- level the plan had you at for this step and the plan's last level ("planned for level 33 · plan goes to level 43"),
@@ -1296,9 +1336,17 @@ function Card.FooterText(i)
   local data = ForeverRouteData
   local s = i and steps()[i]
   if not (s and s.zone and data and not data.dungeon and ns.Engine.ZonesAhead) then return "" end
-  local z = ns.Engine.ZonesAhead(i, 2)
+  -- (the card showing a stop pulled forward out of the plan's order: count from the plan's own next step - the footer said
+  -- "Next zone: Wetlands" while Where to? had Hillsbrad)
+  local base = (i == ns.Engine.Shown() and ns.Engine.planned) or i
+  local bs = steps()[base] or s
+  local z = ns.Engine.ZonesAhead(base, 2)
   local here, nxt = z[1], z[2]
-  if not (here and here.zone == s.zone) then return "" end
+  if not (here and here.zone == bs.zone) then return "" end
+  if not nxt and data.zoneRoute then
+    local nz = ns.PlannedNextZone and ns.PlannedNextZone()
+    if nz then local n = here.quests or 0; return "Then " .. Style.ShortZone(nz) .. " (your plan)" .. (n > 0 and string.format(", after %d quest%s here", n, n == 1 and "" or "s") or "") end
+  end
   if not nxt then return "Last zone on this plan" end
   local n = here.quests or 0
   return "Next zone: " .. Style.ShortZone(nxt.zone) .. (n > 0 and string.format(", after %d quest%s here", n, n == 1 and "" or "s") or "")

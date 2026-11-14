@@ -23,7 +23,7 @@ Next.HOLD_NEAR = 400    -- yards: a prize this close can come before the plan's 
 Next.BEHIND_WORK = 150  -- seconds: an objective's work and the way to it, for a step that doesn't carry the planner's (s.work)
 Next.DISMISS_SECS = 900 -- "not now" on a while-you're-here stop: it stays off for this long...
 Next.DISMISS_YD = 500    -- ...or until you are this far from where you said it
-Next.dismissed = {}      -- step index -> { t, x, y, inst }: where and when
+Next.dismissed = {}      -- step (the table: an inserted stop moves the numbers on) -> { t, x, y, inst }: where and when
 Next.RESOLVE = 2        -- seconds: re-solve at least this often while things change
 Next.SERVICE = { accept = 8, turnin = 10, obj = 90, fp = 15, train = 40, bind = 15, ["goto"] = 5 }
 -- (a "go to" step - a dungeon run, a place to be - is a commitment, not a stop to fit in: it stays where the plan has it)
@@ -604,12 +604,19 @@ end
 
 local last -- { sig, at, pick, res }
 -- a stop you said "not now" to, while it holds: you are still about where you said it, and not long after
-local function isDismissed(j, px, py, pinst)
-  local d = Next.dismissed[j]
+-- (by the step itself, not its number: a stop inserted before it - a side trip, a flight path, a chain start - moved
+-- the number on, and "not now" on a training stop came straight back as the step after it was put off - tester)
+local function holds(key, px, py, pinst)
+  local d = Next.dismissed[key]
   if not d then return false end
   local now = GetTime and GetTime() or 0
-  if now - d.t > Next.DISMISS_SECS or d.inst ~= pinst or (d.x - px) ^ 2 + (d.y - py) ^ 2 > Next.DISMISS_YD ^ 2 then Next.dismissed[j] = nil; return false end
+  if now - d.t > Next.DISMISS_SECS or d.inst ~= pinst or (d.x - px) ^ 2 + (d.y - py) ^ 2 > Next.DISMISS_YD ^ 2 then Next.dismissed[key] = nil; return false end
   return true
+end
+local function isDismissed(j, px, py, pinst)
+  local list = ForeverRouteData and ForeverRouteData.steps
+  local s = list and list[j]
+  return s ~= nil and holds(s, px, py, pinst)
 end
 Next.IsDismissed = isDismissed
 -- -> the step index to show, or nil (the plan's own next step stands)
@@ -660,10 +667,18 @@ local function pick(planned)
   local bags = ns.Errands and ns.Errands.FreeSlots and ns.Errands.FreeSlots() or -1
   local sig = table.concat({ planned, #list, load, math.floor(px / 15), math.floor(py / 15), pinst or 0, tostring(d), math.min(bags, 7) }, ":")
   local now = GetTime and GetTime() or 0
+  -- the pick on the card, by the step itself: a stop inserted before it (a hand-in you finished) moves its number on, and
+  -- by number the margin below compared the wrong steps and the card showed whatever sat at the old number - "Accept
+  -- Jungle Secrets" with the quest in your log, then a flip to the next pick (tester, Stranglethorn)
+  if last and last.pickStep then
+    local j = last.pick
+    if not (j and list[j] == last.pickStep) then j = nil; for k = 1, #list do if list[k] == last.pickStep then j = k; break end end end
+    last.pick = j
+  end
   if last and last.sig == sig and now - last.at < Next.RESOLVE and last.pick and list[last.pick] and E.Status(last.pick) == "todo" then return last.pick end
 
   -- (a "not now" ends when you move on: checked every solve, not only when that stop is a candidate again)
-  for j in pairs(Next.dismissed) do isDismissed(j, px, py, pinst) end
+  for key in pairs(Next.dismissed) do holds(key, px, py, pinst) end
   local stops, byStep, count, scanEnd = {}, {}, 0, planned
   local function add(j, extra)
     -- (a stop you said "not now" to stays out while you're still here: a plan step waits for its own place in the plan)
@@ -746,6 +761,11 @@ local function pick(planned)
     end
     table.sort(found, function(a, b) return a.d2 < b.d2 end)
     for k = 1, math.min(Next.BEHIND_MAX, #found) do add(found[k].j, { prize = found[k].prize, opt = true, behind = true }) end
+    -- (and the one on the card, while it still qualifies: walking on, it fell out of the nearest few, the margin had
+    -- nothing to keep, and the card flipped to another - tester)
+    if last and last.pick and not byStep[last.pick] then
+      for _, fd in ipairs(found) do if fd.j == last.pick then add(fd.j, { prize = fd.prize, opt = true, behind = true }); break end end
+    end
   end
   -- finished quests whose hand-in is further on in the plan but near you now: a prize worth the trip back it saves
   -- (Next.Prize: the plan's detour to it later; a gray quest's hand-in pays next to nothing - it goes with the plan, or
@@ -769,8 +789,8 @@ local function pick(planned)
   if visit then
     local share = visit.saves / #visit.now
     for _, j in ipairs(visit.now) do
-      -- (one of the plan's own next stops already: it may now come before the trip)
-      if byStep[j] then byStep[j].visit, byStep[j].early = true, true
+      -- (one of the plan's own next stops already: it may now come before the trip - not one you said "not now" to)
+      if byStep[j] then if not isDismissed(j, px, py, pinst) then byStep[j].visit, byStep[j].early = true, true end
       else
         -- (left for the plan's visit it costs the stop, carrying it, and its share of the trip there - the visit's way in
         -- and out is the trip, so it isn't priced again as a detour of its own; its XP isn't at stake: the visit does it)
@@ -858,20 +878,34 @@ local function pick(planned)
   end
   local pick, pst = firstStep(res)
   if pst then res.first = pst end
+  do
+    local pw = wpos(list[planned])
+    if pst and pst.w and pw and pst.w[3] ~= pinst and pw[3] == pinst then
+      if ns.Why then ns.Why("next", "kept the plan's step " .. planned .. ": the solve put " .. tostring(pst.st and pst.st.name or pick) .. " on another continent first") end
+      Next.res = res; last = { sig = sig, at = now, res = res, pick = planned, pickStep = list[planned] }
+      return keepPlanned()
+    end
+  end
   -- the plan's next step is a trip: it stays on the card unless the pick is a prize close by (worth doing before you go)
   -- (a prize comes before the trip or grind only when it is close by: where you stand, Next.HOLD_NEAR)
-  local closePrize = pst and pst.w and pst.w[3] == pinst and (pst.visit or (pst.opt and (pst.w[1] - px) ^ 2 + (pst.w[2] - py) ^ 2 <= Next.HOLD_NEAR ^ 2))
+  -- (the prize already on the card keeps its place a little further out: at the edge of HOLD_NEAR it flipped with the
+  -- plan's trip as you walked - tester)
+  local holdR = (last and last.pick and last.pick == pick) and Next.HOLD_NEAR * 1.5 or Next.HOLD_NEAR
+  local closePrize = pst and pst.w and pst.w[3] == pinst and (pst.visit or (pst.opt and (pst.w[1] - px) ^ 2 + (pst.w[2] - py) ^ 2 <= holdR ^ 2))
   if (holdPlanned or count == 0) and not closePrize then
     local opts = 0
     for _, st in ipairs(stops) do if st.opt then opts = opts + 1 end end
     if opts > 0 and ns.Why then ns.Why("next", "kept the plan's step " .. planned .. ": " .. opts .. " stop(s) close by weighed, none worth doing before it") end
-    Next.res = res; last = { sig = sig, at = now, res = res }
+    Next.res = res; last = { sig = sig, at = now, res = res, pick = planned, pickStep = list[planned] }
     return keepPlanned()
   end
   -- hysteresis: the step on the card stays unless the new pick beats keeping it by Next.MARGIN seconds
   -- (not for a stop you're passing anyway - a finished quest's hand-in right here: that one is said at once, an interrupt
   -- on the way, not a change of course)
-  local passing = res.first and res.first.opt
+  local fw = res.first and res.first.w
+  -- (a quest behind you on the plan is a choice, not an interrupt: it keeps the margin too - several of them close by
+  -- swapped on the card as you walked through Stranglethorn, tester)
+  local passing = res.first and res.first.opt and not res.first.behind and fw and fw[3] == pinst and (fw[1] - px) ^ 2 + (fw[2] - py) ^ 2 <= Next.HOLD_NEAR ^ 2
   local keep = not passing and last and last.pick and byStep[last.pick] and last.pick ~= pick and list[last.pick]
   if keep then
     P.first = last.pick
@@ -879,7 +913,7 @@ local function pick(planned)
     if kept.first and res.score - kept.score < Next.MARGIN then Next.vendor = nil; local kp, kst = firstStep(kept); if kst then kept.first = kst end; res, pick = kept, kp or last.pick end
   end
   Next.res = res
-  last = { sig = sig, at = now, pick = pick, res = res }
+  last = { sig = sig, at = now, pick = pick, pickStep = pick and list[pick], res = res }
   if pick and pick ~= planned and ns.Why then
     local s = list[pick]
     ns.Why("next", "step " .. pick .. " (" .. tostring(s.name or s.k) .. ") before the plan's step " .. planned .. ": " .. Next.Reason(pick))
@@ -906,7 +940,11 @@ function Next.Reason(i)
   local st
   for _, s in ipairs((res and res.seq) or {}) do if s.step == i then st = s; break end end
   if not st then return "" end
-  if st.behind then return "right here and still worth XP at your level (the plan has it earlier)" end
+  if st.behind then
+    local ep = ns.Engine and ns.Engine.pos
+    local near = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2 <= Next.HOLD_NEAR ^ 2
+    return (near and "right here" or "nearby") .. " and still worth XP at your level (the plan has it earlier)"
+  end
   local rj = Next.rejoin
   local L = ForeverRouteData and ForeverRouteData.steps
   if rj and st.step and st.step >= rj.at and L and L[rj.trip] then
@@ -934,7 +972,9 @@ function Next.Dismiss(i)
   local px, py, pinst
   if ep then px, py, pinst = ep[1], ep[2], ep[3] else px, py, pinst = HBD:GetPlayerWorldPosition() end
   if not px then return false end
-  Next.dismissed[i] = { t = GetTime and GetTime() or 0, x = px, y = py, inst = pinst }
+  local list = ForeverRouteData and ForeverRouteData.steps
+  if not (list and list[i]) then return false end
+  Next.dismissed[list[i]] = { t = GetTime and GetTime() or 0, x = px, y = py, inst = pinst }
   last = nil
   if ns.Engine and ns.Engine.focus == i then ns.Engine.focus, ns.Engine.focusWhy = nil, nil end
   if ns.Engine and ns.Engine.Refresh then ns.Engine.Refresh() end

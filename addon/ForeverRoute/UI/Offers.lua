@@ -24,6 +24,9 @@ local function same(a, b) return a and b and (a == b or a:find(b, 1, true) or b:
 function Offers.Zones(level)
   local plan = ForeverRoutePlan
   if not plan then return {} end
+  -- (a built-in plan's ranking is its trunk's at 21, not yours: a level 1 was told "best zones now: Wetlands" - its zones
+  -- are in Where to?, from the plan's zone routes)
+  if ns.planKey and ns.planKey.starter then return {} end
   local list = (plan.ahead and plan.ahead[level]) or (level == plan.level and plan.zones) or {}
   local out = {}
   for _, z in ipairs(list) do if (z.xph or 0) > 0 then out[#out + 1] = z end end

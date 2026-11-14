@@ -88,7 +88,7 @@ function Dungeons.Draw()
   if onDungeon then y = y + 28 end
   for k, c in ipairs(cards) do if k > #list then c:Hide() end end
   f.empty:SetShown(#list == 0)
-  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", PAD, -y); f.empty:SetText("No dungeon routes in this plan. Run the planner again."); y = y + 24 end
+  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", PAD, -y); f.empty:SetText("No side trips in this plan."); y = y + 24 end
   y0 = y
   local yc = 0
   local myLevel = UnitLevel("player") or 1

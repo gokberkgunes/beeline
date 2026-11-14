@@ -16,7 +16,29 @@ function State.IsCompleted(id)
   local done = C_QuestLog and call(C_QuestLog.IsQuestFlaggedCompleted, id)
   if done == nil and IsQuestFlaggedCompleted then done = call(IsQuestFlaggedCompleted, id) end
   if done then State.completed[id] = true end
+  -- a quest a handed-in quest needed (QUEST_PRE) counts as done: you did it, or went round it (abandoned, then the
+  -- chain carried on) - either way the giver won't offer it again. Jungle Secrets, abandoned with Bookie Herod handed
+  -- in, was offered on the card again and again and flipped with the next pick (tester)
+  if not done and State.SupersededBy(id) then State.completed[id] = true; return true end
   return done and true or false
+end
+-- the quests that need quest id (the reverse of ns.QUEST_PRE), built once
+local needers
+function State.SupersededBy(id)
+  local P = ns.QUEST_PRE
+  if not P then return nil end
+  if not needers then
+    needers = {}
+    for q, pre in pairs(P) do
+      for _, p in ipairs(pre.g or {}) do needers[p] = needers[p] or {}; table.insert(needers[p], q) end
+      for _, p in ipairs(pre.s or {}) do needers[p] = needers[p] or {}; table.insert(needers[p], q) end
+    end
+  end
+  for _, q in ipairs(needers[id] or {}) do
+    local flagged = State.completed[q] or (C_QuestLog and call(C_QuestLog.IsQuestFlaggedCompleted, q))
+    if flagged then return q end
+  end
+  return nil
 end
 
 -- per-quest live info, by quest ID

@@ -104,6 +104,14 @@ local function zoneRow(key)
     elseif z.route and z.xpLeft then GameTooltip:AddLine(string.format("About %s XP left there for you. Click to go there now: the route takes you there with the pick-ups on the way%s.", Paths.Short(z.xpLeft), (ns.HasCompanion and ns.HasCompanion()) and ", and your next plan is built from there" or ""), 0.72, 0.76, 0.84, true)
     elseif z.route then GameTooltip:AddLine("Click to go there now: the route takes you there with the pick-ups on the way, and your plan carries on from it.", 0.72, 0.76, 0.84, true)
     else GameTooltip:AddLine("No ready route at your level yet." .. ((ns.HasCompanion and ns.HasCompanion()) and " Click to ask the planner for one." or ""), 0.72, 0.76, 0.84, true) end
+    -- the chain behind the row's reason (Chains.lua ns.ChainLine): how far you are, what's left, where it goes on
+    local cq = z.contQ or (z.needs and z.needs.q)
+    local cl = cq and ns.ChainLine and ns.ChainLine(cq)
+    if cl then GameTooltip:AddLine(cl, 1, 0.82, 0.35, true) end
+    if z.needs and (z.needs.xpMore or 0) > 0 then GameTooltip:AddLine("Doing " .. z.needs.name .. " first opens ~" .. Paths.Short(z.needs.xpMore) .. " more XP here.", 0.72, 0.76, 0.84, true) end
+    -- going elsewhere: a chain you carry here that turns gray soon (ns.ChainsAtRisk)
+    if not z.here and ns.ChainsAtRisk then local r = ns.ChainsAtRisk()[1]; if r and r.line then GameTooltip:AddLine("Leaving now: " .. r.line, 1, 0.45, 0.35, true) end end
+    if z.questsLeft and z.questsLeft > 0 then GameTooltip:AddLine(z.questsLeft .. (z.questsLeft == 1 and " quest" or " quests") .. " you can do there now.", 0.72, 0.76, 0.84, true) end
     if z.handIns > 0 then GameTooltip:AddLine(z.handIns .. " quest" .. (z.handIns == 1 and " you finished is" or "s you finished are") .. " handed in there.", 0.36, 0.86, 0.48, true) end
     GameTooltip:Show()
   end)
@@ -118,6 +126,8 @@ local function legsOf(r)
     z = Style.ShortZone((z:gsub("^%s+", ""):gsub("%s+$", "")))
     if z ~= "" and out[#out] ~= z then out[#out + 1] = z end
   end
+  -- (a stop in a capital on the way is not a zone you go to: "Ironforge > Desolace" read as a trip to Ironforge)
+  do local kept = {}; for _, z in ipairs(out) do if not (ns.IsCapital and ns.IsCapital(z)) and kept[#kept] ~= z then kept[#kept + 1] = z end end; if #kept > 0 then out = kept end end
   return out
 end
 
@@ -215,6 +225,22 @@ end
 -- ---------------------------------------------------------------- state
 
 Paths.PLANNED = "\1planned" -- (the planned route's row, picked from a zone you chose)
+-- how many levels xp is from where you are now (your XP into this level counts: 40k to go at 35, 71k is about 1.4)
+function Paths.Levels(xp)
+  local T = ns.XP_TO_LEVEL or {}
+  local L = (UnitLevel and UnitLevel("player")) or 1
+  local have = (UnitXP and UnitXP("player")) or 0
+  local out = 0
+  xp = tonumber(xp) or 0
+  while xp > 0 and L < 60 do
+    local size = (L == ((UnitLevel and UnitLevel("player")) or 1) and UnitXPMax and UnitXPMax("player")) or T[L] or 0
+    if size <= 0 then break end
+    local need = size - have
+    if xp < need then out = out + xp / size; break end
+    out = out + need / size; xp = xp - need; have = 0; L = L + 1
+  end
+  return out
+end
 -- 14200 -> "14k", 1500 -> "1.5k", 950 -> "950"
 function Paths.Short(n)
   n = tonumber(n) or 0
@@ -226,17 +252,24 @@ end
 function Paths.Pick(row)
   local onZone = ForeverRouteData and ForeverRouteData.zoneRoute
   if row.planned then
-    if onZone then return Paths.Request(Paths.PLANNED) end
+    if onZone or (ForeverRouteData and ForeverRouteData.dungeon) then return Paths.Request(Paths.PLANNED) end
     if f then f:Hide() end; return -- (on your planned route already)
   end
-  if row.here then if f then f:Hide() end; return end
-  return Paths.Request(row.zone)
+  -- (the zone you stand in, not the route you are on: pick it to stay - its tooltip said "click to go there" and the
+  -- click only closed the window - state map)
+  if row.here and (not row.route or row.route == ForeverRouteData) then if f then f:Hide() end; return end
+  -- (no ready route: without the companion nothing can plan one - the row says "no route yet" and does nothing)
+  if not row.route and not (ns.HasCompanion and ns.HasCompanion()) then return end
+  return Paths.Request(row.zone, row.route)
 end
-function Paths.Request(zone)
+-- route: the row's own route (a row is keyed by the zone its route works in - Shen'dralas's route all in Desolace is the
+-- Desolace row - so the zone's name can find another route than the one the row counted: the hopper picked Redridge
+-- and got an empty one)
+function Paths.Request(zone, route)
   ns.char.requestZone = zone; ns.char.requestHandled = nil
   -- a ready-made route into that zone: go now (the next replan builds your whole path from there, and the addon moves
   -- you onto it); without one, the planner makes it after your next save
-  local zr = zone and ns.ZoneRouteFor and ns.ZoneRouteFor(zone)
+  local zr = (route and route.zoneRoute and route) or (zone and ns.ZoneRouteFor and ns.ZoneRouteFor(zone))
   if zone == Paths.PLANNED then
     ns.char.requestZone = nil
     ns.LeaveDungeonRoute(); ns.Fire("FR_ROUTE_CHANGED"); ns.Engine.Refresh()
@@ -245,9 +278,9 @@ function Paths.Request(zone)
   if zr then
     ns.EnterZoneRoute(zr.id); ns.Fire("FR_ROUTE_CHANGED"); ns.Engine.Refresh()
     if ns.Why then ns.Why("path", "you picked " .. zone .. ": on its ready-made route now; your next plan starts there") end
-    ns.Print("Now heading to " .. zone .. " (the route takes you there, with pick-ups on the way). Your next plan builds your path from there - no need to wait for it.")
+    ns.Print("Now heading to " .. zone .. " (the route takes you there, with pick-ups on the way). PLANNED NEXT in Where to? takes you back to your plan.")
   else
-    ns.Print(zone and ("Asked for a path starting in " .. zone .. ". /reload to send it to the planner (about 5 minutes), then /reload once more to get it.") or "Cleared your zone request.")
+    ns.Print(zone and ("Asked for a path starting in " .. zone .. ". /reload to send it to the planner, then /reload once more to get it.") or "Cleared your zone request.")
   end
   Paths.Draw()
 end
@@ -266,13 +299,14 @@ end
 local MAX_NO_ROUTE = 3
 function Paths.State()
   local list = ns.MainRoutes()
-  local st = { tab = Paths.tab, list = list, rows = {}, more = 0, level = 0 }
+  local st = { tab = Paths.tab, list = list, rows = {}, more = 0, moreNames = {}, level = 0 }
   local zc = ns.ZoneChoices and ns.ZoneChoices() or { rows = {} }
   st.level = zc.level or 0
   local noRoute = 0
   for _, z in ipairs(zc.rows) do
     if z.route or z.planned or z.handIns > 0 then st.rows[#st.rows + 1] = z
-    else noRoute = noRoute + 1; if noRoute <= MAX_NO_ROUTE then st.rows[#st.rows + 1] = z else st.more = st.more + 1 end end
+    elseif not (ns.HasCompanion and ns.HasCompanion()) then -- (nothing to click without the companion)
+    else noRoute = noRoute + 1; if noRoute <= MAX_NO_ROUTE then st.rows[#st.rows + 1] = z else st.more = st.more + 1; st.moreNames[#st.moreNames + 1] = Style.ShortZone(z.zone) end end
   end
   -- the zone that pays most per hour, when it is not the planned one (a ready route: XP/h is that route's)
   st.help = Paths.HelpText(list)
@@ -289,31 +323,36 @@ local function layoutZones(st)
   for _, z in ipairs(st.rows) do
     local b = zoneRow(z.key)
     b.row = z
-    b.name:SetText(Style.ShortZone(z.zone))
-    local right = {}
-    -- the XP left there for you, and what share of your level that is: finish this zone, or go where there is more
+    b.name:SetText(Style.ShortZone(z.zone) .. (z.also and (" + " .. Style.ShortZone(z.also)) or ""))
+    -- the XP left there for you, and how many levels that is from where you are: finish this zone, or go where there is
+    -- more ("106%" of a level read as nonsense with 40k to go - tester; the quest count went to the tooltip, it was cut off)
+    local right = ""
     if z.xpLeft and z.xpLeft > 0 then
-      local need = (UnitXPMax and UnitXPMax("player")) or 0
-      right[#right + 1] = "~" .. Paths.Short(z.xpLeft) .. " XP" .. (need > 0 and string.format(" (%d%%)", math.floor(100 * z.xpLeft / need + 0.5)) or "")
+      -- (and the level that gets you to: "to 36.4" says at once whether the zone gets you your next level)
+      local lv = Paths.Levels(z.xpLeft)
+      local L, m = (UnitLevel and UnitLevel("player")) or 1, (UnitXPMax and UnitXPMax("player")) or 0
+      local at = L + (m > 0 and ((UnitXP and UnitXP("player")) or 0) / m or 0) + lv
+      right = "~" .. Paths.Short(z.xpLeft) .. " XP" .. (lv >= 0.05 and string.format("  ·  to %.1f", math.min(60, math.floor(at * 10) / 10)) or "")
     end
-    if z.questsLeft then right[#right + 1] = z.questsLeft .. (z.questsLeft == 1 and " quest" or " quests") end
-    b.right:SetText(table.concat(right, "  ·  "))
+    b.right:SetText(right)
     -- the pill says what it is; the reason follows it
     -- PLANNED NEXT is what your plan does; the XP at the right says what each zone holds for you
-    local pill = (z.best and "PLANNED NEXT") or (z.here and "YOU'RE HERE") or nil
+    local picked = ForeverRouteData and ForeverRouteData.zoneRoute and z.route == ForeverRouteData
+    local pill = (z.best and "PLANNED NEXT") or (picked and "YOUR PICK") or (z.here and "YOU'RE HERE") or nil
     b.pill:SetShown(pill ~= nil)
     if pill then b.pill:Set(pill, z.best and C.gold or C.good) end
     local why = {}
     if z.best and z.here then why[#why + 1] = "you're here" end
-    if z.planned then why[#why + 1] = onZone and "where your planned route picks up" or "next on your planned route" end
+    if z.planned then why[#why + 1] = z.via and ("pick up " .. (z.via.name or "a quest") .. " in " .. Style.ShortZone(z.via.zone) .. " first") or (onZone and "where your planned route picks up" or "next on your planned route") end
     -- one chain reason: hand-ins waiting, else a quest you carry there, else what it needs first
     if z.handIns > 0 then why[#why + 1] = z.handIns .. (z.handIns == 1 and " hand-in waiting" or " hand-ins waiting")
     elseif z.continues then why[#why + 1] = "continues " .. z.continues
-    elseif z.needs then why[#why + 1] = "needs " .. z.needs.name .. (z.needs.zone and (" (" .. Style.ShortZone(z.needs.zone) .. ")") or "") .. " first" end
+    elseif z.needs then why[#why + 1] = "starts with " .. z.needs.name .. (z.needs.zone and (" (" .. Style.ShortZone(z.needs.zone) .. ")") or "") end
     if not z.route and not z.planned then why[#why + 1] = "no route yet" end
     b.why:ClearAllPoints()
     if pill then b.why:SetPoint("LEFT", b.pill, "RIGHT", 8, 0) else b.why:SetPoint("TOPLEFT", 12, -23) end
     b.why:SetPoint("RIGHT", b, "RIGHT", -10, 0)
+    while #why > 2 do table.remove(why) end -- (a third was cut off at the row's edge)
     b.why:SetText(table.concat(why, "  ·  "))
     paintRow(b)
     b:ClearAllPoints(); b:SetPoint("TOPLEFT", f.content, "TOPLEFT", 0, -y); b:Show()
@@ -358,8 +397,29 @@ local function layoutPlan(st)
   if d and d.zoneRoute then
     -- on a zone you picked: that zone, then where your planned route picks up
     ahead[1] = { zone = d.zoneName or "", quests = 0, names = { "the zone you picked" }, now = true }
-    local nz = ns.PlannedNextZone and ns.PlannedNextZone()
-    if nz then ahead[2] = { zone = nz, quests = 0, names = { "where your planned route picks up" } } end
+    -- then your plan from where it picks up, zone by zone, as on the plan itself (two rows hid that the plan adapts;
+    -- its quests already done by now are left out)
+    local nz, r = nil, nil
+    if ns.PlannedNextZone then nz, r = ns.PlannedNextZone() end
+    local S = ns.State
+    local list = (r and ns.Steps(r)) or {}
+    local TRAVEL = { fly = true, hearth = true, boat = true, fp = true, bind = true }
+    local from
+    for j, s in ipairs(list) do if s.zone == nz and s.q and not S.IsCompleted(s.q) then from = j; break end end
+    local cur
+    for j = from or (#list + 1), #list do
+      local s = list[j]
+      if not TRAVEL[s.k] and s.zone and not (s.q and S.IsCompleted(s.q)) and not (ns.IsCapital and ns.IsCapital(s.zone)) then
+        if not cur or Style.ShortZone(cur.zone) ~= Style.ShortZone(s.zone) then
+          if #ahead >= 9 then break end
+          cur = { zone = s.zone, quests = 0, names = {}, seen = {} }; ahead[#ahead + 1] = cur
+        end
+        if s.q and s.q > 0 and not cur.seen[s.q] then cur.seen[s.q] = true; cur.quests = cur.quests + 1; cur.names[#cur.names + 1] = s.name end
+      end
+    end
+    for k = #ahead, 2, -1 do if ahead[k].quests == 0 then table.remove(ahead, k) end end
+    if ahead[2] then table.insert(ahead[2].names, 1, "your plan picks up here") end
+    if not ahead[2] and nz then ahead[2] = { zone = nz, quests = 0, names = { "your plan picks up here" } } end
   else
     for _, z in ipairs(ns.Engine.ZonesAhead and ns.Engine.ZonesAhead(nil, 12) or {}) do
       local last = ahead[#ahead]
@@ -400,7 +460,7 @@ function Paths.Draw()
   for _, b in ipairs(f.tabs) do b.on = (b.key == "zones") == zones; paintTab(b) end
   f.tabs[2].label:SetText("Plan")
   f.title:SetText(TABS[zones and "zones" or "paths"].title)
-  f.intro:SetText(zones and string.format("Level %d  ·  XP left per zone (%% of level)", st.level) or "The zones ahead on your plan, and the quests in each")
+  f.intro:SetText(zones and (string.format("Level %d", st.level) .. (function() local m, h = UnitXPMax and UnitXPMax("player") or 0, UnitXP and UnitXP("player") or 0; return m > 0 and ("  ·  " .. Paths.Short(m - h) .. " XP to " .. (st.level + 1)) or "" end)() .. "  ·  XP each zone has for you") or "The zones ahead on your plan, and the quests in each")
   -- everything hidden, then what this tab shows
   for _, b in pairs(rows) do b:Hide() end
   for _, c in pairs(cards) do c:Hide() end
@@ -410,7 +470,10 @@ function Paths.Draw()
   f.content:SetHeight(math.max(h, 1))
   local foot
   if zones then
-    foot = st.help or (st.more > 0 and string.format("+%d more zone%s at your level the planner can make a route for", st.more, st.more == 1 and "" or "s")) or nil
+    -- (by name: "+3 more zones" said there were more without saying which - tester)
+    -- (a chain you carry here turning gray soon: said here, not only in a row's tooltip)
+    local risk = ns.ChainsAtRisk and ns.ChainsAtRisk()[1]
+    foot = st.help or (risk and risk.line and ("|cffff7359Leaving now: " .. risk.line .. "|r")) or (st.more > 0 and ("Also at your level, no route yet: " .. table.concat(st.moreNames, ", "))) or nil
   end
   f.foot:SetText(foot or ""); f.foot:SetShown(foot ~= nil)
   setScroll(f.scroll:GetVerticalScroll())
