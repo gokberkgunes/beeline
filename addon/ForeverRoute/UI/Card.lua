@@ -362,6 +362,10 @@ end
 -- the "N won't do" link: at the right of the footer, or - while you hover the card and its controls take that spot -
 -- at the left, where the footer line fades out. It used to hide on hover, so the mouse on its way to click it
 -- made it vanish (tester)
+-- the rows under the card's step (each shown by Card.Layout when it has something to say)
+function Card.ExtraRows()
+  return { home = f.home, offer = f.offer, errand = f.errand, ready = f.ready, itemq = f.itemq, special = f.special, extra = f.extra, save = f.save }
+end
 function Card.PlaceDrop(hover)
   if not f or not f.drop then return end
   f.drop:ClearAllPoints()
@@ -1096,6 +1100,8 @@ function Card.Layout()
     for _, r in ipairs(f.rows) do r:Hide() end
     f.eta:Hide(); f.ret:Hide(); f.drop:Hide(); f.dropWanted = nil
     for _, b in pairs(f.btn) do b:Hide() end
+    -- (and every row under the card: the reminders, offers and Change home base stayed below a collapsed card - tester)
+    for _, row in pairs(Card.ExtraRows()) do row:Hide() end
     f.ctl:ClearAllPoints(); f.ctl:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 4, -top + 6)
     f.btn.min:Show(); f.btn.min:ClearAllPoints(); f.btn.min:SetPoint("RIGHT", f.ctl, "RIGHT")
     f:SetHeight(top + 8)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.3 - 2026-11-15
+- The Drowned City: inside, the card shows its quests from your log (Shady Saltseers, The Saltseer Captain, Ancient Gurubashi Secrets) instead of your next step outside.
+- Joining your plan partway into a zone no longer drops that zone's earlier quests: anything there at your level stays on your route (half of Riverglades - Gnoll Infestation, Bats in the Belfry - was left out, and the card jumped between them as you walked).
+- In a town the card keeps its stop until you do it, instead of switching sides as you walk through; a hand-in jumps the queue only when you are at its NPC.
+- Collapsing the card hides everything under it (reminders, Zones, Change home base and the next-zone line stayed).
+- A quest behind you that the card picked up stays on the card while you walk on, and says what it pays ("+2.4k XP") instead of a time it doesn't save.
+
 ## 1.6.2 - 2026-11-15
 - New options window: tabs down the side (General, Auto, Map, Size, News, Help) instead of one long list, short labels, a Reset tab link on each, and a search box that finds any option ("food", "arrow", "scale").
 - Turn each card line on or off: step notes, the next-zone line, zone suggestions, quest items in your bags, and the reminders (bags full, Well Fed food, warlock grimoires). Or pick a look in one click: Full, Compact or Minimal.

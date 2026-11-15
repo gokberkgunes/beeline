@@ -35,6 +35,7 @@ ns.DUNGEONS = {
   [533] = "Naxxramas",
   [2921] = "Naxxramas",
   [2959] = "City of Dalaran",
+  [2970] = "The Drowned City",
   [2998] = "Excavation Site: Wetlands",
   [2999] = "Ruins of Lordaeron",
   [3065] = "The Hall of Thanes",
@@ -501,6 +502,14 @@ ns.DUNGEON_QUESTS = {
       { 96984, "Heart of Disruption", 30, "H", nil, "Image of Archmage Modera, Alterac Mountains", any = { 92434 } },
       { 96986, "The Grave Knight", 24, "H", nil, "Melisara, Hillsbrad Foothills" },
       { 96988, "Source of Power", 24, "H", nil, "Doctor Martin Felben, Undercity" },
+    },
+  },
+  [2970] = { -- The Drowned City
+    ids = "95789 95791 97130",
+    open = {
+      { 95789, "Shady Saltseers", 34, nil, nil, "Krazek, Stranglethorn Vale" },
+      { 95791, "The Saltseer Captain", 34, nil, nil, "Krazek, Stranglethorn Vale" },
+      { 97130, "Ancient Gurubashi Secrets", 34, "A", nil, "Archmage Timear, Alterac Mountains" },
     },
   },
   [2998] = { -- Excavation Site: Wetlands

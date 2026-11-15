@@ -16,9 +16,12 @@ Next.WINDOW = 14        -- planned stops the solve looks at
 Next.SCAN = 90          -- steps scanned for them
 Next.NEAR_READY = 500   -- yards: finished quests further than this are left to the plan (a bound on the candidates: Next.Prize decides)
 Next.MARGIN = 40        -- seconds: a new pick must beat keeping the current one by this much (no flip-flopping)
+Next.PASS_NEAR = 40     -- yards: a stop this close is an interrupt (said at once, no margin) - you are at its NPC
+Next.SAME_PLACE = 200   -- yards: the card's stop and a new pick this close together: the order is yours, the card stays
 Next.CARRY = 30         -- seconds: what carrying a finished quest costs (a log slot, the risk it goes gray)
 Next.BEHIND_YD = 2000   -- yards: a pick-up the built-in plan passed as behind you, this close, is a candidate (Next.Prize decides)
 Next.BEHIND_MAX = 6     -- ...the nearest this many
+Next.BEHIND_KEEP = 2    -- ...and the one on the card stays one out to this many times BEHIND_YD (no flipping as you walk)
 Next.HOLD_NEAR = 400    -- yards: a prize this close can come before the plan's trip or grind step
 Next.BEHIND_WORK = 150  -- seconds: an objective's work and the way to it, for a step that doesn't carry the planner's (s.work)
 Next.DISMISS_SECS = 900 -- "not now" on a while-you're-here stop: it stays off for this long...
@@ -748,7 +751,10 @@ local function pick(planned)
       if s.q and tonumber(s.level) and Next.BehindLevelOk(s.level, L) and not byStep[j] then
         local w = wpos(s)
         local d2 = w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2
-        if d2 and d2 <= Next.BEHIND_YD ^ 2 and not St.OnQuest(s.q) and not St.IsCompleted(s.q) then
+        -- (the one on the card: further, Next.BEHIND_KEEP - walking along a zone border took a tester past 2000 yd and
+        -- back, and the card flipped between The Lost Scout and the plan's step three times)
+        local reach = (last and last.pick == j) and Next.BEHIND_YD * Next.BEHIND_KEEP or Next.BEHIND_YD
+        if d2 and d2 <= reach ^ 2 and not St.OnQuest(s.q) and not St.IsCompleted(s.q) then
           local prize = Next.Prize(list, s, planned, true)
           if prize > 0 and E.BehindYou(s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q)) then
             found[#found + 1] = { j = j, d2 = d2, prize = prize }
@@ -899,12 +905,21 @@ local function pick(planned)
   local fw = res.first and res.first.w
   -- (a quest behind you on the plan is a choice, not an interrupt: it keeps the margin too - several of them close by
   -- swapped on the card as you walked through Stranglethorn, tester)
-  local passing = res.first and res.first.opt and not res.first.behind and fw and fw[3] == pinst and (fw[1] - px) ^ 2 + (fw[2] - py) ^ 2 <= Next.HOLD_NEAR ^ 2
+  -- (an interrupt only at its NPC, Next.PASS_NEAR: within HOLD_NEAR, 400 yd, every hand-in of a town was one, and the
+  -- card swapped between the town's left and right side as you walked through the middle - tester)
+  local passing = res.first and res.first.opt and not res.first.behind and fw and fw[3] == pinst and (fw[1] - px) ^ 2 + (fw[2] - py) ^ 2 <= Next.PASS_NEAR ^ 2
   local keep = not passing and last and last.pick and byStep[last.pick] and last.pick ~= pick and list[last.pick]
+  -- (the card's stop and the new pick in the same place - a town, a camp: which first is yours to choose, and you pick
+  -- up what you pass anyway. The card stays on its stop until it is done)
+  local samePlace = false
+  if keep then
+    local kw, nw = byStep[last.pick].w, fw
+    samePlace = kw and nw and kw[3] == nw[3] and (kw[1] - nw[1]) ^ 2 + (kw[2] - nw[2]) ^ 2 <= Next.SAME_PLACE ^ 2
+  end
   if keep then
     P.first = last.pick
     local kept = ns.Horizon.Solve(P)
-    if kept.first and res.score - kept.score < Next.MARGIN then Next.vendor = nil; local kp, kst = firstStep(kept); if kst then kept.first = kst end; res, pick = kept, kp or last.pick end
+    if kept.first and (samePlace or res.score - kept.score < Next.MARGIN) then Next.vendor = nil; local kp, kst = firstStep(kept); if kst then kept.first = kst end; res, pick = kept, kp or last.pick end
   end
   -- what the pick saves over doing the plan's step first: the window solved with that step first, against this one
   -- (the card says it: "saves ~3 min" - a reason without a number read as an opinion, persona review). Once per pick:
@@ -1044,6 +1059,16 @@ function Next.Tag(i)
   elseif st.early and st.visit then tag = "saves a trip back"
   elseif st.early then tag = "while you're here"
   else tag = "on the way" end
+  -- a quest behind you saves no time: it adds XP the plan would not get you (the score counts XP as time, so "saves
+  -- ~24 min" was its XP - tester). It says what it pays; anything else what it saves
+  if st.behind then
+    local s = ForeverRouteData and ForeverRouteData.steps and ForeverRouteData.steps[i]
+    local L = (UnitLevel and UnitLevel("player")) or 1
+    local xp = s and s.q and ns.QuestXp and ns.QuestXp(s.q, L)
+    if not xp and s and tonumber(s.level) and ns.Engine and ns.Engine.QuestXP then xp = ns.Engine.QuestXP(tonumber(s.level), L) end
+    if xp and xp >= 100 then tag = tag .. " · +" .. (xp >= 1000 and string.format("%.1fk", xp / 1000) or tostring(math.floor(xp))) .. " XP" end
+    return tag
+  end
   local saves = res.saves
   local min = saves and math.floor(saves / 60 + 0.5) or 0
   if res.first and res.first.step == i and min >= 1 then tag = tag .. " · saves ~" .. min .. " min" end

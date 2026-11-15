@@ -491,8 +491,21 @@ function Engine.BehindYou(s)
   local _, at = Engine.Place()
   local f1, f2 = nil, nil
   if at then f1, f2 = Engine.FirstStretch() end
-  -- before the trip you joined at, and not in the stretch you start in
-  local function before(j) return at ~= nil and j < at and not (f1 and j >= f1 and j <= f2) end
+  -- before the trip you joined at, and not in the stretch you start in - nor a quest in the zone you joined in, at your
+  -- level: the card sent a tester to Riverglades and the first half of its quests (Gnoll Infestation, 36, at 37, from
+  -- the giver he stood at) were behind him, because the plan reached his level at step 1132; offered back one by one as
+  -- extras, the nearest few changed as he walked and the card jumped between them
+  -- (the zone of your place: the first step there with one - you join at a trip, and a trip has none)
+  local atZone
+  if at then for k = at, math.min(#list, at + 40) do if list[k].zone then atZone = list[k].zone; break end end end
+  local function before(j)
+    if not (at ~= nil and j < at and not (f1 and j >= f1 and j <= f2)) then return false end
+    -- (the quest's own level: one far below you stays behind, wherever the plan put it)
+    local t = list[j]
+    local ql = tonumber(t.level) or c.eff[j]
+    if atZone and t.q and t.q > 0 and t.zone == atZone and (ql == nil or ql >= L - Engine.JOIN_GAP) then return false end
+    return true
+  end
   -- below your place: that, or more than JOIN_GAP levels below you (not while you are still in the plan's first
   -- stretch, the start zone: its chains lead out of it, and at 5 nothing of it is behind you)
   local start = at == nil and joinStep(L) == 1
