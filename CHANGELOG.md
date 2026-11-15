@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.6.0 - unreleased
+## 1.6.1 - 2026-11-15
+- A quest you finish early no longer waits for your plan to pass its hand-in levels later, gray by then: when going now is worth more than what waiting would lose, it is your next stop.
+- "Do it now" on a hand-in nearby: the card's Base count and the zones ahead stay on your plan while you hand it in (they showed the far part of the plan the hand-in was filed under), and the card goes back to your plan after.
+
+## 1.6.0 - 2026-11-15
 - Every built-in plan rebuilt on the latest quest data (QuestieDB 1.1.1: 21 new quests, 296 corrected). Each was played from 1 to 60 by the simulated player and by one hopping between zones before it shipped.
 - Your home base: the zone you work from, and the card always says which ("Base: Stranglethorn"). On your plan it is the plan's zone; "Change home base" on the card opens Where to? to pick another. It brings along the quests you already carry there. Near its end the card tells you once how much XP is left and the next bases; when nothing is left but quests that open later ("2 quests here open at 40"), it lists your next home bases to click. "Back to plan" takes you back to your plan, wherever you are.
 - Finishing an objective, taking or handing in a quest, levelling up or entering a zone costs much less again: the addon reads your quest log once per change instead of asking the game about every quest on your route, and remembers how far your plan is done.

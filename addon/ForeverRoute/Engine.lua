@@ -944,8 +944,16 @@ end
 
 function Engine.Shown() return Engine.view or Engine.current end
 -- progress through the zone you're in: the stretch between the travel steps around the shown step
+-- where you are on your plan: its own step, not a stop shown ahead of it (a hand-in you chose with "Do it now", the
+-- solve's pick) - the card's "Base:" count and the zones ahead said Burning Steppes, level 59, while a Stormwind hand-in
+-- filed there was on the card (tester)
+function Engine.PlanAt()
+  local p, list = Engine.planned, steps()
+  if p and list[p] and not Engine.view then return p end
+  return Engine.Shown()
+end
 function Engine.LegProgress(i)
-  local list = steps(); i = i or Engine.Shown()
+  local list = steps(); i = i or Engine.PlanAt()
   if not i or not list[i] then return 0, 0, nil end
   local a, b = i, i
   while a > 1 and list[a].k ~= "fly" do a = a - 1 end
@@ -964,7 +972,7 @@ end
 function Engine.ZonesAhead(i, n)
   local list, out = steps(), {}
   n = n or 8
-  if not i then i = Engine.current or 1 end
+  if not i then i = Engine.PlanAt() or Engine.current or 1 end
   local cur
   local function close()
     if cur and (cur.quests > 0 or cur.grind) then

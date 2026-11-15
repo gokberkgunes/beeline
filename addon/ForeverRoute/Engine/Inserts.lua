@@ -210,6 +210,29 @@ end
 -- finished quests in your log with no hand-in on the route: add one where it costs least
 -- how far out of the way (yards, there and back) a gray hand-in may take you: about a 20-second walk
 Engine.GRAY_DETOUR_YD = 150
+-- Where it costs least by the walk can be where the plan next passes the hand-in, levels later: the quest is gray by
+-- then and pays a tenth (The Perenolde Tiara, finished at 37, filed under the plan's Stormwind visit at 59 - tester).
+-- The XP it would lose by waiting is weighed against going now, there and back, at half a level an hour (as a
+-- leftover's trip is, Engine/Worth.lua); worth more than that trip, the hand-in is your next stop.
+-- -> the step the hand-in goes before now (nil: where the walk says), the XP it would lose, the trip's seconds
+function Engine.HandInNow(step, ql, at)
+  local list = steps()
+  local me = UnitLevel and UnitLevel("player") or 1
+  if type(ql) ~= "number" or not at or not Engine.current then return nil end
+  local t = list[at] or list[at - 1] or list[#list]
+  local then_ = math.max(me, tonumber(t and t.lvl) or me)
+  local lost = Engine.QuestXP(ql, me) - Engine.QuestXP(ql, then_)
+  if lost <= 0 then return nil end
+  local pm, px, py = ns.State.Position()
+  if not (pm and step.m and step.x) or not (ns.Travel and ns.Travel.Plan) then return nil end
+  local _, secs = ns.Travel.Plan({ m = pm, x = px, y = py }, { m = step.m, x = step.x, y = step.y, name = step.npc }, { hearth = false })
+  if not secs then return nil end
+  local perLevel = (UnitXPMax and UnitXPMax("player")) or 0
+  if perLevel <= 0 then return nil end
+  local tripCost = perLevel / ((Engine.WORTH_LEVEL_HOURS or 2) * 3600) * (2 * secs) -- there and back
+  if lost <= tripCost then return nil end
+  return Engine.current, lost, secs
+end
 local function applyInserts()
   local list = steps()
   if not (ForeverRouteEnders and ForeverRouteData and #list > 0) then return false end
@@ -231,6 +254,12 @@ local function applyInserts()
       local gray = type(ql) == "number" and type(me) == "number" and (me - ql) > ((okG and type(green) == "number" and green) or 8)
       local opts = gray and { maxCost = Engine.GRAY_DETOUR_YD, why = "gray, but right on the way" }
         or (behind[q] and { maxCost = Engine.MERGE_PATH_YARDS, why = "its hand-in is behind you in the plan, and the route passes by" }) or nil
+      -- (not gray, not behind you: would waiting for the cheapest spot cost more XP than going now?)
+      if not opts and type(ql) == "number" then
+        local at = Engine.InsertStop(step, px, py, pinst, { dry = true })
+        local now, lost, secs = Engine.HandInNow(step, ql, at)
+        if now then opts = { at = now, why = string.format("worth going now: waiting would lose ~%d XP, ~%d min there and back", lost, math.floor(2 * secs / 60 + 0.5)) } end
+      end
       if Engine.InsertStop(step, px, py, pinst, opts) then added = true; have[q] = true end
     end
   end
