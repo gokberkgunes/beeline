@@ -46,11 +46,33 @@ function State.SupersededBy(id)
   return nil
 end
 
+-- the quests in your log, read once per log change: { [questID] = true }, or false when the log can't be read whole
+-- (a collapsed header hides its quests from the list: then each quest is asked about by its ID, as before). A refresh
+-- asks about every quest on the route - ~600 on a built-in plan - and asking the game each by ID was most of a full
+-- look in the game (50-110 ms at level 36, a tester's saved timings; the simulator's quest API costs nothing)
+local logSet = nil
+local function readLog()
+  local fn = (C_QuestLog and C_QuestLog.GetNumQuestLogEntries) or GetNumQuestLogEntries
+  local entries, quests = call(fn)
+  if type(entries) ~= "number" or type(quests) ~= "number" then return false end
+  local set, n = {}, 0
+  for i = 1, entries do
+    local id, hdr
+    if C_QuestLog and C_QuestLog.GetInfo then local info = call(C_QuestLog.GetInfo, i); if info then id, hdr = info.questID, info.isHeader end
+    elseif GetQuestLogTitle then local _, _, _, h, _, _, _, q = call(GetQuestLogTitle, i); id, hdr = q, h end
+    if not hdr and type(id) == "number" and id > 0 then set[id] = true; n = n + 1 end
+  end
+  if n ~= quests then return false end
+  return set
+end
+State._readLog = readLog -- (tests)
 -- per-quest live info, by quest ID
 function State.Quest(id)
   if not id then return nil end
   local c = cache[id]
   if c then return c end
+  if logSet == nil then logSet = readLog() end
+  if logSet and not logSet[id] then c = { on = false, objectives = {} }; cache[id] = c; return c end
   local on = C_QuestLog and C_QuestLog.IsOnQuest and call(C_QuestLog.IsOnQuest, id)
   if on == nil and C_QuestLog and C_QuestLog.GetLogIndexForQuestID then on = call(C_QuestLog.GetLogIndexForQuestID, id) ~= nil end
   c = { on = on and true or false, objectives = {} }
@@ -85,6 +107,8 @@ end
 -- is the quest log full? Asked for every pick-up on every refresh: read at most once a second, and again as soon as
 -- the log changes (QUEST_LOG_UPDATE)
 local fullAt, fullWas = -100, false
+-- how many flight paths you know (the trip planner's memos key on it)
+function State.KnownTaxiCount() local n = 0; for _ in pairs(State.knownTaxi or {}) do n = n + 1 end; return n end
 function State.LogFull()
   local now = GetTime and GetTime() or 0
   if now - fullAt < 1 then return fullWas end
@@ -339,14 +363,14 @@ function State.CheckLog()
       any = true
       local on = C_QuestLog and C_QuestLog.IsOnQuest and call(C_QuestLog.IsOnQuest, id)
       if on == nil and C_QuestLog and C_QuestLog.GetLogIndexForQuestID then on = call(C_QuestLog.GetLogIndexForQuestID, id) ~= nil end
-      if not on then return "changed" end
+      if not on then return "undone" end
       local objs = C_QuestLog and call(C_QuestLog.GetQuestObjectives, id)
       if type(objs) ~= "table" or #objs ~= #c.objectives then return "changed" end
       local complete = C_QuestLog and C_QuestLog.IsComplete and call(C_QuestLog.IsComplete, id)
-      if complete ~= nil and (complete and true or false) ~= c.complete then return "changed" end
+      if complete ~= nil and (complete and true or false) ~= c.complete then return c.complete and "undone" or "changed" end
       for i, o in ipairs(objs) do
         local was = c.objectives[i]
-        if (o.finished and true or false) ~= (was.finished and true or false) then return "changed" end
+        if (o.finished and true or false) ~= (was.finished and true or false) then return was.finished and "undone" or "changed" end
         if (o.text or "") ~= was.text or (o.numFulfilled or 0) ~= was.have or (o.numRequired or 0) ~= was.need then fresh[#fresh + 1] = { was, o } end
       end
     end
@@ -362,6 +386,8 @@ local function settle()
   if not fullDue and now() - lastFull < State.FULL_EVERY then
     local ok, how = pcall(State.CheckLog)
     if ok and how == "same" then return end
+    -- (something done is not any more - an item destroyed, a quest dropped: the plan is looked at from its start again)
+    if ok and how == "undone" and ns.Engine and ns.Engine.ForgetDone then ns.Engine.ForgetDone() end
     if ok and how == "counts" then
       local t0 = debugprofilestop and debugprofilestop()
       ns.Fire("FR_PROGRESS")
@@ -370,7 +396,7 @@ local function settle()
     end
   end
   fullDue, lastFull = false, now()
-  wipe(cache); wipe(notDone)
+  wipe(cache); logSet = nil
   State.logCountWas = State.LogCount()
   local t0 = debugprofilestop and debugprofilestop()
   if ns.Engine and ns.Engine.Coalesce then ns.Engine.Coalesce(function() ns.Fire("FR_STATE") end) else ns.Fire("FR_STATE") end
@@ -383,7 +409,7 @@ local function schedule()
 end
 -- something more than a count may have changed: the full look
 local function refreshSoon()
-  wipe(cache); wipe(notDone)
+  wipe(cache); logSet = nil
   fullDue = true
   schedule()
 end
@@ -394,13 +420,14 @@ State._notDone, State._settle = notDone, settle -- (tests)
 
 ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {}; C_Timer.After(3, ns.Guard("taxi", State.ScanTaxi)) end)
 ns.On("TAXI_NODE_STATUS_CHANGED", function() C_Timer.After(0.5, ns.Guard("taxi", State.ScanTaxi)) end)
-ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); ns.NewTicker(300, function() State.Snapshot("periodic") end) end)
+ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); wipe(notDone); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); ns.NewTicker(300, function() State.Snapshot("periodic") end) end)
 ns.On("QUEST_LOG_UPDATE", logSoon)
 ns.On("UNIT_QUEST_LOG_CHANGED", function(unit) if unit == "player" then logSoon() end end)
 ns.On("QUEST_ACCEPTED", refreshSoon)
 ns.On("QUEST_REMOVED", refreshSoon)
 ns.On("QUEST_TURNED_IN", function(id)
   if id then State.completed[id] = true end
+  wipe(notDone) -- (a hand-in is what makes a quest done - and the ones it supersedes: asked again)
   refreshSoon()
   C_Timer.After(0.5, function() State.Snapshot("turnin") end)
 end)

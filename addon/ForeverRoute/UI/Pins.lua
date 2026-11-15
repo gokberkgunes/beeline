@@ -126,8 +126,7 @@ local function makePin()
   ag:SetScript("OnLoop", function() ag.loops = (ag.loops or 0) + 1; if ag.loops >= 5 then ag:Stop(); p.flash:SetAlpha(0) end end)
   p.blink = ag
   p:SetScript("OnClick", function(self)
-    if not self.index then return end
-    if IsShiftKeyDown() and not self.notYet then ns.Engine.Jump(self.index) else ns.Engine.view = (self.index ~= ns.Engine.current) and self.index or nil; ns.Fire("FR_STEP", ns.Engine.Shown()) end
+    ns.Engine.Look(self.index, nil, self.notYet) -- (a stop not open yet: no jumping there)
   end)
   return p
 end
@@ -403,7 +402,7 @@ end
 -- re-check nearness every couple of seconds as you move (rebuilds only when a pin comes near or goes far)
 ns.On("FR_LOADED", function() ns.NewTicker(2, ns.Guard("pins", function() Pins.Update() end)) end)
 
-ns.On("FR_STEP", function() Pins.Update() end)
+ns.On("FR_STEP", function() local t0 = debugprofilestop and debugprofilestop(); Pins.Update(); if t0 and ns.Time then ns.Time("pins on step", debugprofilestop() - t0) end end)
 ns.On("FR_DUNGEON", function() Pins.Update(true) end)
 ns.On("FR_SETTINGS", function() Pins.Update(true) end)
 ns.On("FR_ROUTE_CHANGED", function() Pins.Update(true) end)
@@ -435,6 +434,10 @@ Pins.PLANNED_OFF_YD = 45
 function Pins.OnPlanned(i)
   local t = ns.Arrow and ns.Arrow.Current and ns.Arrow.Current()
   if not t or t.index ~= i then return -1 end -- nothing to walk to (a flight), or the arrow hasn't turned to this step yet
+  -- dead: the arrow and its line go to your corpse - the step's planned trail (from the stop before it, wherever that
+  -- was) is not the way you are going. It was drawn whole: the corpse target has no path of its own, which read as
+  -- "nothing to judge" (a trail from Grom'gol to the Mosh'Ogg mound with the player a ghost far south - tester)
+  if t.corpse then return -1 end
   local P = t.path
   if not (P and P.pts and #P.pts >= 2) then return nil end
   local px, py, pinst = HBD:GetPlayerWorldPosition()

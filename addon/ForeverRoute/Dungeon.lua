@@ -79,7 +79,7 @@ local function canTake(e, level, side, classBit)
   if level < (e[3] or 1) then return false end
   if e[4] and side and e[4] ~= side then return false end
   if e[5] and classBit and bit and bit.band(e[5], classBit) == 0 then return false end
-  if ns.char and ns.char.nope and ns.char.nope[e[1]] then return false end -- you said you're not doing it
+  if ns.Nope(e[1]) then return false end -- you said you're not doing it
   if ns.Avail and ns.Avail.Unavailable(e[1]) then return false end         -- its giver didn't offer it
   for _, q in ipairs(e.all or {}) do if not State.IsCompleted(q) then return false end end
   if e.any and #e.any > 0 then

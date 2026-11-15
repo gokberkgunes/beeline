@@ -38,7 +38,7 @@ local function world(m, x, y)
   local wx, wy, inst = HBD:GetWorldCoordinatesFromZone(x, y, m)
   if wx then return { wx, wy, inst } end
 end
-local function mapName(m) local i = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(m); return i and i.name or ("map " .. tostring(m)) end
+local mapName = ns.Util.MapName
 local function d(a, b) return math.sqrt((a.w[1] - b.w[1]) ^ 2 + (a.w[2] - b.w[2]) ^ 2) end
 -- the other faction's towns and camps (TravelData HOSTILE, from tools/hostile-towns.json): a ride through one costs
 -- HOSTILE_SEC more - guards, players, a detour. Possible (fine for PvP), just trouble.
@@ -471,6 +471,7 @@ function Travel.Plan(from, to, opts)
       local h = #N
       push(1, { h, Travel.HEARTH_CAST + Travel.HEARTH_VALUE, "hearth" }) -- one way: you can't hearth back
       for v = 3, #N - 1 do
+        if v % 32 == 0 then ns.MaybeYield() end
         local n = N[v]
         if n.w[3] == w[3] and (n.m == inn.m or n.m2 == inn.m) then edge(h, v, d(N[h], n) * Travel.OFFNET / Travel.Speed(), "ride") end
       end
@@ -548,6 +549,7 @@ function Travel.Plan(from, to, opts)
   local function placeName(n) return n.id == "target" and (to.name or mapName(n.m)) or (n.kind == "cross" and ((("the " .. n.name:gsub(" / ", " - ") .. " border"):gsub("^the The ", "the ")))) or n.town or n.name or mapName(n.m) end
   local legs = {}
   for k, c in ipairs(hops) do
+    ns.MaybeYield()
     local n, f = c.node, c.from
     if c.how == "ride" then
       local nxt = hops[k + 1]
@@ -563,9 +565,27 @@ function Travel.Plan(from, to, opts)
         -- to Alterac the arrow pointed at Southshore's flight master 70 yd away and read as "fly" - tester)
         for _, x in ipairs(c.via) do if x.w and f.w and (x.kind == "cross" or x.gate) and d(f, x) > Travel.AHEAD_YD then first = x; break end end
         if not first then for _, x in ipairs(c.via) do if x.w and f.w and d(f, x) > Travel.AHEAD_YD then first = x; break end end end
-        local crossings = {}
-        for _, x in ipairs(c.via) do if x.kind == "cross" or x.gate then crossings[#crossings + 1] = placeName(x) end end
-        local text = ns.RideWord() .. " " .. ((f.town and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. placeName(n) .. (#crossings > 0 and (" (through " .. table.concat(crossings, ", ") .. ")") or "")
+        -- the zones the ride passes through (a border crossing joins two: the ones neither where you start nor where you
+        -- go), and a gate by its name - not every border spelled out ("through the Duskwood - Westfall border, the
+        -- Duskwood - Stranglethorn Vale border" read as a puzzle - tester)
+        local via, seenZ = {}, {}
+        -- (never the place you go to: a road that dips into it and out again named it as a zone on the way)
+        seenZ[placeName(n) or ""] = true; seenZ[to.name or ""] = true; seenZ[mapName(n.m)] = true; if to.m then seenZ[mapName(to.m)] = true end
+        -- (a zone you ride through is the one two crossings in a row share: "Barrens / Ashenvale" then "Ashenvale /
+        -- Stonetalon" pass Ashenvale - where you start and where you go fall out by themselves, whatever the map calls them)
+        local prevSides
+        for _, x in ipairs(c.via) do
+          if x.gate then
+            local g = x.name or placeName(x)
+            if g and not seenZ[g] then seenZ[g] = true; via[#via + 1] = g end
+          elseif x.kind == "cross" and x.name then
+            local sides = {}
+            for z in (x.name .. " / "):gmatch("(.-) / ") do if z ~= "" then sides[z] = true end end
+            if prevSides then for z in pairs(sides) do if prevSides[z] and not seenZ[z] then seenZ[z] = true; via[#via + 1] = z end end end
+            prevSides = sides
+          end
+        end
+        local text = ns.RideWord() .. " " .. ((f.town and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. placeName(n) .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
         local tgt = first or n
         local tm, tx, ty = tgt.m, tgt.x, tgt.y
         if first and first.m2 == f.m then tm, tx, ty = first.m2, first.x2, first.y2 end
@@ -574,6 +594,7 @@ function Travel.Plan(from, to, opts)
         local passes, seen = {}, {}
         local pts = { f }; for _, x in ipairs(c.via) do pts[#pts + 1] = x end; pts[#pts + 1] = n
         for j = 1, #pts - 1 do
+          ns.MaybeYield()
           local a, b = pts[j].w, pts[j + 1].w
           local h = a and b and Travel.Through(a, b)
           if h and not seen[h] then seen[h] = true; passes[#passes + 1] = h.name or "a town of the other faction" end
@@ -587,7 +608,7 @@ function Travel.Plan(from, to, opts)
     elseif c.how == "spell" then
       -- nothing to point at either: cast it (Teleport: Moonglade)
       legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "spell", text = (n.spellSay or "Cast your teleport") .. " (to " .. (n.zone or mapName(n.m)) .. ")" }
-    elseif c.how == "fly" then legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = "Fly to " .. mapName(n.m) .. (f.name and (" (flight master " .. f.name .. ")") or "") }
+    elseif c.how == "fly" then legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = "Fly to " .. mapName(n.m) .. (f.name and (" (" .. f.name .. ")") or "") }
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
       local prevLeg = legs[#legs]

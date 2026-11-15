@@ -411,7 +411,7 @@ function Arrow.SetTarget(i, force)
   else
     target = nil; f:Hide(); ns.Fire("FR_DISTANCE", nil)
     if ns.Nav then ns.Nav.Want(nil) end
-    noteHidden(not step and "no step" or unknown and "where to do this isn't in the quest data" or inDungeon and ("inside " .. inDungeon .. " (no coordinates in a dungeon)") or ns.Is(UnitOnTaxi, "player") and "on a flight" or (trip and trip.how == "aboard") and "aboard (boat or tram, or somewhere no trip starts from)" or step.k == "hearth" and "hearth step (nowhere to walk)" or ("no position for this step: " .. tostring(step.k) .. " " .. tostring(step.text)))
+    noteHidden(not step and "no step" or unknown and "no known spot for this step" or inDungeon and ("inside " .. inDungeon .. " (no coordinates in a dungeon)") or ns.Is(UnitOnTaxi, "player") and "on a flight" or (trip and trip.how == "aboard") and "aboard (boat or tram, or somewhere no trip starts from)" or step.k == "hearth" and "hearth step (nowhere to walk)" or ("no position for this step: " .. tostring(step.k) .. " " .. tostring(step.text)))
   end
 end
 

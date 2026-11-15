@@ -193,8 +193,11 @@ ns.On("PLAYER_EQUIPMENT_CHANGED", function() if ns.char then ns.char.gearVerdict
 ns.On("FR_ROUTE_CHANGED", function() judgeQueue = nil end)
 ns.On("FR_LOADED", function() C_Timer.After(15, function() ns.NewTicker(2, ns.Guard("gear", function() Q.JudgeTick(3) end)) end) end)
 -- the step's note with the planner's reward guess replaced by the game's verdict
+-- (the shipped plans' note for a step with no known spot said "isn't in the quest data": plain words)
+local OLD_UNKNOWN = "Where to do this isn't in the quest data: follow your quest log and map."
 function Q.RewardNote(s)
   local note = s and s.note
+  if note == OLD_UNKNOWN then note = "No known spot for this: follow your quest log and map." end
   local v = note and s.reward and Q.Verdict(tonumber(s.reward))
   if not v then return note end
   local say = v.unusable and "not usable by you" or v.d > 0 and string.format("upgrade for you, +%d", v.d) or "not an upgrade for you"

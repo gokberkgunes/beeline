@@ -49,7 +49,7 @@ local function build()
       GameTooltip:AddLine("Click to look at its first step", 0.5, 0.55, 0.62); GameTooltip:Show()
     end)
     r:SetScript("OnLeave", GameTooltip_Hide)
-    r:SetScript("OnClick", function(self) if self.z then ns.Engine.view = (self.z.first ~= ns.Engine.current) and self.z.first or nil; ns.Fire("FR_STEP", ns.Engine.Shown()) end end)
+    r:SetScript("OnClick", function(self) if self.z then ns.Engine.Look(self.z.first, nil, true) end end)
     f.rows[n] = r
   end
   tab = CreateFrame("Button", nil, c); tab:SetSize(14, 40)

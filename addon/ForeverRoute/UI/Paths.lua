@@ -23,7 +23,7 @@ local RIGHT_W = 120                 -- the numbers at a row's right
 
 -- the two tabs: label, icon, colour, the window title and a line under it
 local TABS = {
-  zones = { label = "Zones", icon = "icon-goto", color = C.gold, title = "Where to?", tip = "The zones you could go to now" },
+  zones = { label = "Zones", icon = "icon-goto", color = C.gold, title = "Where to?", tip = "The zones you could go to now: pick one as your home base - you work from it until it runs out" },
   paths = { label = "Plan", icon = "btn-list", color = C.good, title = "Your plan", tip = "The zones ahead on your plan, with their quests" },
 }
 Paths.tab = "zones"
@@ -101,8 +101,8 @@ local function zoneRow(key)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(z.zone, 1, 1, 1)
     if z.planned then GameTooltip:AddLine("Next on your plan. The plan weighs more than one zone's XP: the trip there, chains that carry on, what comes after it, and coming back to zones you've done. Picking it keeps you on your path.", 0.72, 0.76, 0.84, true)
-    elseif z.route and z.xpLeft then GameTooltip:AddLine(string.format("About %s XP left there for you. Click to go there now: the route takes you there with the pick-ups on the way%s.", Paths.Short(z.xpLeft), (ns.HasCompanion and ns.HasCompanion()) and ", and your next plan is built from there" or ""), 0.72, 0.76, 0.84, true)
-    elseif z.route then GameTooltip:AddLine("Click to go there now: the route takes you there with the pick-ups on the way, and your plan carries on from it.", 0.72, 0.76, 0.84, true)
+    elseif z.route and z.xpLeft then GameTooltip:AddLine(string.format("About %s XP left there for you. Click to make it your home base: the route takes you there with the pick-ups on the way%s.", Paths.Short(z.xpLeft), (ns.HasCompanion and ns.HasCompanion()) and ", and your next plan is built from there" or ""), 0.72, 0.76, 0.84, true)
+    elseif z.route then GameTooltip:AddLine("Click to make it your home base: the route takes you there with the pick-ups on the way, and your plan carries on from it.", 0.72, 0.76, 0.84, true)
     else GameTooltip:AddLine("No ready route at your level yet." .. ((ns.HasCompanion and ns.HasCompanion()) and " Click to ask the planner for one." or ""), 0.72, 0.76, 0.84, true) end
     -- the chain behind the row's reason (Chains.lua ns.ChainLine): how far you are, what's left, where it goes on
     local cq = z.contQ or (z.needs and z.needs.q)
@@ -194,11 +194,8 @@ end
 
 local function build()
   f = CreateFrame("Frame", "ForeverRoutePaths", UIParent)
-  f:SetSize(W + RAIL, H); f:SetPoint("CENTER", 0, 40); f:SetFrameStrata("DIALOG")
-  f:SetClampedToScreen(true); f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  Style.Panel(f, C.bg2); Style.Scaled(f, nil, true)
-  table.insert(UISpecialFrames, "ForeverRoutePaths")
+  f:SetSize(W + RAIL, H); f:SetPoint("CENTER", 0, 40)
+  Style.Window(f, "ForeverRoutePaths")
   -- the rail
   f.rail = CreateFrame("Frame", nil, f)
   f.rail:SetPoint("TOPLEFT", 4, -4); f.rail:SetPoint("BOTTOMLEFT", 4, 4); f.rail:SetWidth(RAIL - 6)
@@ -206,7 +203,7 @@ local function build()
   f.tabs = { tabButton("zones", 8), tabButton("paths", 60) }
   -- the top: title, one line under it, close
   f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", LEFT, -12)
-  local close = Style.Button(f, "x", 18, 18, function() f:Hide() end, "Close"); close:SetPoint("TOPRIGHT", -8, -8)
+  local close = Style.CloseButton(f)
   f.intro = Style.Text(f, 10, C.sub); f.intro:SetPoint("TOPLEFT", LEFT, -34); f.intro:SetPoint("RIGHT", f, "RIGHT", -PAD, 0); f.intro:SetWordWrap(false)
   -- the list: scrolls inside a window that keeps its size
   f.scroll = CreateFrame("ScrollFrame", nil, f); f.scroll:EnableMouseWheel(true)
@@ -240,6 +237,13 @@ function Paths.Levels(xp)
     out = out + need / size; xp = xp - need; have = 0; L = L + 1
   end
   return out
+end
+-- seconds -> "here", "2 min away", "1 h 10 away"
+function Paths.Away(secs)
+  local m = math.floor((secs or 0) / 60 + 0.5)
+  if m < 1 then return "here" end
+  if m < 60 then return m .. " min away" end
+  return string.format("%d h %02d away", math.floor(m / 60), m % 60)
 end
 -- 14200 -> "14k", 1500 -> "1.5k", 950 -> "950"
 function Paths.Short(n)
@@ -277,8 +281,8 @@ function Paths.Request(zone, route)
   end
   if zr then
     ns.EnterZoneRoute(zr.id); ns.Fire("FR_ROUTE_CHANGED"); ns.Engine.Refresh()
-    if ns.Why then ns.Why("path", "you picked " .. zone .. ": on its ready-made route now; your next plan starts there") end
-    ns.Print("Now heading to " .. zone .. " (the route takes you there, with pick-ups on the way). PLANNED NEXT in Where to? takes you back to your plan.")
+    if ns.Why then ns.Why("path", "home base: " .. zone .. " - on its ready-made route now, with the quests you carry there; your next plan starts there") end
+    ns.Print("Home base: " .. zone .. ". \"Back to plan\" in Where to? returns you to your plan.")
   else
     ns.Print(zone and ("Asked for a path starting in " .. zone .. ". /reload to send it to the planner, then /reload once more to get it.") or "Cleared your zone request.")
   end
@@ -333,12 +337,15 @@ local function layoutZones(st)
       local L, m = (UnitLevel and UnitLevel("player")) or 1, (UnitXPMax and UnitXPMax("player")) or 0
       local at = L + (m > 0 and ((UnitXP and UnitXP("player")) or 0) / m or 0) + lv
       right = "~" .. Paths.Short(z.xpLeft) .. " XP" .. (lv >= 0.05 and string.format("  ·  to %.1f", math.min(60, math.floor(at * 10) / 10)) or "")
+      -- (and how far: the trip there, once the background has priced it)
+      if z.tripSecs and not z.here then right = right .. "  ·  " .. Paths.Away(z.tripSecs) end
     end
     b.right:SetText(right)
     -- the pill says what it is; the reason follows it
     -- PLANNED NEXT is what your plan does; the XP at the right says what each zone holds for you
     local picked = ForeverRouteData and ForeverRouteData.zoneRoute and z.route == ForeverRouteData
-    local pill = (z.best and "PLANNED NEXT") or (picked and "YOUR PICK") or (z.here and "YOU'RE HERE") or nil
+    local onZoneRoute = ForeverRouteData and ForeverRouteData.zoneRoute
+    local pill = (z.best and (onZoneRoute and "BACK TO PLAN" or "PLANNED NEXT")) or (picked and "HOME BASE") or (z.here and "YOU'RE HERE") or nil
     b.pill:SetShown(pill ~= nil)
     if pill then b.pill:Set(pill, z.best and C.gold or C.good) end
     local why = {}
@@ -460,7 +467,7 @@ function Paths.Draw()
   for _, b in ipairs(f.tabs) do b.on = (b.key == "zones") == zones; paintTab(b) end
   f.tabs[2].label:SetText("Plan")
   f.title:SetText(TABS[zones and "zones" or "paths"].title)
-  f.intro:SetText(zones and (string.format("Level %d", st.level) .. (function() local m, h = UnitXPMax and UnitXPMax("player") or 0, UnitXP and UnitXP("player") or 0; return m > 0 and ("  ·  " .. Paths.Short(m - h) .. " XP to " .. (st.level + 1)) or "" end)() .. "  ·  XP each zone has for you") or "The zones ahead on your plan, and the quests in each")
+  f.intro:SetText(zones and (string.format("Level %d", st.level) .. (function() local m, h = UnitXPMax and UnitXPMax("player") or 0, UnitXP and UnitXP("player") or 0; return m > 0 and ("  ·  " .. Paths.Short(m - h) .. " XP to " .. (st.level + 1)) or "" end)() .. "  ·  pick a zone as your home base") or "The zones ahead on your plan, and the quests in each")
   -- everything hidden, then what this tab shows
   for _, b in pairs(rows) do b:Hide() end
   for _, c in pairs(cards) do c:Hide() end
@@ -488,3 +495,4 @@ end
 ns.On("FR_LOADED", build)
 ns.On("FR_TOGGLE_PATHS", function() Paths.Toggle() end)
 ns.On("FR_ROUTE_CHANGED", function() Paths.Draw() end)
+ns.On("FR_ZONETRIPS", function() Paths.Draw() end)

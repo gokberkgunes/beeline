@@ -1,4 +1,4 @@
--- Errand reminders: one line on the card when it matters - bags nearly full (sell) or gear wearing out (repair) -
+-- Errand reminders: one line on the card when it matters - bags nearly full (sell) -
 -- with the nearest vendor that can do it on this map (from Vendors.lua, generated from the quest database).
 -- Hidden again once it's sorted, or dismissed until things change.
 local _, ns = ...
@@ -23,15 +23,15 @@ function Errands.Durability()
   end
   return low
 end
--- the nearest vendor on your map (one that repairs, if that's needed): name, title, yards
-function Errands.Nearest(needRepair)
+-- the nearest vendor on your map: name, title, yards
+function Errands.Nearest()
   local m = ns.State.Position()
   local list = m and ns.VENDORS and ns.VENDORS[m]
   if not list then return nil end
   local px, py, pinst = HBD:GetPlayerWorldPosition()
   local best, bd
   for _, v in ipairs(list) do
-    if v[5] or not needRepair then
+    do
       local vx, vy, vinst = HBD:GetWorldCoordinatesFromZone(v[1], v[2], m)
       if vx and px and vinst == pinst then
         local d = math.sqrt((vx - px) ^ 2 + (vy - py) ^ 2)
@@ -148,10 +148,10 @@ end
 
 -- what to show (or nil): text, and a key so a dismissal lasts until things change
 function Errands.Current()
-  local free, dur = Errands.FreeSlots(), Errands.Durability()
+  local free = Errands.FreeSlots()
   local needSell = free and free <= BAG_LOW
-  local needRepair = dur and dur <= DURABILITY_LOW
-  if not (needSell or needRepair) then
+  -- (no repair reminder: other addons do that - tester)
+  if not needSell then
     local gt, gk = Errands.Grimoire()
     if gt then return gt, gk end
     if killing() and Errands.WellFed() == false then
@@ -160,19 +160,16 @@ function Errands.Current()
     end
     return nil
   end
-  local key = (needSell and "bags" or "") .. (needRepair and "repair" or "")
+  local key = "bags"
   if ns.char.errandDismissed == key then return nil end
-  local v, d = Errands.Nearest(needRepair)
+  local v, d = Errands.Nearest()
   local where = v and string.format(": %s (%s), %s", v[3], v[4], ns.Style.Distance(d)) or " at the next vendor"
   -- the live solver fitted a vendor into your way (Next.lua): that one, and when
   local nv = ns.Next and ns.Next.Enabled() and ns.Next.vendor
-  if nv and nv.v and (not needRepair or nv.v[5]) then
+  if nv and nv.v then
     where = string.format(": %s (%s), %s", nv.v[3], nv.v[4], nv.before == 0 and "now - it's on your way" or ("after the next " .. nv.before .. (nv.before == 1 and " stop" or " stops")))
   end
-  local what
-  if needSell and needRepair then what = string.format("Bags %d free, gear at %d%% - sell and repair", free, math.floor(dur * 100))
-  elseif needRepair then what = string.format("Gear at %d%% - repair", math.floor(dur * 100))
-  else what = string.format("Bags: %d free - sell", free) end
+  local what = string.format("Bags: %d free - sell", free)
   return what .. where, key
 end
 function Errands.Dismiss()

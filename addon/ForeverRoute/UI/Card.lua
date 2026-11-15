@@ -127,6 +127,27 @@ local function build()
   cur.notNow = Style.Button(cur, "not now", 60, 14, function() if ns.Next and ns.Next.Dismiss then ns.Next.Dismiss(ns.Engine.Shown and ns.Engine.Shown()) end end, "Skip this stop for now: the route goes back to its planned next step. It's offered again once you've moved on, or in 15 minutes.")
   cur.notNow.label:SetFontObject(Style.Font(10)); cur.notNow.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   cur.notNow:SetScript("OnLeave", function(self) self.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); GameTooltip:Hide() end)
+  -- a quest newer than the original game: a short tag, its meaning on hover (it was three lines of note - tester)
+  cur.fq = Style.Button(cur, "Forever Quest", 84, 14, function() end, "Added by WoW Forever. If the giver has nothing for you, it drops off your route by itself.")
+  cur.fq.label:SetFontObject(Style.Font(10)); cur.fq.label:SetTextColor(0.56, 0.83, 1)
+  cur.fq:SetScript("OnLeave", function(self) self.label:SetTextColor(0.56, 0.83, 1); GameTooltip:Hide() end)
+  cur.fq:SetWidth(cur.fq.label:GetStringWidth() + 12)
+  cur.fq:Hide()
+  -- a chain-start step spliced in for a zone you picked: you can say no (Stitch.Refuse)
+  cur.noChain = Style.Button(cur, "skip chain start", 90, 14, function() local s = steps()[ns.Engine.Shown() or 0]; if s and s.chainStart and ns.Stitch then ns.Stitch.Refuse(s.chainStart) end end, "Take this chain start off your route. It won't be added again.")
+  cur.noChain.label:SetFontObject(Style.Font(10)); cur.noChain.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+  cur.noChain:SetScript("OnLeave", function(self) self.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); GameTooltip:Hide() end)
+  cur.noChain:SetWidth(cur.noChain.label:GetStringWidth() + 10)
+  cur.noChain:Hide()
+  -- a step picked out of plan order: its short reason and what it saves; the whole reason and the plan's step on hover
+  cur.why = Style.Button(cur, "", 60, 14, function() end, nil)
+  cur.why.label:SetFontObject(Style.Font(10)); cur.why.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+  cur.why:SetScript("OnEnter", function(self)
+    self.label:SetTextColor(1, 0.86, 0.5)
+    if self.tip then GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText(self.tip, 1, 1, 1, 1, true); if self.tip2 then GameTooltip:AddLine(self.tip2, 0.75, 0.8, 0.88, true) end; GameTooltip:Show() end
+  end)
+  cur.why:SetScript("OnLeave", function(self) self.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); GameTooltip:Hide() end)
+  cur.why:Hide()
   cur.bars = {}
   cur.heads = {} -- the dungeon state's quest names, one above each quest's bars
   cur.note = Style.Text(cur, 11, C.sub)
@@ -211,7 +232,7 @@ local function build()
     r.text = Style.Text(r, 11, C.sub); r.text:SetPoint("LEFT", r.dot, "RIGHT", 16, 0); r.text:SetPoint("RIGHT"); r.text:SetWordWrap(false); r.text:SetJustifyV("MIDDLE")
     local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetAllPoints(); hl:SetVertexColor(1, 1, 1, 0.035)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    r:SetScript("OnClick", function(self, btn) if not self.index then return end if btn == "RightButton" then ns.ShowOnMap(self.index) return end if IsShiftKeyDown() then ns.Engine.Jump(self.index) else ns.Engine.view = self.index; ns.Fire("FR_STEP", self.index) end end)
+    r:SetScript("OnClick", function(self, btn) ns.Engine.Look(self.index, btn) end)
     r:SetScript("OnEnter", function(self) Card.Hover(true); GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetText("Click to look at this step", 1, 1, 1); GameTooltip:AddLine("Right-click: show it on the map", 0.6, 0.65, 0.72); GameTooltip:AddLine("Shift-click to jump here (skips what's before it - Undo brings it back)", 0.6, 0.65, 0.72, true); GameTooltip:Show() end)
     r:SetScript("OnLeave", function() GameTooltip:Hide(); Card.Hover(false) end)
     f.rows[i] = r
@@ -238,17 +259,17 @@ local function build()
   -- a dungeon or side trip: back to your leveling path; a zone you picked: the zone picker (another zone, or your
   -- planned route where it picks up)
   -- (a zone you picked that is done: "Carry on: <zone>", your planned route's next zone - Card.Fill)
-  f.home = Style.Button(f, "Back to my path", 116, 18, function(self)
+  f.home = Style.Button(f, "Back to plan", 116, 18, function(self)
     local d = ForeverRouteData
     if d and d.dungeon then ns.LeaveDungeonRoute()
     elseif self.carryOn and ns.Paths and ns.Paths.Pick then ns.Paths.Pick(self.carryOn)
     elseif ns.Paths and ns.Paths.Show then ns.Paths.Show() end
-  end, "Your leveling path, or another zone (its progress is kept)")
+  end, "Pick another home base, or go back to your plan. Progress here is kept.")
   f.home.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
   f.home:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]); GameTooltip:Hide() end)
   f.home:Hide()
   -- quests in your log you won't do (not on the route, or gray by then): a nudge that opens the log check
-  f.drop = Style.Button(f, "", 90, 14, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Quests in your log that your route won't use - see them and drop them")
+  f.drop = Style.Button(f, "", 90, 14, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Quests in your log no route of yours uses. Click to look them over.")
   f.drop.label:SetFontObject(Style.Font(10)); f.drop.label:SetTextColor(1, 0.55, 0.3)
   f.drop:SetScript("OnLeave", function(self) self.label:SetTextColor(1, 0.55, 0.3); GameTooltip:Hide() end)
   f.drop:Hide()
@@ -264,7 +285,7 @@ local function build()
   -- on a flight: a good moment to save (reload) so the planner gets your progress
   f.save = CreateFrame("Frame", nil, f); f.save:SetHeight(20)
   f.save.text = Style.Text(f.save, 10, { 0.55, 0.85, 1 }); f.save.text:SetPoint("LEFT", 0, 0); f.save.text:SetWordWrap(false)
-  f.save.go = Style.Button(f.save, "Save & replan", 92, 18, function() Card.Save() end, "Reloads your UI (a few seconds) so the game writes your progress; the planner on your PC replans from it in about a minute.")
+  f.save.go = Style.Button(f.save, "Reload", 64, 18, function() Card.Save() end, "Reload (a few seconds) to load the new route.")
   f.save.go:SetPoint("RIGHT", f.save, "RIGHT", -20, 0)
   f.save.x = Style.Button(f.save, "x", 16, 16, function() if Card.planReady then Card.readyDismissed = true else Card.saveDismissed = true end; Card.Layout() end, "Not now")
   f.save.x:SetPoint("RIGHT", f.save, "RIGHT", 0, 0)
@@ -287,7 +308,7 @@ local function build()
   -- a special reward not done yet (the Cozy Sleeping Bag): one line, Do it now, dismiss
   f.special = CreateFrame("Frame", nil, f); f.special:SetHeight(20)
   f.special.text = Style.Text(f.special, 10, C.gold); f.special.text:SetPoint("LEFT", 0, 0); f.special.text:SetWordWrap(false)
-  f.special.go = Style.Button(f.special, "Do it now", 70, 18, function() local r = f.special.route; if r then ns.EnterDungeonRoute(r.id) end end, "Switch to this side trip now. Your leveling path is kept - \"Back to my path\" returns to it.")
+  f.special.go = Style.Button(f.special, "Do it now", 70, 18, function() local r = f.special.route; if r then ns.EnterDungeonRoute(r.id) end end, "Switch to this side trip now. \"Back to plan\" on the card returns you.")
   f.special.go:SetPoint("RIGHT", f.special, "RIGHT", -20, 0)
   f.special.x = Style.Button(f.special, "x", 16, 16, function() local r = f.special.route; if r then ns.char.hideSpecial = ns.char.hideSpecial or {}; ns.char.hideSpecial[r.id] = true; Card.Layout() end end, "Hide this here (it stays under Side trips)")
   f.special.x:SetPoint("RIGHT", f.special, "RIGHT", 0, 0)
@@ -345,10 +366,25 @@ function Card.PlaceDrop(hover)
   if not f or not f.drop then return end
   f.drop:ClearAllPoints()
   -- (after "Back to my path" / "Change zone" when it is there: at the footer line's start it sat on that button - tester)
-  if hover and f.home and f.home:IsShown() then f.drop:SetPoint("LEFT", f.home, "RIGHT", 6, 0)
+  local full, short = f.dropText or "", f.dropCount and tostring(f.dropCount) or ""
+  f.drop.label:SetText(full); f.drop:SetWidth(f.drop.label:GetStringWidth() + 12)
+  local show = f.dropWanted and true or false
+  if hover and f.home and f.home:IsShown() then
+    f.drop:SetPoint("LEFT", f.home, "RIGHT", 6, 0)
+    -- the room between that button and the controls: "13 won't do" ran under them (beside "Change zone" - tester).
+    -- Too narrow: the count alone (its tooltip says what it is), against the controls' left edge - always there to
+    -- click (hidden for want of room, it vanished as the mouse went to it - tester)
+    local ctlLeft, ctlBtn
+    for _, b in pairs(f.btn) do if b:IsShown() and b:GetLeft() and (not ctlLeft or b:GetLeft() < ctlLeft) then ctlLeft, ctlBtn = b:GetLeft(), b end end
+    local homeRight = f.home:GetRight()
+    if ctlLeft and homeRight and f.drop:GetWidth() > ctlLeft - homeRight - 10 then
+      f.drop.label:SetText(short); f.drop:SetWidth(f.drop.label:GetStringWidth() + 12)
+      f.drop:ClearAllPoints(); f.drop:SetPoint("RIGHT", ctlBtn, "LEFT", -4, 0)
+      f.drop:SetFrameLevel(math.max(f.drop:GetFrameLevel(), f.home:GetFrameLevel() + 2))
+    end
   elseif hover then f.drop:SetPoint("LEFT", f.eta, "LEFT", -6, 0)
   else f.drop:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 6, f.dropY or 0) end
-  f.drop:SetShown(f.dropWanted and true or false)
+  f.drop:SetShown(show)
 end
 function Card.Hover(on)
   if not f then return end
@@ -374,20 +410,19 @@ local function choiceRow(k)
   r.edge = r:CreateTexture(nil, "ARTWORK"); r.edge:SetTexture(Style.WHITE); r.edge:SetWidth(2); r.edge:SetPoint("TOPLEFT", 2, -5); r.edge:SetPoint("BOTTOMLEFT", 2, 5)
   local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetPoint("TOPLEFT", 2, -2); hl:SetPoint("BOTTOMRIGHT", -2, 2); hl:SetVertexColor(1, 0.82, 0.36, 0.08)
   r.name = Style.Text(r, 13, C.text, "OUTLINE"); r.name:SetPoint("TOPLEFT", 12, -6); r.name:SetWordWrap(false)
-  r.fast = Style.Pill(r, "MOST XP", C.good)
+  r.fast = Style.Pill(r, "PLAN", C.good)
   r.sel = Style.Pill(r, "SELECTED", C.gold)
   r.rate = Style.Text(r, 11, C.gold); r.rate:SetPoint("TOPRIGHT", -10, -7); r.rate:SetJustifyH("RIGHT")
   r.lvl = Style.Text(r, 10, C.dim); r.lvl:SetPoint("TOPRIGHT", r.rate, "BOTTOMRIGHT", 0, -3); r.lvl:SetJustifyH("RIGHT")
   r.next = Style.Text(r, 10, C.dim); r.next:SetPoint("TOPLEFT", r.name, "BOTTOMLEFT", 0, -3); r.next:SetPoint("RIGHT", r.lvl, "LEFT", -6, 0); r.next:SetWordWrap(false)
-  r:SetScript("OnClick", function(self) if self.opt then ns.TakeChoice(self.opt, self.owner, self.key) end end)
+  r:SetScript("OnClick", function(self) if self.zrow and ns.Paths and ns.Paths.Pick then ns.Paths.Pick(self.zrow) end end)
   r:SetScript("OnEnter", function(self)
     Card.Hover(true)
-    if not self.opt then return end
+    local z = self.zrow
+    if not z then return end
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:SetText(self.opt.zone, 1, 1, 1)
-    if self.opt.next then GameTooltip:AddLine("Then: " .. self.opt.next, 0.75, 0.8, 0.88, true) end
-    if self.opt.endLevel then GameTooltip:AddLine("Plan ends at level " .. self.opt.endLevel, 0.6, 0.65, 0.72) end
-    GameTooltip:AddLine(self.opt.main and "Click to stay on this path" or "Click to take this path - planned from here with your current quests", 0.5, 0.55, 0.62, true)
+    GameTooltip:SetText(z.zone, 1, 1, 1)
+    GameTooltip:AddLine(z.best and "Back to plan: where your plan goes next" or "Make it your home base", 0.5, 0.55, 0.62, true)
     GameTooltip:Show()
   end)
   r:SetScript("OnLeave", function() GameTooltip:Hide(); Card.Hover(false) end)
@@ -400,6 +435,31 @@ local function fillChoice()
   for _, r in ipairs(cur.optRows or {}) do r:Hide() end
   local ch = cur.choice
   if not ch then return end
+  -- next home bases (a home base done for now): zone, XP left, the level it gets you to, a chain it continues
+  if ch.rows then
+    for k, z in ipairs(ch.rows) do
+      local r = choiceRow(k)
+      r.zrow = z
+      local zc = Style.ZoneColor(z.zone)
+      r.name:SetText(Style.ShortZone(z.zone)); r.name:SetTextColor(zc[1], zc[2], zc[3])
+      r.fast:ClearAllPoints(); r.fast:SetPoint("LEFT", r.name, "RIGHT", 7, 0); r.fast:SetShown(z.best and true or false)
+      r.sel:Hide()
+      local P = ns.Paths
+      r.rate:SetText(z.xpLeft and z.xpLeft > 0 and P and P.Short and ("~" .. P.Short(z.xpLeft) .. " XP") or "")
+      local lv = z.xpLeft and z.xpLeft > 0 and P and P.Levels and P.Levels(z.xpLeft)
+      local L, m = (UnitLevel and UnitLevel("player")) or 1, (UnitXPMax and UnitXPMax("player")) or 0
+      local at = lv and (L + (m > 0 and ((UnitXP and UnitXP("player")) or 0) / m or 0) + lv)
+      r.lvl:SetText(lv and lv >= 0.05 and string.format("to %.1f", math.min(60, math.floor(at * 10) / 10)) or "")
+      local away = z.tripSecs and P and P.Away and P.Away(z.tripSecs) or nil
+      local reason = z.continues and ("continues " .. z.continues) or (z.handIns and z.handIns > 0 and (z.handIns .. " hand-in" .. (z.handIns == 1 and "" or "s") .. " waiting")) or nil
+      r.next:SetText((away and reason) and (away .. " · " .. reason) or away or reason or "")
+      local c = z.best and C.good or C.dim
+      r.edge:SetVertexColor(c[1], c[2], c[3], z.best and 0.9 or 0.3)
+      for _, part in ipairs(r.bgParts or {}) do part:SetVertexColor(1, 1, 1, 0.04) end
+      r:Show()
+    end
+    return
+  end
   local best = 0
   for _, o in ipairs(ch.c.options) do best = math.max(best, o.xph or 0) end
   for k, o in ipairs(ch.c.options) do
@@ -558,7 +618,7 @@ function Card.Fill()
   cur.dungeon = nil
   cur.nbars = 0
   cur.choice = nil; for _, r in ipairs(cur.optRows or {}) do r:Hide() end
-  cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide()
+  cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide(); cur.fq:Hide(); cur.why:Hide(); cur.noChain:Hide()
   local function bar() cur.nbars = cur.nbars + 1; local b = cur.bars[cur.nbars]; if not b then b = Style.Bar(cur); cur.bars[cur.nbars] = b end; return b end
   local function look(color, glyph)
     cur.disc:SetVertexColor(color[1], color[2], color[3]); cur.halo:SetVertexColor(color[1], color[2], color[3], 0.35)
@@ -575,16 +635,50 @@ function Card.Fill()
     look(C.dim, "icon-note"); cur.titleText:SetText("No route loaded"); cur.detail:SetText("/reload to load the plan for your race and class."); setNote("")
     Card.SetButtons(nil); return
   end
-  if not i then
+  -- a zone you picked with only quests left that wait (a level, an earlier quest): done for now - the card sat on a
+  -- waiting pick-up instead and never said so (tester)
+  local WAITING = { wait = true, blocked = true, later = true }
+  local forNow = data.zoneRoute and i and not ns.Engine.view and WAITING[ns.Engine.Status(i)] or false
+  if not i or forNow then
     look(C.good, "icon-check")
-    if data.dungeon then cur.titleText:SetText((data.dungeonName or "Dungeon") .. " route done"); cur.detail:SetText("Everything for it is handed in. \"Back to my path\" carries on leveling.")
+    if data.dungeon then cur.titleText:SetText((data.dungeonName or "Dungeon") .. " route done"); cur.detail:SetText("Everything for it is handed in. \"Back to plan\" carries on leveling.")
     elseif data.zoneRoute then
       -- a zone you picked, done: "Carry on" goes where your planned route picks up; the route list has the other zones.
       -- Only once it has stayed done a few seconds: stops are added just after a login or a route change (a hand-in
       -- you finished, a side quest), and "done" can be true for a moment before they are
       Card.zoneDoneSince = Card.zoneDoneSince or (GetTime and GetTime()) or 0
-      local nz = ns.PlannedNextZone and ns.PlannedNextZone()
-      cur.titleText:SetText((data.zoneName or "Zone") .. " done"); cur.detail:SetText((nz and ("Next on your plan: " .. Style.ShortZone(nz) .. ". ") or "") .. "Other zones: /fr paths.")
+      -- (and where to go next: your best few zones now - the zone you work from is yours to pick, the card says when it's
+      -- time to pick again)
+      local later, openAt, byLevel = 0, nil, true
+      if forNow then
+        for j, t in ipairs(steps()) do
+          if t.k == "accept" and WAITING[ns.Engine.Status(j)] then
+            later = later + 1
+            if t.minLevel and t.minLevel > ((UnitLevel and UnitLevel("player")) or 1) then openAt = math.min(openAt or 99, t.minLevel) else byLevel = false end
+          end
+        end
+      end
+      local opts = {}
+      local zc = ns.ZoneChoices and ns.ZoneChoices()
+      if zc then
+        local rows = {}
+        for _, r in ipairs(zc.rows or {}) do if (r.route or r.planned) and not r.here then rows[#rows + 1] = r end end
+        table.sort(rows, function(a, b)
+          if (a.best and 1 or 0) ~= (b.best and 1 or 0) then return a.best and true or false end
+          local ra, rb = ns.ZoneRate and ns.ZoneRate(a), ns.ZoneRate and ns.ZoneRate(b)
+          if ra and rb and ra ~= rb then return ra > rb end
+          return (a.xpLeft or 0) > (b.xpLeft or 0)
+        end)
+        for k = 1, math.min(3, #rows) do opts[#opts + 1] = rows[k] end
+      end
+      cur.titleText:SetText((Style.ShortZone(data.zoneName or "Zone")) .. (forNow and " done for now" or " done"))
+      local wait = ""
+      if forNow and later > 0 then
+        wait = later .. (later == 1 and " quest here opens " or " quests here open ") .. ((byLevel and openAt) and ("at " .. openAt) or "later") .. ". "
+      end
+      cur.detail:SetText(wait .. (#opts > 0 and "Pick your next home base:" or "Other zones: Where to? on the route window."))
+      -- (clickable: the names alone could not be picked - persona review)
+      if #opts > 0 then cur.choice = { rows = opts }; fillChoice() end
       if C_Timer and not Card.zoneDoneTick then Card.zoneDoneTick = true; C_Timer.After(3.5, function() Card.zoneDoneTick = nil; if ns.Card.Layout then ns.Card.Layout() end end) end
     else cur.titleText:SetText("Route complete"); cur.detail:SetText("That's the end of the plan.") end
     setNote("")
@@ -665,9 +759,9 @@ function Card.Fill()
       return "Not finished: " .. (#left > 0 and table.concat(left, ", ") or "objectives left"), C.warn
     elseif status == "later" and ns.Engine.NotYet(i) == "objectives" then
       -- a hand-in whose work (no place in the quest data) you skipped: it comes back when the quest is ready
-      return "Waits until the quest is done (where its work is isn't in the quest data) - the route goes on, and this comes back when it's ready.", C.sub
+      return "Finish this one as you go. It comes back when it's ready.", C.sub
     elseif status == "later" then
-      return "Left for your next dungeon run (what's still to do is inside) - or skip it; the route goes on.", C.sub
+      return "Finish it inside the dungeon next time you run it.", C.sub
     elseif status == "wait" then
       local lv = s.minLevel or s.until_
       if not lv and s.q and ns.QUEST_PRE and ns.QUEST_PRE[s.q] then
@@ -675,17 +769,17 @@ function Card.Fill()
         for _, p in ipairs(pre.g or pre.s or {}) do
           if not ns.State.IsCompleted(p) then
             local n = ns.Engine.QuestName and ns.Engine.QuestName(p) or ("quest " .. p)
-            return "Needs " .. n .. " handed in first - the route goes on, and this comes back when it's done.", C.warn
+            return "Needs " .. n .. " handed in first. It comes back then.", C.warn
           end
         end
       end
-      return string.format("Needs level %d.  %s", lv or 0, Card.Note(s) or ""), C.warn
+      return (lv and string.format("Needs level %d.", lv) or "Not offered yet.") .. ((Card.Note(s) and ("  " .. Card.Note(s))) or ""), C.warn
     elseif s.k == "accept" and (status == "full" or ns.State.LogCount() >= ns.State.MaxLog()) then
       -- a warning on the quest itself (elites, an escort) still matters once there is room
       return string.format("Quest log full (%d/%d) - hand in or abandon something first.", ns.State.LogCount(), ns.State.MaxLog())
         .. ((s.warn and s.note) and ("\n" .. Style.Hex(C.warn) .. Card.Note(s) .. "|r") or ""), C.bad
     elseif s.k == "bonus" then
-      return (s.where or "") .. (s.note and ("  |cff8e99ad" .. s.note .. "|r") or ""), C.sub
+      return (s.where or "") .. (s.note and ("  |cff8e99ad" .. Card.Note(s) .. "|r") or ""), C.sub
     elseif ns.Drops and ns.Drops.Note(s) then
       -- the quest item drops far less than the plan assumed (Forever changed some rates)
       return ns.Drops.Note(s), C.warn
@@ -726,10 +820,8 @@ function Card.Fill()
   else
     local text, color = stepNote()
     -- a quest newer than the original game: the quest data for those is younger and can miss what unlocks them
-    if s.k == "accept" and Card.IsNewQuest(s.q) then
-      local nq = "|cff8fd3ffNew quest (not in the original game): it may need something first that the quest data doesn't list. If the giver doesn't offer it, it leaves your route by itself.|r"
-      text = (text and text ~= "") and (text .. "\n" .. nq) or nq
-    end
+    if s.k == "accept" and Card.IsNewQuest(s.q) then cur.fq:Show() end
+    if s.chainStart and ns.Stitch and ns.Stitch.Refuse then cur.noChain:Show() end
     -- the same mobs nearer the quest giver, in fewer numbers (s.also = "Hillsbrad Foothills:16", route2.js): why the
     -- plan farms them further away - "it wants me in Alterac though they're clearly in Hillsbrad" (tester)
     local also = Card.AlsoNote(s)
@@ -744,26 +836,18 @@ function Card.Fill()
     end
     local planned = ns.Engine.planned
     if planned and i ~= planned and steps()[planned] then
+      -- a short tag, not a sentence (the whole reason and the plan's step are its tooltip - persona review)
       local why = ns.Next and ns.Next.Enabled() and ns.Next.Reason(i) or ""
-      local pn = "|cff8e99ad" .. (why ~= "" and (why:sub(1, 1):upper() .. why:sub(2)) or "Picked up from where you are") .. "  ·  planned next: " .. Card.Plain((Card.Describe(steps()[planned]))) .. "|r"
-      text = (text and text ~= "") and (text .. "\n" .. pn) or pn
+      local tag = ns.Next and ns.Next.Enabled() and ns.Next.Tag and ns.Next.Tag(i) or nil
+      cur.why.label:SetText(tag or "picked from where you are")
+      cur.why:SetWidth(cur.why.label:GetStringWidth() + 10)
+      cur.why.tip = why ~= "" and (why:sub(1, 1):upper() .. why:sub(2)) or "Picked up from where you are"
+      cur.why.tip2 = "Your plan's next step: " .. Card.Plain((Card.Describe(steps()[planned])))
+      cur.why:Show()
     end
     setNote(text, color)
   end
   cur.choice = nil
-  if not ns.Engine.view and ns.ChoiceFor then
-    local c, owner, key = ns.ChoiceFor(i)
-    if c then
-      cur.choice = { c = c, owner = owner, key = key }
-      -- the zone you just finished: the last step before this one that was out in the world, not a city errand
-      -- (by map: every faction's capitals - the list of three Alliance city names had Horde prompts read "Orgrimmar is done")
-      local prev
-      for j = i - 1, 1, -1 do local t = steps()[j]; if t.zone and not (t.m and Card.CAPITAL_MAPS[t.m]) then prev = { zone = t.zone }; break end end
-      cur.titleText:SetText(Style.Hex(C.gold) .. "Choose your next zone|r")
-      cur.detail:SetText((prev and prev.zone and (prev.zone .. " is done.  ") or "") .. "Pick one, then travel there.")
-      setNote("Each option is a full plan from here with your level and quest log. The selected one is what you're following; click another to switch.", C.sub)
-    end
-  end
   fillChoice()
   Card.SetButtons(s)
 end
@@ -979,12 +1063,25 @@ function Card.Layout()
     nn:ClearAllPoints(); nn:SetPoint("TOPLEFT", cur, "TOPLEFT", x0, -y)
     y = y + Card.LINK_H
   end
+  local prevLink = nn:IsShown() and nn or nil
+  for _, tagBtn in ipairs({ cur.why, cur.fq, cur.noChain }) do
+    if tagBtn:IsShown() then
+      tagBtn:ClearAllPoints()
+      if prevLink then tagBtn:SetPoint("LEFT", prevLink, "RIGHT", 8, 0)
+      else
+        cur.linkRows = 1; y = y + 7
+        tagBtn:SetPoint("TOPLEFT", cur, "TOPLEFT", x0, -y)
+        y = y + Card.LINK_H
+      end
+      prevLink = tagBtn
+    end
+  end
   if (cur.note:GetText() or "") ~= "" then
     cur.note:ClearAllPoints(); cur.note:SetPoint("TOPLEFT", cur, "TOPLEFT", x0, -(y + 7))
     y = y + 7 + cur.note:GetStringHeight()
   end
   if cur.choice then
-    for k = 1, #cur.choice.c.options do
+    for k = 1, #(cur.choice.rows or (cur.choice.c and cur.choice.c.options) or {}) do
       local r = cur.optRows[k]
       r:ClearAllPoints(); r:SetPoint("TOPLEFT", cur, "TOPLEFT", x0 - 6, -(y + (k == 1 and 10 or 5))); r:SetPoint("RIGHT", cur, "RIGHT", 0, 0)
       y = y + (k == 1 and 10 or 5) + 40
@@ -1058,7 +1155,7 @@ function Card.Layout()
   f.save:SetShown(sv and true or false)
   if sv then
     f.save.text:SetText(sv)
-    f.save.go.label:SetText(svBtn or "Save & replan")
+    f.save.go.label:SetText(svBtn or "Reload")
     f.save:ClearAllPoints(); f.save:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -top); f.save:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
     top = top + 22
   end
@@ -1101,7 +1198,8 @@ function Card.Layout()
   f.dropWanted = nd > 0 and not ns.Engine.view
   f.drop:SetShown(f.dropWanted)
   if f.dropWanted then
-    f.drop.label:SetText(string.format("%d won't do", nd))
+    f.dropText, f.dropCount = string.format("%d off-route", nd), nd
+    f.drop.label:SetText(f.dropText)
     f.drop:SetWidth(f.drop.label:GetStringWidth() + 12)
   end
   local viewing = ns.Engine.view ~= nil
@@ -1110,16 +1208,17 @@ function Card.Layout()
   f.dropY = -top - 2
   f.eta:Show(); f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", PAD, -top - 4); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
   local d = ForeverRouteData
-  local onDungeon = d and (d.dungeon or d.zoneRoute)
+  -- (on your plan too: the zone your plan works is your home base, and "Change home base" is how you pick another -
+  -- a tester saw "home base" nowhere until they had picked one)
+  local onDungeon = d and (d.dungeon or d.zoneRoute or not d.special)
   f.home:SetShown(onDungeon and true or false)
   f.home.carryOn = nil
   if onDungeon then
-    local label = d.zoneRoute and "Change zone" or "Back to my path"
+    local label = d.dungeon and "Back to plan" or "Change home base"
     -- a zone you picked, done for a few seconds (Card.Fill): carry on where your planned route picks up
-    local doneFor = Card.zoneDoneSince and ((GetTime and GetTime() or 0) - Card.zoneDoneSince) or 0
-    if d.zoneRoute and Card.zoneDoneSince and doneFor >= 3 and ns.ZoneChoices then
+    if d.zoneRoute and Card.zoneDoneSince and ns.ZoneChoices then -- (at once: a label changing under your cursor after 3 s - review)
       local best = ns.ZoneChoices().best
-      if best then f.home.carryOn = best; label = "Carry on: " .. Style.ShortZone(best.zone) end
+      if best then f.home.carryOn = best; label = "Back to plan: " .. Style.ShortZone(best.zone) end
     end
     f.home.label:SetText(label)
     f.home:SetWidth(math.max(116, f.home.label:GetStringWidth() + 18))
@@ -1187,13 +1286,8 @@ function Card.ChangeNote()
 end
 function Card.SaveNudge()
   if Card.planReady and not Card.readyDismissed then return "New route ready - reload to get it", "Reload" end
-  if Card.saveDismissed then return nil end
-  if not ns.Is(UnitOnTaxi, "player") then return nil end
-  -- (only with the companion on your PC: it replans from the save. An addon-only install has nothing to replan, and
-  -- the live next step needs no reload - tester)
-  if not (ns.HasCompanion and ns.HasCompanion()) then return nil end
-  if GetTime() - loadedAt < Card.SAVE_AFTER then return nil end
-  return "On a flight - a good moment to save, so your route is replanned before you land"
+  -- (no "save and replan on a flight": the companion only collects now - nothing replans from a save)
+  return nil
 end
 ns.On("PLAYER_CONTROL_LOST", function() Card.saveDismissed = nil; C_Timer.After(1, function() if f then Card.Layout() end end) end)
 ns.On("PLAYER_CONTROL_GAINED", function() C_Timer.After(0.5, function() if f then Card.Layout() end end) end)
@@ -1256,7 +1350,7 @@ function Card.SpecialArrive()
   if not m or m == lastSpecialMap then return end
   lastSpecialMap = m
   local o = Card.SpecialOffer()
-  if o and o.near then ns.Print((o.route.dungeonName or o.route.title) .. ": its next stop is in this zone - the card has \"Do it now\" if you want the detour.") end
+  if o and o.near then ns.Print((o.route.dungeonName or o.route.title) .. ": a stop for it is in this zone. \"Do it now\" is on the card.") end
 end
 ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(2, function() pcall(Card.SpecialArrive); if f then Card.Fill(); Card.Layout() end end) end)
 
@@ -1271,7 +1365,10 @@ function Card.UpdateProgress()
   end
   -- progress through this zone (a fresh plan doesn't reset it to nothing; the whole plan is in /fr list)
   local done, total, zone = ns.Engine.LegProgress()
-  f.count:SetText(total > 0 and string.format("%s%d/%d", zone and (Style.ShortZone(zone) .. "  ") or "", done, total) or "")
+  -- (who picked this zone: you - your home base - or your plan)
+  local d = ForeverRouteData
+  local who = d and not d.dungeon and not d.special and "Base: " or "" -- (your plan's zone is your home base too)
+  f.count:SetText(total > 0 and string.format("%s%d/%d", zone and (who .. Style.ShortZone(zone) .. "  ") or "", done, total) or "")
   f.progFill:SetWidth(math.max(0.001, (f.prog:GetWidth() or 0) * (total > 0 and done / total or 0)))
 end
 
@@ -1281,8 +1378,10 @@ function Card.WhyGo(i)
   local z = ns.Engine.ZonesAhead and ns.Engine.ZonesAhead(i, 2)
   local a, b = z and z[1], z and z[2]
   if not a or a.zone ~= (steps()[i] or {}).zone then return nil end
-  local what = a.quests > 0 and string.format("%d quest%s (%s)", a.quests, a.quests == 1 and "" or "s", table.concat(a.names, ", ", 1, math.min(3, #a.names)) .. (#a.names > 3 and ", ..." or "")) or "grinding"
-  return string.format("|cffffd25aGoing to %s for %s%s|r", a.zone, what, b and (", then " .. b.zone) or "")
+  -- (short: the travel line above already names the zone - "Going to Stranglethorn Vale for 2 quests (...)" said it
+  -- a third time - tester)
+  local what = a.quests > 0 and string.format("%d quest%s there: %s", a.quests, a.quests == 1 and "" or "s", table.concat(a.names, ", ", 1, math.min(2, #a.names)) .. (#a.names > 2 and ", ..." or "")) or "Grinding there"
+  return string.format("|cffffd25a%s%s|r", what, b and (" · then " .. Style.ShortZone(b.zone)) or "")
 end
 
 -- the capitals' maps, both factions (Stormwind, Ironforge, Darnassus, Orgrimmar, Thunder Bluff, the Undercity)
@@ -1404,6 +1503,7 @@ end
 ns.On("FR_LOADED", function() build(); f:SetShown(not ns.db.hidden); Card.Update() end)
 ns.On("FR_STEP_DONE", function() if f then Card.Update(true) end end)
 ns.On("FR_STEP", function() Card.Update(false) end)
+ns.On("FR_ZONETRIPS", function() if f and Card.zoneDoneSince then Card.Update(false) end end) -- (the next bases' trips are in)
 ns.On("FR_PROGRESS", function() Card.Counts() end) -- (a count moved: "Gnoll Paws: 3/8")
 ns.On("FR_DUNGEON", function() if f then Card.Update(false) end end) -- walked into or out of a dungeon
 ns.On("FR_XP", function() local s = ns.Engine.current and steps()[ns.Engine.current]; if f and s and s.k == "grind" and not f.cur.animOut:IsPlaying() then Card.Fill(); Card.Layout() end end)

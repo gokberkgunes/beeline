@@ -72,6 +72,11 @@ local function keepReason(e)
   if e.zone and KEEP_HEADERS[e.zone] then return KEEP_HEADERS[e.zone] end
   if e.title and e.title:find("^Camping") then return "Camping - benefits later" end
 end
+-- a zone route for your level with this quest on it (the zone you'd pick as home base to do it): its route, or nil
+function LogCheck.ZoneFor(q)
+  if not (ns.ZoneRoutesAt and ns.QuestIds) then return nil end
+  for _, r in ipairs(ns.ZoneRoutesAt()) do if ns.QuestIds(r)[q] and r ~= ForeverRouteData then return r end end
+end
 function LogCheck.Classify()
   local here = ForeverRouteData
   -- on a side trip or branch, quests are also judged against your path (found by zone order if a replan renamed it)
@@ -88,7 +93,7 @@ function LogCheck.Classify()
     if not i then for _, r in ipairs(ns.DungeonRoutes()) do if ns.QuestIds(r)[e.id] then inDungeon = r.dungeonName; break end end end
     local verdict, why
     local keep = keepReason(e)
-    if ns.char.nope and ns.char.nope[e.id] then
+    if ns.Nope(e.id) then
       verdict, why = "drop", "You said you're not doing this one"
     elseif keep then
       verdict, why = "keep", "Worth keeping: " .. keep
@@ -113,11 +118,23 @@ function LogCheck.Classify()
     elseif grayAt(e.level, myLevel) then
       verdict, why = "drop", "Gray already and not on your route"
     else
-      verdict, why = "drop", "Not on any of your routes - you won't be sent there"
+      -- (not "drop": it was "Not on any of your routes - you won't be sent there", untrue for a quest another zone's
+      -- route has, and a tester abandoned four of those - persona review). Another zone's route has it: picking that
+      -- zone as home base brings it along; a side quest: its stops are fitted in; else it's simply yours
+      local zr = LogCheck.ZoneFor(e.id)
+      if zr then
+        verdict, why = "yours", "In " .. Style.ShortZone(zr.zoneName) .. ": pick it as home base and this joins your route"
+        list[#list + 1] = { e = e, verdict = verdict, why = why, zone = zr }
+        verdict = nil
+      elseif ns.SIDE_QUESTS and ns.SIDE_QUESTS[e.id] or ns.ITEM_QUESTS and ns.ITEM_QUESTS[e.id] then
+        verdict, why = "yours", "A side quest: its stops join your route where they fit"
+      else
+        verdict, why = "offroute", "Not on your route. Yours to finish or drop"
+      end
     end
-    list[#list + 1] = { e = e, verdict = verdict, why = why }
+    if verdict then list[#list + 1] = { e = e, verdict = verdict, why = why } end
   end
-  local order = { drop = 1, turnin = 2, keep = 3 }
+  local order = { drop = 1, offroute = 2, turnin = 3, yours = 4, keep = 5 }
   table.sort(list, function(a, b) if order[a.verdict] ~= order[b.verdict] then return order[a.verdict] < order[b.verdict] end return (a.e.zone or "") < (b.e.zone or "") end)
   return list
 end
@@ -228,7 +245,7 @@ local function abandon(id, title, why)
 end
 LogCheck.Abandon = abandon
 StaticPopupDialogs["FOREVERROUTE_ABANDON"] = {
-  text = "Abandon %s?", button1 = YES or "Yes", button2 = NO or "No", timeout = 0, whileDead = true, hideOnEscape = true,
+  text = "Abandon %s?\nIt also leaves your route (Bring back undoes that).", button1 = YES or "Yes", button2 = NO or "No", timeout = 0, whileDead = true, hideOnEscape = true,
   OnAccept = function(self, data) abandon(data.id, data.title, data.why); C_Timer.After(0.5, function() LogCheck.Draw() end) end,
 }
 
@@ -238,7 +255,7 @@ recount = function()
   local t0 = debugprofilestop and debugprofilestop()
   local ok, list = pcall(LogCheck.Classify)
   if t0 and ns.Time then ns.Time("logcheck", debugprofilestop() - t0) end
-  local n = 0; if ok then for _, x in ipairs(list) do if x.verdict == "drop" then n = n + 1 end end end
+  local n = 0; if ok then for _, x in ipairs(list) do if x.verdict == "drop" or x.verdict == "offroute" then n = n + 1 end end end
   if n ~= LogCheck.dropCount then LogCheck.dropCount = n; ns.Fire("FR_STEP", ns.Engine.Shown()) end
 end
 ns.On("FR_STATE", function() C_Timer.After(0.3, recount) end)
@@ -256,7 +273,7 @@ StaticPopupDialogs["FOREVERROUTE_DROPALL"] = {
   OnAccept = function(self, data) dropAll(data) end,
 }
 
-local COLORS = { drop = { 1, 0.55, 0.30 }, turnin = { 0.45, 0.78, 1.0 }, keep = { 0.36, 0.86, 0.48 } }
+local COLORS = { drop = { 0.75, 0.62, 0.50 }, offroute = { 0.70, 0.72, 0.78 }, turnin = { 0.45, 0.78, 1.0 }, yours = { 0.45, 0.78, 1.0 }, keep = { 0.36, 0.86, 0.48 } }
 local function row(k)
   if rows[k] then return rows[k] end
   local r = CreateFrame("Frame", nil, f.content); r:SetSize(W - 2 * PAD - 10, ROW)
@@ -269,6 +286,12 @@ local function row(k)
     local dlg = StaticPopup_Show("FOREVERROUTE_ABANDON", d.title); if dlg then dlg.data = { id = d.id, title = d.title, why = self:GetParent().reason } end
   end, "Drop this quest from your log (asks first)")
   r.btn:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+  -- a quest another zone's route has: go there (that zone as home base)
+  r.go = Style.Button(r, "Go", 44, 18, function(self)
+    local z = self:GetParent().zone; if not (z and ns.Paths and ns.Paths.Pick) then return end
+    ns.Paths.Pick({ zone = z.zoneName, route = z }); f:Hide()
+  end, "Make that zone your home base: this quest joins its route")
+  r.go:SetPoint("RIGHT", r, "RIGHT", -4, 0)
   r.keep = Style.Button(r, "Keep", 44, 18, function(self)
     local d = self:GetParent().data; if not d then return end
     ns.char.keepQuests = ns.char.keepQuests or {}; ns.char.keepQuests[d.id] = true
@@ -286,20 +309,17 @@ end
 
 local function build()
   f = CreateFrame("Frame", "ForeverRouteLogCheck", UIParent)
-  f:SetSize(W, 200); f:SetPoint("CENTER", 0, 40); f:SetFrameStrata("DIALOG")
-  f:SetClampedToScreen(true); f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  Style.Panel(f, C.bg2); Style.Scaled(f, nil, true)
-  table.insert(UISpecialFrames, "ForeverRouteLogCheck")
+  f:SetSize(W, 200); f:SetPoint("CENTER", 0, 40)
+  Style.Window(f, "ForeverRouteLogCheck")
   f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -12); f.title:SetText("Quest log check")
-  local close = Style.Button(f, "x", 18, 18, function() f:Hide() end, "Close"); close:SetPoint("TOPRIGHT", -8, -8)
+  local close = Style.CloseButton(f)
   f.sum = Style.Text(f, 11, C.sub); f.sum:SetPoint("TOPLEFT", PAD, -34); f.sum:SetWidth(W - 2 * PAD - 120)
-  f.all = Style.Button(f, "Drop all", 90, 20, function()
+  f.all = Style.Button(f, "Abandon gray", 100, 20, function()
     local drop = {}; for _, x in ipairs(LogCheck.Classify()) do if x.verdict == "drop" then drop[#drop + 1] = { id = x.e.id, title = x.e.title, why = x.why } end end
     if #drop == 0 then return end
     local names = ""; for _, e in ipairs(drop) do names = names .. "\n" .. e.title end
     local dlg = StaticPopup_Show("FOREVERROUTE_DROPALL", #drop, names); if dlg then dlg.data = drop end
-  end, "Drop every quest marked here (asks first, listing them)")
+  end, "Abandon the gray quests and the ones you refused (asks first, listing them)")
   f.all:SetPoint("TOPRIGHT", -PAD, -34)
   -- the list scrolls (a full log plus the won't-do list ran off the screen): at most MAXH tall, mouse wheel, a thumb
   f.scroll = CreateFrame("ScrollFrame", nil, f); f.scroll:EnableMouseWheel(true)
@@ -322,10 +342,12 @@ end
 function LogCheck.Draw()
   if not f or not f:IsShown() then return end
   local list = LogCheck.Classify()
-  local drops = 0; for _, x in ipairs(list) do if x.verdict == "drop" then drops = drops + 1 end end
-  f.sum:SetText(string.format("%d quests in your log (max %d).  %s", #list, ns.State.MaxLog() or 40,
-    drops > 0 and string.format("|cffff8c4d%d worth dropping|r - they're not on your route, or will be gray before you get to them.", drops) or "|cff5cdc7aEverything here is on your route.|r"))
-  f.all:SetShown(drops > 0); f.all.label:SetText(string.format("Drop all %d", drops))
+  local drops, off = 0, 0; for _, x in ipairs(list) do if x.verdict == "drop" then drops = drops + 1 elseif x.verdict == "offroute" then off = off + 1 end end
+  local parts = {}
+  if drops > 0 then parts[#parts + 1] = string.format("%d gray or refused can go.", drops) end
+  if off > 0 then parts[#parts + 1] = string.format("%d off your route: yours to keep.", off) end
+  f.sum:SetText(string.format("%d quests in your log (max %d).  %s", #list, ns.State.MaxLog() or 40, #parts > 0 and table.concat(parts, " ") or "Everything here is on your route."))
+  f.all:SetShown(drops > 0); f.all.label:SetText(string.format("Abandon %d", drops))
   local top = 34 + math.max(f.sum:GetStringHeight(), 22) + 10
   local y = 0 -- inside the scrolling list
   for k, x in ipairs(list) do
@@ -336,8 +358,10 @@ function LogCheck.Draw()
     local qc = Style.QuestColor(x.e.level)
     r.title:SetText(string.format("%s[%s] %s|r  |cff8e99ad%s|r", Style.Hex(qc), x.e.level or "?", x.e.title, x.e.zone or ""))
     r.why:SetText(Style.Hex(c) .. x.why .. "|r")
-    local noped = ns.char.nope and ns.char.nope[x.e.id]
-    r.btn:SetShown(x.verdict == "drop"); r.keep:SetShown(x.verdict == "drop" and not noped)
+    local noped = ns.Nope(x.e.id)
+    r.btn:SetShown(x.verdict == "drop" or x.verdict == "offroute"); r.keep:SetShown((x.verdict == "drop" or x.verdict == "offroute") and not noped)
+    r.zone = x.zone
+    r.go:SetShown(x.zone ~= nil)
     r.back:SetShown(noped and true or false); r.back:ClearAllPoints(); r.back:SetPoint("RIGHT", r.btn, "LEFT", -4, 0)
     local h = math.max(ROW, r.title:GetStringHeight() + r.why:GetStringHeight() + 9); r:SetHeight(h)
     r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y); r:Show()

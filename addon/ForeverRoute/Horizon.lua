@@ -175,14 +175,34 @@ function Horizon.Solve(P)
         end
       end
     end
-    local nxt = {}
-    for x, key in ipairs(keys) do local nd = byKey[key]; nd.score = score(nd); nxt[#nxt + 1] = nd; if Y and x % 32 == 0 then Y() end end
-    if #nxt == 0 then break end
-    table.sort(nxt, function(a, b)
+    -- the best B of the layer, kept as they are scored (a heap whose top is the worst kept): sorting all of them - up
+    -- to B x n, ~1800 - was one long step the background solve could not pause in
+    local function better(a, b)
       if a.score ~= b.score then return a.score > b.score end
       return (stops[a.first].plan or huge) < (stops[b.first].plan or huge) -- ties: plan order
-    end)
-    while #nxt > B do nxt[#nxt] = nil end
+    end
+    local heap, hn = {}, 0
+    local function down(k)
+      while true do
+        local l, r, w = 2 * k, 2 * k + 1, k
+        if l <= hn and better(heap[w], heap[l]) then w = l end
+        if r <= hn and better(heap[w], heap[r]) then w = r end
+        if w == k then return end
+        heap[k], heap[w] = heap[w], heap[k]; k = w
+      end
+    end
+    for x, key in ipairs(keys) do
+      local nd = byKey[key]; nd.score = score(nd)
+      if hn < B then
+        hn = hn + 1; heap[hn] = nd
+        local k = hn
+        while k > 1 do local p = math.floor(k / 2); if better(heap[p], heap[k]) then heap[p], heap[k] = heap[k], heap[p]; k = p else break end end
+      elseif better(nd, heap[1]) then heap[1] = nd; down(1) end
+      if Y and x % 32 == 0 then Y() end
+    end
+    if hn == 0 then break end
+    local nxt = heap
+    table.sort(nxt, better)
     if nxt[1].score > bestScore then best, bestScore = nxt[1], nxt[1].score end
     layer = nxt
   end

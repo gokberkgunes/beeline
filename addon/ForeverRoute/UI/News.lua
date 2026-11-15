@@ -76,17 +76,14 @@ end
 local function buildPanel()
   panel = CreateFrame("Frame", "ForeverRouteNews", UIParent)
   local size = ns.db.newsSize
-  panel:SetSize(size and size[1] or 440, size and size[2] or 200); panel:SetPoint("CENTER", 0, 80); panel:SetFrameStrata("DIALOG")
-  panel:SetClampedToScreen(true); panel:SetMovable(true); panel:EnableMouse(true); panel:RegisterForDrag("LeftButton")
-  panel:SetScript("OnDragStart", panel.StartMoving); panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
+  panel:SetSize(size and size[1] or 440, size and size[2] or 200); panel:SetPoint("CENTER", 0, 80)
+  Style.Window(panel, "ForeverRouteNews")
   -- resizable from the bottom-right corner; the size is remembered
   panel:SetResizable(true)
   if panel.SetResizeBounds then panel:SetResizeBounds(News.MIN_W, News.MIN_H, News.MAX_W, News.MAX_H)
   elseif panel.SetMinResize then panel:SetMinResize(News.MIN_W, News.MIN_H); panel:SetMaxResize(News.MAX_W, News.MAX_H) end
-  Style.Panel(panel, C.bg2); Style.Scaled(panel, nil, true)
-  table.insert(UISpecialFrames, "ForeverRouteNews")
   panel.title = Style.Text(panel, 15, C.gold, "OUTLINE"); panel.title:SetPoint("TOPLEFT", 14, -12)
-  local close = Style.Button(panel, "x", 18, 18, function() panel:Hide() end, "Close"); close:SetPoint("TOPRIGHT", -8, -8)
+  local close = Style.CloseButton(panel)
   panel.scroll = CreateFrame("ScrollFrame", "ForeverRouteNewsScroll", panel, "UIPanelScrollFrameTemplate")
   panel.scroll:SetPoint("TOPLEFT", 14, -38); panel.scroll:SetPoint("BOTTOMRIGHT", -32, 18)
   panel.content = CreateFrame("Frame", nil, panel.scroll); panel.content:SetSize(394, 10)

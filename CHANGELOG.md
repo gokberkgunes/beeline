@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0 - unreleased
+- Every built-in plan rebuilt on the latest quest data (QuestieDB 1.1.1: 21 new quests, 296 corrected). Each was played from 1 to 60 by the simulated player and by one hopping between zones before it shipped.
+- Your home base: the zone you work from, and the card always says which ("Base: Stranglethorn"). On your plan it is the plan's zone; "Change home base" on the card opens Where to? to pick another. It brings along the quests you already carry there. Near its end the card tells you once how much XP is left and the next bases; when nothing is left but quests that open later ("2 quests here open at 40"), it lists your next home bases to click. "Back to plan" takes you back to your plan, wherever you are.
+- Finishing an objective, taking or handing in a quest, levelling up or entering a zone costs much less again: the addon reads your quest log once per change instead of asking the game about every quest on your route, and remembers how far your plan is done.
+- When the card puts a stop before your plan's next one, it says so in a few words and what it saves ("while you're here · saves ~3 min"); hover it for the whole reason and your plan's next step.
+- Where to? says how far each zone is ("6 min away") and ranks zones by the XP an hour they give you counting the trip there, so a big zone two continents away no longer beats the one next door.
+- No more trips across the world for the one quest you left of a zone: when you did the rest ahead of your plan or dropped them, a far, poorly paying leftover that nothing later needs is skipped (/fr undo brings it back).
+- The card no longer flicks to your plan's step and then to a better stop a moment later: it waits for the better stop (a fraction of a second) and changes once.
+- A chain start added to a zone you picked says what it costs and opens ("+4 min, opens ~12k XP"), and "skip chain start" on the card takes it off for good.
+- The travel line is shorter: "Run to Stranglethorn Vale via Duskwood" instead of every border crossed, and "2 quests there: ..." under it.
+- A quest new in Forever shows a small "Forever Quest" tag (hover it for what that means) instead of three lines of text.
+- The "won't do" link stays on the card while you hover it.
+- No more gear-repair reminder: other addons do that. The bags-full one stays.
+- Clicking the step you are on in the card's list takes you back to it (as in the route window) instead of "just looking" at it.
+- "N won't do" on the card is "N off-route" now, and the card's notes are shorter and plainer.
+- A finished home base shows "Carry on" right away, and nothing on the card offers to save and replan on a flight any more.
+- The quest log check only suggests dropping gray quests and ones you said you won't do. A quest another zone has is marked yours, with Go to make that zone your home base; anything else off your route is yours to keep. Abandoning asks first and says it also leaves your route.
+- Dead: the map no longer draws your step's trail from somewhere else while you run back to your corpse.
+
 ## 1.5.2 - 2026-11-15
 - No more hitch every few steps while you walk or ride: working out your next stop now runs in the background, a sliver of each frame, instead of all at once (the worst frame walking went from about 30 ms to under 2).
 - Finishing an objective, taking or handing in a quest, levelling up or entering a new zone costs about half as much as before: one route update per change instead of up to three, and the next stop worked out in the background. The card shows your plan's step at once and moves only if a better stop turns up a moment later.

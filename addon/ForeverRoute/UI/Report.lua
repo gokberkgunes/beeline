@@ -59,7 +59,7 @@ local function reasonOf(i, s)
   local E, St, key = ns.Engine, ns.State, ns.Engine.Key(i)
   if ns.char.skipped[key] then return REASON.skip end
   if ns.char.manualDone[key] then return REASON.tick end
-  if s.q and ns.char.nope and ns.char.nope[s.q] then return REASON.nope end
+  if s.q and ns.Nope(s.q) then return REASON.nope end
   if s.q and ns.Avail and ns.Avail.Unavailable(s.q) and not St.OnQuest(s.q) and not St.IsCompleted(s.q) then return REASON.unavail end
   if E.Outlevelled(s) then return REASON.outlevel end
   if E.GrayHandIn(s) then return REASON.gray end
@@ -245,13 +245,10 @@ end
 local f
 local function build()
   f = CreateFrame("Frame", "ForeverRouteReport", UIParent)
-  f:SetSize(520, 300); f:SetPoint("CENTER", 0, 60); f:SetFrameStrata("DIALOG")
-  f:SetClampedToScreen(true); f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  Style.Panel(f, C.bg2); Style.Scaled(f, nil, true)
-  table.insert(UISpecialFrames, "ForeverRouteReport")
+  f:SetSize(520, 300); f:SetPoint("CENTER", 0, 60)
+  Style.Window(f, "ForeverRouteReport")
   f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", 14, -12); f.title:SetText("Bug report")
-  local close = Style.Button(f, "x", 18, 18, function() f:Hide() end, "Close"); close:SetPoint("TOPRIGHT", -8, -8)
+  local close = Style.CloseButton(f)
   f.help = Style.Text(f, 11, C.sub); f.help:SetPoint("TOPLEFT", 14, -34); f.help:SetWidth(492)
   f.help:SetText("Press Ctrl+C to copy, then paste it with a screenshot. No character name, realm or account is in it.")
   f.full = Style.Button(f, "Full", 60, 20, function() Report.Show(not f.isFull) end, "Full: adds your finished quests, for an exact replay (too long for one Discord message)")

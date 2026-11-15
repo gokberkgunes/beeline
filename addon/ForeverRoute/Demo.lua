@@ -43,6 +43,8 @@ local function build()
     { 10, "todo", caption = "class trainer" },
     { 11, "todo", caption = "grind to an XP target" },
     { 12, "todo", caption = "bonus pickup (lore book)" },
+    { 7, "wait", minLevel = 19, zone = true, caption = "home base done for now (picking a zone here changes your real route)" },
+    { nil, "done", zone = true, caption = "home base done" },
     { nil, "done", caption = "route complete" },
   }
   return data
@@ -52,10 +54,15 @@ local function show(n)
   local sc = scenes[n]
   ns.Engine.view = nil
   ns.Engine.current = sc[1]
+  -- (a zone you picked - your home base - and plain route scenes)
+  ForeverRouteData.zoneRoute, ForeverRouteData.zoneName = sc.zone or nil, sc.zone and "Westfall" or nil
+  ns.Card.zoneDoneSince = nil
   Demo.scene = sc
   ns.Print(string.format("demo %d/%d: %s", n, #scenes, sc.caption))
   ns.Fire("FR_STEP", sc[1])
 end
+
+Demo._show = function(n) if scenes[n] then show(n); return scenes[n] end end -- (tests)
 
 function Demo.Start()
   if Demo.active then return Demo.Stop() end

@@ -31,17 +31,10 @@ Next.KIND = { accept = true, turnin = true, obj = true, fp = true, train = true,
 Next.TRIP = { fly = true, hearth = true, boat = true }
 -- what a vendor visit is worth by free bag slots (seconds): at 0 every kill's loot is lost
 Next.BAG_PRIZE = { [0] = 900, [1] = 500, [2] = 300, [3] = 200, [4] = 120, [5] = 80, [6] = 50 }
-Next.REPAIR_AT = 0.35 -- gear durability below this: a repairer is worth a stop too
 
 function Next.Enabled() return ns.db and ns.db.smartNext ~= false end
 
-local worldOf = setmetatable({}, { __mode = "k" })
-local function wpos(s)
-  if not (s and s.m and s.x and s.y) or s.unknown then return nil end
-  local w = worldOf[s]
-  if w == nil then local x, y, inst = HBD:GetWorldCoordinatesFromZone(s.x, s.y, s.m); w = x and { x, y, inst } or false; worldOf[s] = w end
-  return w or nil
-end
+local wpos = ns.Util.WPos
 Next._wpos = wpos
 
 -- seconds from place a to place b ({ w = {x, y, inst}, m, x, y }): a straight line at your speed with a little extra for
@@ -52,7 +45,7 @@ Next._wpos = wpos
 -- addon's time (34,000 searches in one simulated 1-60, ten times slower than before). "From" is a step of the plan, or
 -- where you stand to the nearest 250 yd. Remembered until you learn a flight path, mount up or level (priceSig).
 local function speedNow() return (ns.Travel and ns.Travel.Speed and ns.Travel.Speed()) or 7 end
-local function knownTaxiCount() local n = 0; for _, _ in pairs((ns.State and ns.State.knownTaxi) or {}) do n = n + 1 end; return n end
+local function knownTaxiCount() return ns.State.KnownTaxiCount() end
 -- what a remembered trip or price depends on besides the plan: the flight paths you know, your speed (a mount at 40)
 -- and your level (the trip planner keeps you out of zones far above you). Taken once a solve (Next.Pick) - not by
 -- walking your flight paths on every price; outside a solve, each time.
@@ -749,6 +742,7 @@ local function pick(planned)
     local found = {}
     local accepts = roomInLog and stepsOfKind(list).accept or {}
     for x = 1, #accepts do
+      ns.MaybeYield()
       local j = accepts[x]
       local s = list[j]
       if s.q and tonumber(s.level) and Next.BehindLevelOk(s.level, L) and not byStep[j] then
@@ -756,7 +750,7 @@ local function pick(planned)
         local d2 = w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2
         if d2 and d2 <= Next.BEHIND_YD ^ 2 and not St.OnQuest(s.q) and not St.IsCompleted(s.q) then
           local prize = Next.Prize(list, s, planned, true)
-          if prize > 0 and E.BehindYou(s) and (not E.Available or E.Available(j)) and not (ns.char and ns.char.nope and ns.char.nope[s.q]) then
+          if prize > 0 and E.BehindYou(s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q)) then
             found[#found + 1] = { j = j, d2 = d2, prize = prize }
           end
         end
@@ -776,6 +770,7 @@ local function pick(planned)
   -- the price decides.
   local turnins = stepsOfKind(list).turnin
   for x = after(turnins, scanEnd), #turnins do
+    ns.MaybeYield()
     local j = turnins[x]
     local s = list[j]
     if s.q and St.QuestReady(s.q) and not byStep[j] then
@@ -801,17 +796,15 @@ local function pick(planned)
       end
     end
   end
-  -- your bags filling up (or gear wearing out): the vendors of this map as prizes, worth more the closer you are to
+  -- your bags filling up: the vendors of this map as prizes, worth more the closer you are to
   -- looting nothing - the solve fits the visit in where it costs least (a town you pass anyway), and the card's errand
   -- line says which vendor and when (Errands.lua)
   Next.vendor = nil
   local E2 = ns.Errands
   local free = E2 and E2.FreeSlots and E2.FreeSlots()
-  local dur = E2 and E2.Durability and E2.Durability()
   local bagPrize = free and Next.BAG_PRIZE[math.max(0, free)] or 0
-  local repairPrize = (dur and dur < Next.REPAIR_AT) and (120 + 600 * (Next.REPAIR_AT - dur) / Next.REPAIR_AT) or 0
   local vm = here and here[1]
-  if (bagPrize > 0 or repairPrize > 0) and vm and ns.VENDORS and ns.VENDORS[vm] then
+  if bagPrize > 0 and vm and ns.VENDORS and ns.VENDORS[vm] then
     local near = {}
     for vi, v in ipairs(ns.VENDORS[vm]) do
       local vx, vy, vinst = HBD:GetWorldCoordinatesFromZone(v[1], v[2], vm)
@@ -820,10 +813,7 @@ local function pick(planned)
     table.sort(near, function(a, b) return a.d < b.d end)
     for k = 1, math.min(3, #near) do
       local n = near[k]
-      local prize = bagPrize + (n.v[5] and repairPrize or 0)
-      if prize > 0 then
-        stops[#stops + 1] = { id = "vendor" .. n.vi, vendor = n.v, w = n.w, m = vm, x = n.v[1], y = n.v[2], service = 25, load = 0, prize = prize, opt = true }
-      end
+      stops[#stops + 1] = { id = "vendor" .. n.vi, vendor = n.v, w = n.w, m = vm, x = n.v[1], y = n.v[2], service = 25, load = 0, prize = bagPrize, opt = true }
     end
   end
   -- pick-up before objectives before hand-in, among the stops in the window
@@ -847,6 +837,7 @@ local function pick(planned)
   -- the plan's first stop past the window: where the window leads on to
   local anchor
   for j = scanEnd + 1, math.min(#list, scanEnd + 40) do
+    ns.MaybeYield()
     local w = wpos(list[j])
     if w and E.Status(j) ~= "done" then local s = list[j]; anchor = { w = w, st = s, m = s.m, x = s.x, y = s.y }; break end
   end
@@ -915,8 +906,21 @@ local function pick(planned)
     local kept = ns.Horizon.Solve(P)
     if kept.first and res.score - kept.score < Next.MARGIN then Next.vendor = nil; local kp, kst = firstStep(kept); if kst then kept.first = kst end; res, pick = kept, kp or last.pick end
   end
+  -- what the pick saves over doing the plan's step first: the window solved with that step first, against this one
+  -- (the card says it: "saves ~3 min" - a reason without a number read as an opinion, persona review). Once per pick:
+  -- the same pick against the same plan step keeps its figure
+  if pick and pick ~= planned and byStep[planned] then
+    if last and last.pick == pick and last.planned == planned and last.saves ~= nil then res.saves = last.saves
+    else
+      local was = P.first
+      P.first = planned
+      local alt = ns.Horizon.Solve(P)
+      P.first = was
+      res.saves = (alt.first and alt.score > -math.huge) and math.max(0, res.score - alt.score) or false
+    end
+  end
   Next.res = res
-  last = { sig = sig, at = now, pick = pick, pickStep = pick and list[pick], res = res }
+  last = { sig = sig, at = now, pick = pick, pickStep = pick and list[pick], res = res, planned = planned, saves = res.saves }
   if pick and pick ~= planned and ns.Why then
     local s = list[pick]
     ns.Why("next", "step " .. pick .. " (" .. tostring(s.name or s.k) .. ") before the plan's step " .. planned .. ": " .. Next.Reason(pick))
@@ -944,10 +948,11 @@ end
 -- (Next.Pick), cancels the one running.
 Next.BUDGET_MS = 1
 local job
+local pendingDone -- (a finished solve's pick, for the next frame; a newer solve drops it)
 local driver = CreateFrame and CreateFrame("Frame") or nil
 local function endJob() job = nil; if driver then driver:Hide() end end
 function Next.Busy() return job ~= nil end
-function Next.Cancel() if job then endJob() end end
+function Next.Cancel() pendingDone = nil; if job then endJob() end end
 local function stepJob(budget)
   local j = job
   if not j then return end
@@ -961,18 +966,33 @@ local function stepJob(budget)
   ns.sliceCo = nil
   if job ~= j then return end
   if not ok then endJob(); if ns.LogError then ns.LogError("next", r) end; j.done(nil); return end
-  if coroutine.status(j.co) == "dead" then endJob(); j.done(r) end
+  -- (its pick goes on the card in the next frame: the card and the arrow's trip are a frame's work of their own)
+  if coroutine.status(j.co) == "dead" then
+    endJob()
+    local mine = function() j.done(r) end
+    pendingDone = mine
+    if C_Timer and C_Timer.After then C_Timer.After(0, function() if pendingDone == mine then pendingDone = nil; local t0 = debugprofilestop(); mine(); if ns.Time then ns.Time("pick on card", debugprofilestop() - t0) end end end) end
+  end
 end
 if driver then driver:Hide(); driver:SetScript("OnUpdate", function() local ok, err = pcall(stepJob); if not ok then endJob(); if ns.LogError then ns.LogError("next", err) end end end) end
 Next._driver = driver -- (the perf battery ticks it)
 function Next.PickAsync(planned, done)
   Next.Cancel()
   sigNow, askLeft = nil, nil
-  job = { co = coroutine.create(pick), planned = planned, done = done, sig = priceSig(), ask = Next.ASK_PER_PICK }
+  -- (and the trip to its pick, worked out here too - paused like the rest: the card and the arrow ask for it the frame it
+  -- goes on the card, and planning it then was most of that frame, 8-10 ms at level 50)
+  local co = coroutine.create(function(p)
+    local r = pick(p)
+    local L = ForeverRouteData and ForeverRouteData.steps
+    local st = L and L[r or p]
+    if st and ns.Engine and ns.Engine.TravelFor then ns.Call(ns.Engine.TravelFor, st) end
+    return r
+  end)
+  job = { co = co, planned = planned, done = done, sig = priceSig(), ask = Next.ASK_PER_PICK }
   if driver then driver:Show() end
 end
 -- (tests: run the one in the background to its end now)
-function Next.Settle() while job do stepJob(math.huge) end end
+function Next.Settle() while job do stepJob(math.huge) end; local f = pendingDone; pendingDone = nil; if f then f() end end
 
 -- the last solve's pick, by the step itself, while it is still to do (the card keeps it while the next solve runs)
 function Next.LastPick()
@@ -1005,6 +1025,29 @@ function Next.Reason(i)
   if st.early then return "while you're here - it saves coming back for it later" end
   if st.opt then return "a quest you picked up on the way, handed in where it costs least" end
   return "on the way - the whole route from here is shorter this way"
+end
+
+-- the card's short tag for a step picked out of plan order, and what it saves: "while you're here · saves ~3 min"
+-- (the whole reason is its tooltip: Next.Reason)
+function Next.Tag(i)
+  local res = Next.res
+  local st
+  for _, s in ipairs((res and res.seq) or {}) do if s.step == i then st = s; break end end
+  if not st then return nil end
+  local tag
+  if st.behind then
+    local ep = ns.Engine and ns.Engine.pos
+    local near = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2 <= Next.HOLD_NEAR ^ 2
+    tag = near and "right here" or "nearby"
+  elseif Next.rejoin and st.step and st.step >= Next.rejoin.at then tag = "you're here already"
+  elseif st.early and st.chain then tag = "chain continues"
+  elseif st.early and st.visit then tag = "saves a trip back"
+  elseif st.early then tag = "while you're here"
+  else tag = "on the way" end
+  local saves = res.saves
+  local min = saves and math.floor(saves / 60 + 0.5) or 0
+  if res.first and res.first.step == i and min >= 1 then tag = tag .. " · saves ~" .. min .. " min" end
+  return tag
 end
 
 -- can the card's step be put off ("not now")? Only a stop the solver took in from where you are - a hand-in while

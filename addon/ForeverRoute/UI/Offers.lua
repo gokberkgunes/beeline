@@ -57,10 +57,36 @@ function Offers.Summary(level)
   return string.format("Level %d: %s", level, table.concat(parts, " - ")), better
 end
 
--- the card row: for a while after a ding (a ding we haven't shown yet counts as just now)
+-- Near the end of your home base: once per base, "About 9k XP left here. Next bases: A, B, C" - when what is left
+-- there is under a quarter of your level (the player picks the next one; nothing switches)
+Offers.BASE_SHARE = 0.25
+function Offers.BaseNudge()
+  local d = ForeverRouteData
+  if not (d and d.zoneRoute and d.id and ns.char) then return nil end
+  if ns.char.baseNudged and ns.char.baseNudged[d.id] then return nil end
+  local L = UnitLevel("player") or 1
+  local need = ns.XP_TO_LEVEL and ns.XP_TO_LEVEL[L]
+  local left = ns.ZoneXpLeft and ns.ZoneXpLeft(d, L)
+  if not (left and need and need > 0 and left > 0 and left < Offers.BASE_SHARE * need) then return nil end
+  local names = {}
+  local zc = ns.ZoneChoices and ns.ZoneChoices()
+  local rows = {}
+  for _, r in ipairs((zc and zc.rows) or {}) do if (r.route or r.planned) and not r.here and r.route ~= d then rows[#rows + 1] = r end end
+  table.sort(rows, function(a, b) if (a.best and 1 or 0) ~= (b.best and 1 or 0) then return a.best and true or false end return (a.xpLeft or 0) > (b.xpLeft or 0) end)
+  for k = 1, math.min(3, #rows) do names[#names + 1] = ns.Style.ShortZone(rows[k].zone) end
+  local short = ns.Paths and ns.Paths.Short and ns.Paths.Short(left) or tostring(math.floor(left))
+  return "About " .. short .. " XP left here." .. (#names > 0 and (" Next bases: " .. table.concat(names, ", ")) or ""), d.id
+end
+-- the card row: for a while after a ding (a ding we haven't shown yet counts as just now); else the home base nudge
 function Offers.Current()
   local level = UnitLevel("player")
   if not level then return nil end
+  Offers.kind = nil
+  local dingShown = ns.char.dingLevel == level and ns.char.offerDismissed ~= level and time() - (ns.char.dingAt or 0) <= Offers.SHOW_SECONDS
+  if not dingShown then
+    local t, base = Offers.BaseNudge()
+    if t then Offers.kind = base; return level, { text = t, base = base } end
+  end
   if ns.char.dingLevel ~= level then ns.char.dingLevel = level; ns.char.dingAt = time() end
   if ns.char.offerDismissed == level then return nil end
   if time() - (ns.char.dingAt or 0) > Offers.SHOW_SECONDS then return nil end
@@ -69,7 +95,11 @@ function Offers.Current()
   return level, { text = text, better = better }
 end
 
-function Offers.Dismiss() ns.char.offerDismissed = UnitLevel("player"); ns.Fire("FR_STEP", ns.Engine.Shown()) end
+function Offers.Dismiss()
+  if Offers.kind then ns.char.baseNudged = ns.char.baseNudged or {}; ns.char.baseNudged[Offers.kind] = true
+  else ns.char.offerDismissed = UnitLevel("player") end
+  ns.Fire("FR_STEP", ns.Engine.Shown())
+end
 
 ns.On("PLAYER_LEVEL_UP", function(newLevel)
   C_Timer.After(1, function()

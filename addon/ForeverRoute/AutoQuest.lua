@@ -15,7 +15,7 @@ function Auto.Enabled() return ns.db and ns.db.autoQuest == true and not (IsShif
 local wantCache, wantFor
 function Auto.Wanted(q)
   q = tonumber(q)
-  if not q or (ns.char and ns.char.nope and ns.char.nope[q]) then return false end
+  if not q or (ns.Nope(q)) then return false end
   local routes = {}
   for _, r in ipairs(ns.Routes and ns.Routes() or {}) do routes[#routes + 1] = r end
   if ForeverRouteData then routes[#routes + 1] = ForeverRouteData end -- (the plan you are on)

@@ -60,9 +60,9 @@ end
 function IQ.WhyNot(q)
   local d = ns.ITEM_QUESTS and ns.ITEM_QUESTS[q]
   local State, Engine = ns.State, ns.Engine
-  if not d then return "not in the quest data" end
+  if not d then return "not a known item quest" end
   if State.IsCompleted(q) or State.OnQuest(q) then return "yours already" end
-  if ns.char.nope and ns.char.nope[q] then return "you are not doing it" end
+  if ns.Nope(q) then return "you are not doing it" end
   if ns.char.itemQuestNo and ns.char.itemQuestNo[q] then return "you said no" end
   if Engine.SideMine and not Engine.SideMine(d) then return "not for you" end
   local lvl = (UnitLevel and UnitLevel("player")) or 1

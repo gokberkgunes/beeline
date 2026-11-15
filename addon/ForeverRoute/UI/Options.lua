@@ -100,12 +100,9 @@ local function openStandalone()
   if not host then
     host = CreateFrame("Frame", "ForeverRouteOptionsWindow", UIParent)
     host:SetSize(440, 742) -- the panel is 724 tall: at 620 the credit line fell below the window
-    host:SetPoint("CENTER"); host:SetFrameStrata("DIALOG")
-    host:SetClampedToScreen(true); host:SetMovable(true); host:EnableMouse(true); host:RegisterForDrag("LeftButton")
-    host:SetScript("OnDragStart", host.StartMoving); host:SetScript("OnDragStop", host.StopMovingOrSizing)
-    Style.Panel(host, C.bg2); Style.Scaled(host, nil, true)
-    table.insert(UISpecialFrames, "ForeverRouteOptionsWindow") -- Escape closes it
-    local close = Style.Button(host, "x", 18, 18, function() host:Hide() end, "Close"); close:SetPoint("TOPRIGHT", -8, -8)
+    host:SetPoint("CENTER")
+    Style.Window(host, "ForeverRouteOptionsWindow")
+    local close = Style.CloseButton(host)
     close:SetFrameLevel(host:GetFrameLevel() + 10)
     host:SetScript("OnHide", function() if panel:GetParent() == host then panel:Hide() end end)
   end

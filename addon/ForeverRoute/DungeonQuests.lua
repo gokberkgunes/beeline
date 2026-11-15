@@ -216,7 +216,7 @@ ns.DUNGEON_QUESTS = {
     },
   },
   [229] = { -- Blackrock Spire
-    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016",
+    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016 84162",
     open = {
       { 4701, "Put Her Down", 55, "A", nil, "Helendis Riverhorn, Burning Steppes" },
       { 4724, "The Pack Mistress", 55, "H", nil, "Galamav the Marksman, Badlands" },
@@ -267,6 +267,7 @@ ns.DUNGEON_QUESTS = {
       { 8994, "Final Preparations", 58, nil, nil, "Bodley", any = { 8989, 8990, 8991, 8992 } },
       { 8995, "Mea Culpa, Lord Valthalak", 58, nil, nil, "Bodley", any = { 8994 } },
       { 9016, "Anthion's Parting Words", 58, "H", 1024, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
+      { 84162, "An Earnest Proposition", 58, "H", nil, "Mokvar, Orgrimmar" },
     },
   },
   [230] = { -- Blackrock Depths
@@ -421,7 +422,7 @@ ns.DUNGEON_QUESTS = {
     ids = "6642 6643 6644 6645 6646 6822 6824 7604 7786 8578",
   },
   [429] = { -- Dire Maul
-    ids = "619 1193 1318 5518 5519 5525 5528 7429 7441 7461 7462 7463 7481 7482 7483 7484 7485 7488 7489 7498 7499 7500 7501 7502 7503 7504 7505 7506 7507 7508 7581 7631 7703 7877 8948 8949 8950 8967 8990 9319 9386",
+    ids = "619 1193 1318 5518 5519 5525 5528 7429 7441 7461 7462 7463 7481 7482 7483 7484 7485 7488 7489 7498 7499 7500 7501 7502 7503 7504 7505 7506 7507 7508 7581 7631 7703 7877 8948 8949 8950 8967 8990 9319 9386 96076",
     open = {
       { 5518, "The Gordok Ogre Suit", 56, nil, nil, "Knot Thimblejack", true },
       { 5525, "Free Knot!", 57, nil, nil, "Knot Thimblejack", true },
@@ -455,6 +456,7 @@ ns.DUNGEON_QUESTS = {
       { 8967, "The Left Piece of Lord Valthalak's Amulet", 58, nil, nil, "Bodley", any = { 8962, 8963, 8964, 8965 } },
       { 8990, "The Right Piece of Lord Valthalak's Amulet", 58, nil, nil, "Bodley", any = { 8985, 8986, 8987, 8988 } },
       { 9319, "A Light in Dark Places", 50, nil, nil, "Festival Flamekeeper, Teldrassil" },
+      { 96076, "In Demand - Ancient Elven Curiosities", 1, nil, nil, "Pix Xizzix, Stranglethorn Vale" },
     },
   },
   [469] = { -- Blackwing Lair

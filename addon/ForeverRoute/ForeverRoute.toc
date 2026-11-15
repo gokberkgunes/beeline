@@ -13,10 +13,13 @@ Libs\HereBeDragons\HereBeDragons-2.0.lua
 Libs\HereBeDragons\HereBeDragons-Pins-2.0.lua
 
 Core.lua
+Routes.lua
+Zones.lua
 Horizon.lua
 Why.lua
 Storage.lua
 State.lua
+Util.lua
 Route.lua
 FlightMasters.lua
 Vendors.lua
@@ -24,6 +27,11 @@ DungeonQuests.lua
 AutoQuest.lua
 Dungeon.lua
 Engine.lua
+Engine\Focus.lua
+Engine\Inserts.lua
+Engine\Side.lua
+Engine\Nope.lua
+Engine\Worth.lua
 Quests.lua
 Trails.lua
 Boats.lua
@@ -45,6 +53,7 @@ Availability.lua
 ItemQuests.lua
 Next.lua
 UI\Style.lua
+UI\Window.lua
 UI\Card.lua
 UI\Arrow.lua
 UI\Pins.lua
