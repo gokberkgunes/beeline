@@ -50,4 +50,4 @@ local function check()
   if l ~= last then last = l; ns.Fire("FR_STEP", ns.Engine.Shown()) end
 end
 ns.On("FR_STATE", function() C_Timer.After(0.2, check) end)
-ns.On("FR_LOADED", function() C_Timer.NewTicker(3, ns.Guard("extras", check)) end)
+ns.On("FR_LOADED", function() ns.NewTicker(3, ns.Guard("extras", check)) end)

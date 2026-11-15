@@ -190,4 +190,4 @@ local function check()
 end
 ns.On("BAG_UPDATE_DELAYED", check)
 ns.On("UPDATE_INVENTORY_DURABILITY", check)
-ns.On("FR_LOADED", function() C_Timer.After(5, check); C_Timer.NewTicker(15, ns.Guard("errands", check)) end)
+ns.On("FR_LOADED", function() C_Timer.After(5, check); ns.NewTicker(15, ns.Guard("errands", check)) end)

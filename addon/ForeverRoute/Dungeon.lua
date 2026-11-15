@@ -145,4 +145,4 @@ end
 local function check() pcall(Dungeon.Check) end
 ns.On("ZONE_CHANGED_NEW_AREA", check)
 ns.On("PLAYER_ENTERING_WORLD", check)
-ns.On("FR_LOADED", function() check(); if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(5, check) end end)
+ns.On("FR_LOADED", function() check(); if C_Timer and C_Timer.NewTicker then ns.NewTicker(5, check) end end)

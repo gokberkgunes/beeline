@@ -111,6 +111,6 @@ function Boats.LearnDock(key, m)
 end
 Boats._tick, Boats._arrived, Boats._waited = tick, arrived, waited
 
-ns.On("FR_LOADED", function() C_Timer.NewTicker(1, ns.Guard("boats", tick)); Boats.Apply() end)
+ns.On("FR_LOADED", function() ns.NewTicker(1, ns.Guard("boats", tick)); Boats.Apply() end)
 ns.On("FR_ROUTE_CHANGED", function() Boats.Apply() end)
 ns.On("ZONE_CHANGED_NEW_AREA", function() pcall(arrived) end)

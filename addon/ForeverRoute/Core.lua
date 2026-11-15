@@ -32,7 +32,26 @@ function ns.Is(fn, ...)
   return v and true or false
 end
 local listeners = {}
-ns._listeners = listeners -- (the simulator's kill probe times each one)
+ns._listeners = listeners -- (the simulator's perf battery times each one: tests/_perf.lua)
+-- every repeating timer the addon runs, kept so the perf battery can price what the addon costs per second standing or
+-- walking (tests/_perf.lua): { period, fn }
+ns._tickers = {}
+-- Work spread over frames (Next.PickAsync): a job runs as a coroutine, ns.sliceCo, for up to ns.sliceBudget ms a frame.
+-- Its long loops call ns.MaybeYield(), which pauses it there when the frame's slice is used up - and does nothing
+-- anywhere else (a call outside the job, a test). ns.Call(f, ...) is pcall outside the job; inside it, a plain call (a
+-- pause can't cross a pcall in Lua 5.1; an error ends the job, which says so)
+ns.sliceCo, ns.sliceT0, ns.sliceBudget = nil, 0, 1
+function ns.MaybeYield()
+  if ns.sliceCo and debugprofilestop() - ns.sliceT0 >= ns.sliceBudget and coroutine.running() == ns.sliceCo then coroutine.yield() end
+end
+function ns.Call(f, ...)
+  if ns.sliceCo and coroutine.running() == ns.sliceCo then return true, f(...) end
+  return pcall(f, ...)
+end
+function ns.NewTicker(period, fn)
+  ns._tickers[#ns._tickers + 1] = { period = period, fn = fn }
+  return C_Timer.NewTicker(period, fn)
+end
 local function isGameEvent(event)
   if event:find("^FR_") then return false end -- our own messages
   if C_EventUtils and C_EventUtils.IsEventValid then return C_EventUtils.IsEventValid(event) end
@@ -1093,6 +1112,6 @@ local function perfSample()
 end
 -- failures go to the error log (they used to be swallowed, which hid a broken logger)
 local guardedSample = ns.Guard("perf", perfSample)
-ns.On("FR_LOADED", function() C_Timer.After(60, guardedSample); C_Timer.NewTicker(300, guardedSample) end)
+ns.On("FR_LOADED", function() C_Timer.After(60, guardedSample); ns.NewTicker(300, guardedSample) end)
 ns.On("PLAYER_LOGOUT", guardedSample)
 ns._perfSample = perfSample -- for tests

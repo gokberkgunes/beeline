@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.2 - 2026-11-15
+- No more hitch every few steps while you walk or ride: working out your next stop now runs in the background, a sliver of each frame, instead of all at once (the worst frame walking went from about 30 ms to under 2).
+- Finishing an objective, taking or handing in a quest, levelling up or entering a new zone costs about half as much as before: one route update per change instead of up to three, and the next stop worked out in the background. The card shows your plan's step at once and moves only if a better stop turns up a moment later.
+- The quest log check and the log bookkeeping no longer walk your whole route on every change.
+
 ## 1.5.1 - 2026-11-14
 - No more frame drops when you kill a quest mob or loot a quest item: a count moving ("Gnoll Paws: 3/8") now only updates the card's counts instead of re-planning your whole route each time, and quests you haven't handed in are looked up once instead of on every update.
 - The built-in plans download is less than half the size (about 15 MB per faction, was 38): the steps every plan of a faction shares are kept once and put back for your plan when it loads.

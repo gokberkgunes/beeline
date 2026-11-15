@@ -440,6 +440,7 @@ function Travel.Plan(from, to, opts)
   for e = 1, 2 do
     local p = N[e]; local onNet = netMaps[p.m]
     for v = 3, #N do
+      if v % 32 == 0 then ns.MaybeYield() end
       local n = N[v]
       if n.w[3] == p.w[3] then
         local ok
@@ -508,8 +509,10 @@ function Travel.Plan(from, to, opts)
   end
   hpush(0, 1)
   local AFK = Travel.AFK_WEIGHT
+  local pops = 0
   while hn > 0 do
     local du, u = hpop()
+    pops = pops + 1; if pops % 32 == 0 then ns.MaybeYield() end -- (a solve spread over frames may pause here: Next.PickAsync)
     if not done[u] and du == dist[u] then
       if u == 2 then break end
       done[u] = true

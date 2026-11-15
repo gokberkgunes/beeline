@@ -183,7 +183,7 @@ function Learn.ScanTick()
     if not Learn.ScanItem(e.id) then e.tries = e.tries + 1; if e.tries < 5 then scanQueue[#scanQueue + 1] = e end end
   end
 end
-ns.On("FR_LOADED", guard(function() C_Timer.After(20, function() C_Timer.NewTicker(1, guard(function() Learn.ScanTick() end)) end) end))
+ns.On("FR_LOADED", guard(function() C_Timer.After(20, function() ns.NewTicker(1, guard(function() Learn.ScanTick() end)) end) end))
 
 -- ---------- incidents ----------
 function Learn.Incident(kind, i, extra)
@@ -254,8 +254,8 @@ function Learn.CheckStuck(now)
   Learn.Incident("stuck on a step", i, { minutes = math.floor((now - started.t) / 60) })
   return true
 end
-ns.On("FR_LOADED", guard(function() C_Timer.NewTicker(60, guard(function() Learn.CheckStuck() end)) end))
-ns.On("FR_LOADED", guard(function() C_Timer.NewTicker(Learn.TICK, guard(function() Learn.ZoneTick() end)) end))
+ns.On("FR_LOADED", guard(function() ns.NewTicker(60, guard(function() Learn.CheckStuck() end)) end))
+ns.On("FR_LOADED", guard(function() ns.NewTicker(Learn.TICK, guard(function() Learn.ZoneTick() end)) end))
 ns.On("PLAYER_TARGET_CHANGED", guard(function() noteUnit("target") end))
 ns.On("UPDATE_MOUSEOVER_UNIT", guard(function() noteUnit("mouseover") end))
 ns.On("NAME_PLATE_UNIT_ADDED", guard(function(unit) if unit then noteUnit(unit) end end))

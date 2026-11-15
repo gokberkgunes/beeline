@@ -401,7 +401,7 @@ function Pins.Sweep()
   return n
 end
 -- re-check nearness every couple of seconds as you move (rebuilds only when a pin comes near or goes far)
-ns.On("FR_LOADED", function() C_Timer.NewTicker(2, ns.Guard("pins", function() Pins.Update() end)) end)
+ns.On("FR_LOADED", function() ns.NewTicker(2, ns.Guard("pins", function() Pins.Update() end)) end)
 
 ns.On("FR_STEP", function() Pins.Update() end)
 ns.On("FR_DUNGEON", function() Pins.Update(true) end)

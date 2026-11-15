@@ -36,10 +36,24 @@ function LogCheck.Entries()
 end
 
 -- where a quest comes up in a route: the first step for it, and the planned level there
+-- a step list's steps by quest, made once per list (and again when stops are added): the check runs on every log change,
+-- and walking the whole plan for each quest in your log, twice, was 10 ms at level 50 (the perf battery)
+local qIndex = setmetatable({}, { __mode = "k" })
+local NONE = {}
+local function stepsOf(steps, id)
+  local ix = qIndex[steps]
+  if not ix or ix.n ~= #steps then
+    ix = { n = #steps, by = {} }
+    for i, s in ipairs(steps) do if s.q then local t = ix.by[s.q]; if not t then t = {}; ix.by[s.q] = t end; t[#t + 1] = i end end
+    qIndex[steps] = ix
+  end
+  return ix.by[id] or NONE
+end
 local function findIn(route, id)
   if not route then return nil end
   local steps = route.steps or {}
-  for i, s in ipairs(steps) do
+  for _, i in ipairs(stepsOf(steps, id)) do
+    local s = steps[i]
     if s.q == id and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) then -- (a step behind you is not on your route)
       -- the planned level there (steps the safety net added have none: use the nearest step that has one)
       for j = i, math.min(#steps, i + 30) do if steps[j].lvl then return i, steps[j].lvl end end
@@ -80,7 +94,8 @@ function LogCheck.Classify()
       verdict, why = "keep", "Worth keeping: " .. keep
     elseif i then
       local st -- this quest's hand-in step on the route (the first step found may be its accept)
-      for _, s in ipairs((where and where.steps) or {}) do if s.q == e.id and s.k == "turnin" and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) then st = s; break end end
+      local wl = (where and where.steps) or {}
+      for _, x in ipairs(stepsOf(wl, e.id)) do local s = wl[x]; if s.q == e.id and s.k == "turnin" and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) then st = s; break end end
       if done and ns.Engine.GrayHandIn and ns.Engine.GrayHandIn(st) then
         -- the route passes this hand-in (finished, far below you, opens nothing): the card won't send you there
         verdict, why = "drop", "Gray and nothing follows it - your route skips this hand-in (not worth a trip)"
@@ -220,7 +235,9 @@ StaticPopupDialogs["FOREVERROUTE_ABANDON"] = {
 -- how many quests are worth dropping (the card shows a button when there are any)
 LogCheck.dropCount = 0
 recount = function()
+  local t0 = debugprofilestop and debugprofilestop()
   local ok, list = pcall(LogCheck.Classify)
+  if t0 and ns.Time then ns.Time("logcheck", debugprofilestop() - t0) end
   local n = 0; if ok then for _, x in ipairs(list) do if x.verdict == "drop" then n = n + 1 end end end
   if n ~= LogCheck.dropCount then LogCheck.dropCount = n; ns.Fire("FR_STEP", ns.Engine.Shown()) end
 end

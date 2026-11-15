@@ -170,4 +170,4 @@ end
 local function scanHere() local m = ns.State and ns.State.Position and ns.State.Position(); if m then Avail.ScanMap(m) end end
 ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(3, ns.Guard("avail", scanHere)) end)
 ns.On("QUESTLINE_UPDATE", function() C_Timer.After(0.5, ns.Guard("avail", scanHere)) end)
-ns.On("FR_LOADED", function() C_Timer.After(8, ns.Guard("avail", scanHere)); C_Timer.NewTicker(120, ns.Guard("avail", scanHere)) end)
+ns.On("FR_LOADED", function() C_Timer.After(8, ns.Guard("avail", scanHere)); ns.NewTicker(120, ns.Guard("avail", scanHere)) end)

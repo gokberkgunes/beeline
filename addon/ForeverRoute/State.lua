@@ -125,7 +125,10 @@ function State.NoteLog()
   ns.char.hadQuest = ns.char.hadQuest or {}
   for id in pairs(logIDs()) do ns.char.hadQuest[id] = true end
 end
-ns.On("FR_STATE", function() pcall(State.NoteLog) end)
+-- (a quest comes into your log only by being taken - or was there when you logged in: not on every refresh, 4 ms at
+-- level 50 on each one)
+ns.On("QUEST_ACCEPTED", function() C_Timer.After(0.5, function() pcall(State.NoteLog) end) end)
+ns.On("PLAYER_LOGIN", function() C_Timer.After(5, function() pcall(State.NoteLog) end) end)
 -- what is in your bags: [itemID] = how many (the backpack and your bags, not the bank). nil when the game won't say
 function State.BagItems()
   local C = type(C_Container) == "table" and C_Container or nil
@@ -323,7 +326,7 @@ end
 -- and re-plan the next stop, a hitch on each one ("frame drops after killing mobs for quests or looting quest items",
 -- a player on 1.5.0). A quest taken, finished, handed in or dropped, an objective done, a level: the full look
 -- (FR_STATE). The log the game fires QUEST_LOG_UPDATE for many times a minute; most of them change nothing at all.
-State.FULL_EVERY = 30 -- seconds: log changes this long after the last full look get one anyway (anything not read here)
+State.FULL_EVERY = 120 -- seconds: log changes this long after the last full look get one anyway (anything not read here)
 local pending, fullDue, lastFull = false, true, -1000
 local function now() return GetTime and GetTime() or 0 end
 -- the quests in your log as last read (the cache) against the game now: "same", "counts" (only counts moved: the cache
@@ -370,7 +373,7 @@ local function settle()
   wipe(cache); wipe(notDone)
   State.logCountWas = State.LogCount()
   local t0 = debugprofilestop and debugprofilestop()
-  ns.Fire("FR_STATE")
+  if ns.Engine and ns.Engine.Coalesce then ns.Engine.Coalesce(function() ns.Fire("FR_STATE") end) else ns.Fire("FR_STATE") end
   if t0 and ns.Time then ns.Time("logchange", debugprofilestop() - t0) end
 end
 local function schedule()
@@ -391,7 +394,7 @@ State._notDone, State._settle = notDone, settle -- (tests)
 
 ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {}; C_Timer.After(3, ns.Guard("taxi", State.ScanTaxi)) end)
 ns.On("TAXI_NODE_STATUS_CHANGED", function() C_Timer.After(0.5, ns.Guard("taxi", State.ScanTaxi)) end)
-ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); C_Timer.NewTicker(300, function() State.Snapshot("periodic") end) end)
+ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); ns.NewTicker(300, function() State.Snapshot("periodic") end) end)
 ns.On("QUEST_LOG_UPDATE", logSoon)
 ns.On("UNIT_QUEST_LOG_CHANGED", function(unit) if unit == "player" then logSoon() end end)
 ns.On("QUEST_ACCEPTED", refreshSoon)

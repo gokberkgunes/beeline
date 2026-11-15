@@ -883,6 +883,7 @@ local function tick(el)
   end
 end
 frame:SetScript("OnUpdate", ns.Guard("nav", function(_, el) tick(el) end))
+Nav._frame = frame -- (the perf battery ticks it)
 -- for tests: run the live line's work to the end (every frame it would take), then one check of where you are
 function Nav.Settle(maxFrames)
   local n = 0

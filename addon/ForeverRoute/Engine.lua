@@ -940,7 +940,33 @@ function Engine.Group(i)
   return out
 end
 
+-- One refresh for one change: while the addon takes in a change (Engine.Coalesce: the log's full look, FR_STATE), the
+-- refreshes its parts ask for - the plan's own, a hand-in added, a side trip's stop, a focus - are one, run when
+-- they are all done. An objective finished ran three back to back (15 ms each at level 50: the perf battery)
+local held -- nil, or true while a change is taken in; "due" once a refresh was asked for
+function Engine.Coalesce(fn)
+  if held then return fn() end
+  held = true
+  local ok, err = pcall(fn)
+  local due = held == "due"
+  held = nil
+  if due then Engine.bgSolve = true; local ok2, e2 = pcall(Engine.Refresh); Engine.bgSolve = nil; if not ok2 then error(e2, 0) end end
+  if not ok then error(err, 0) end
+end
+-- a refresh for something the game said (a new zone, logging in): its solve in the background, like the log's
+function Engine.RefreshBg() Engine.Coalesce(Engine.Refresh) end
+-- a background solve's pick on the card (no rescan of the plan: nothing but the order changed)
+function Engine.ShowPick(pick)
+  if not pick or pick == Engine.current or Engine.Status(pick) ~= "todo" then return end
+  local fi, why = Engine.focus, Engine.focusWhy
+  if fi and (why == "chosen" or (why == "progress" and GetTime() - (Engine.focusAt or 0) < Engine.PROGRESS_HOLD)) and Engine.Status(fi) == "todo" then return end
+  Engine.focus = nil
+  Engine.current = pick
+  if Engine.view and Engine.view == Engine.current then Engine.view = nil end
+  ns.Fire("FR_STEP", Engine.Shown())
+end
 function Engine.Refresh()
+  if held then held = "due"; return end
   local outer = batch == nil
   if outer then batch = {} else wipe(batch) end -- a nested refresh follows a change: start the reuse over
   local t0 = outer and debugprofilestop and debugprofilestop()
@@ -957,7 +983,9 @@ function Engine.RefreshInner()
   if Engine.placeReady then Engine.JoinHad() end
   local before = Engine.current
   local beforeStep = before and steps()[before]
+  local tc = debugprofilestop and debugprofilestop()
   Engine.current = Engine.Compute()
+  if tc and ns.Time then ns.Time("compute", debugprofilestop() - tc) end
   -- already standing in a travel step's destination (switched routes there, logged in there, rode in): it's done
   for _ = 1, 5 do
     local s = Engine.current and steps()[Engine.current]
@@ -995,8 +1023,21 @@ function Engine.RefreshInner()
       Engine.focus = nil -- (farming the plan's own step: your kills count for it - it stays, whatever circle you wander into)
     else
       Engine.focus = nil
-      local ok, pick = pcall(ns.Next.Pick, Engine.current)
-      if ok and pick then Engine.current = pick elseif not ok and ns.LogError then ns.LogError("next", pick) end
+      if Engine.bgSolve and ns.Next.PickAsync then
+        -- taking in a change from the game (Engine.Coalesce): the solve runs in the background (it was 20-40 ms of a
+        -- 50 ms refresh at level 50); meanwhile the card keeps the last pick while it is still to do, else the plan's
+        -- step, and moves only if the solve picks another (Engine.ShowPick)
+        local keep = ns.Next.LastPick()
+        local planned, list = Engine.current, steps()
+        if keep then Engine.current = keep end
+        ns.Next.PickAsync(planned, function(pick)
+          if Engine.planned ~= planned or steps() ~= list then return end
+          Engine.ShowPick(pick or planned)
+        end)
+      else
+        local ok, pick = pcall(ns.Next.Pick, Engine.current)
+        if ok and pick then Engine.current = pick elseif not ok and ns.LogError then ns.LogError("next", pick) end
+      end
     end
   else
     local fi = Engine.focus
@@ -1103,8 +1144,8 @@ end
 ns.On("FR_STATE", function() Engine.Refresh() end)
 ns.On("PLAYER_ENTERING_WORLD", function()
   quiet = true
-  C_Timer.After(1, function() Engine.Refresh() end)
-  C_Timer.After(3, function() Engine.Refresh(); quiet = false end)
+  C_Timer.After(1, function() Engine.RefreshBg() end)
+  C_Timer.After(3, function() Engine.RefreshBg(); quiet = false end)
 end)
 ns.On("PLAYER_XP_UPDATE", function() local _, s = currentStep(); if s and s.k == "grind" then Engine.Refresh() end end)
 -- fly steps carry no coordinates, so the arrow and pins point at the nearest flight master in your zone (FlightMasters.lua)
@@ -1319,7 +1360,7 @@ local function travelDone()
   local i, s = currentStep()
   if s and s.k == "fly" and s.to and inZone(s.to) then Engine.AutoDone(i) end
 end
-ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1, function() travelDone(); Engine.Refresh() end) end)
+ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1, function() travelDone(); Engine.RefreshBg() end) end)
 ns.On("PLAYER_ENTERING_WORLD", function() C_Timer.After(4, travelDone) end)
 ns.On("HEARTHSTONE_BOUND", function()
   -- remember where you bound (the map you were on and the name the game gives it); every hearth step on that map
@@ -1579,6 +1620,25 @@ function Engine.WatchShortcut()
   return true
 end
 local nextFrom -- { x, y, inst, t }: where the live solver last ran from
+-- You moved on (30 yd, or 5 s): only the next stop's solve can change - the plan's statuses don't move with you. It
+-- runs in the background, a slice a frame (Next.PickAsync), and only when it picks another step than the card shows
+-- does the card change (the full refresh, which finds that solve remembered). It used to be the full refresh every
+-- time, in one frame: 20-50 ms at level 50, a hitch every 30 yards (the perf battery, tools/perf-gate.js)
+function Engine.Repick()
+  local planned = Engine.planned
+  if not (planned and ns.Next and ns.Next.PickAsync) then return Engine.Refresh() end
+  -- (what the full refresh would keep without a solve: a flight, a step you chose or are farming)
+  if ns.Is and UnitOnTaxi and ns.Is(UnitOnTaxi, "player") then return end
+  local fi, why = Engine.focus, Engine.focusWhy
+  if fi and (why == "chosen" or (why == "progress" and GetTime() - (Engine.focusAt or 0) < Engine.PROGRESS_HOLD)) and Engine.Status(fi) == "todo" then return end
+  if Engine.focus and why == "progress" then return Engine.Refresh() end -- (its hold just ended: the full look lets it go)
+  if Engine.RecentProgress(planned) then return end
+  local list = steps()
+  ns.Next.PickAsync(planned, function(pick)
+    if Engine.planned ~= planned or steps() ~= list then return end -- (the route moved on meanwhile: that refresh solved again)
+    Engine.ShowPick(pick or planned)
+  end)
+end
 function Engine.UpdateFocus(px, py, pinst)
   Engine.WatchShortcut()
   Engine.SideOffer(px, py, pinst)
@@ -1589,7 +1649,7 @@ function Engine.UpdateFocus(px, py, pinst)
     Engine.pos = { px, py, pinst, now } -- (the solve starts from here: the position this check measured)
     if not nextFrom or nextFrom.inst ~= pinst or (px - nextFrom.x) ^ 2 + (py - nextFrom.y) ^ 2 > 900 or now - nextFrom.t > 5 then
       nextFrom = { x = px, y = py, inst = pinst, t = now }
-      Engine.Refresh()
+      Engine.Repick()
     end
     return
   end

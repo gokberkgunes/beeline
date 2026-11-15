@@ -1177,7 +1177,7 @@ function Card.CheckReady()
     if f then Card.Layout() end
   end
 end
-ns.On("FR_LOADED", function() C_Timer.NewTicker(10, ns.Guard("ready", Card.CheckReady)) end)
+ns.On("FR_LOADED", function() ns.NewTicker(10, ns.Guard("ready", Card.CheckReady)) end)
 -- the companion's note on what changed in this plan (once per plan, until you press OK)
 function Card.ChangeNote()
   local p = ForeverRoutePlan
@@ -1381,6 +1381,12 @@ end
 
 function Card.Update(animate)
   if not f then return end
+  local t0 = debugprofilestop and debugprofilestop()
+  Card.UpdateInner(animate)
+  if t0 and ns.Time then ns.Time("card", debugprofilestop() - t0) end
+end
+-- (timed: what a card redraw costs in your game shows in /fr report)
+function Card.UpdateInner(animate)
   local i = ns.Engine.Shown()
   -- (inside a dungeon the header is the dungeon's: Card.FillDungeon)
   if not (f.cur.dungeon and ns.Dungeon and ns.Dungeon.Inside()) then Card.Header() end
@@ -1428,4 +1434,4 @@ function Card.CheckReadyNearby()
   -- (the distance shown moves with you: redraw when it changed by 10 yd, or another quest or none)
   if (was and was.i) ~= (r and r.i) or (was and r and math.abs(was.d - r.d) >= 10) then Card.Layout() end
 end
-if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(2, function() pcall(Card.CheckReadyNearby) end) end
+if C_Timer and C_Timer.NewTicker then ns.NewTicker(2, function() pcall(Card.CheckReadyNearby) end) end

@@ -97,6 +97,6 @@ function Trails.Count()
 end
 Trails._tick = tick; Trails._flush = flush; Trails.CITIES = CITIES
 
-ns.On("FR_LOADED", function() C_Timer.NewTicker(1, ns.Guard("trails", tick)) end)
+ns.On("FR_LOADED", function() ns.NewTicker(1, ns.Guard("trails", tick)) end)
 ns.On("PLAYER_LOGOUT", function() pcall(flush) end)
 ns.On("ZONE_CHANGED_NEW_AREA", function() pcall(flush) end)

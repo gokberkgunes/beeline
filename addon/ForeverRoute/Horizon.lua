@@ -134,12 +134,15 @@ function Horizon.Solve(P)
   if P.first then best, bestScore = nil, -huge end
   local layer = { root }
   local stableNear = P.stableNear or Horizon.STABLE_NEAR
+  local Y = type(ns) == "table" and ns.MaybeYield or nil
   for depth = 1, math.min(K, n) do
     local byKey, keys = {}, {}
     for _, nd in ipairs(layer) do
+      if Y then Y() end
       local ndMask = nd.mask
       preFor = nil
       for i = 1, n do
+        if Y and i % 10 == 0 then Y() end
         if (ndMask % bit2[i]) < bit[i] and (depth > 1 or not P.first or stops[i].id == P.first) then
           local s = stops[i]
           local ok = true
@@ -173,7 +176,7 @@ function Horizon.Solve(P)
       end
     end
     local nxt = {}
-    for _, key in ipairs(keys) do local nd = byKey[key]; nd.score = score(nd); nxt[#nxt + 1] = nd end
+    for x, key in ipairs(keys) do local nd = byKey[key]; nd.score = score(nd); nxt[#nxt + 1] = nd; if Y and x % 32 == 0 then Y() end end
     if #nxt == 0 then break end
     table.sort(nxt, function(a, b)
       if a.score ~= b.score then return a.score > b.score end

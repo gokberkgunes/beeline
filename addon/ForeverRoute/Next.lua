@@ -84,7 +84,7 @@ local function travelSecs(a, b)
   if e then return e.secs + ((to == b.m and e.w[3] == wb[3]) and straight(e.w, wb) or 0) end
   local v = 1800 -- (no way known: as good as unreachable for a window)
   if ns.Travel and ns.Travel.Plan and a.m and b.m then
-    local ok, legs, secs = pcall(ns.Travel.Plan, { m = a.m, x = a.x, y = a.y }, { m = b.m, x = b.x, y = b.y })
+    local ok, legs, secs = ns.Call(ns.Travel.Plan, { m = a.m, x = a.x, y = a.y }, { m = b.m, x = b.x, y = b.y })
     if ok and legs and secs then v = secs end
   end
   do
@@ -169,7 +169,7 @@ local function farTrip(a, b, ask)
   if e ~= nil or not ask then return e end
   e = false
   if ns.Travel and ns.Travel.Plan then
-    local ok, legs, secs = pcall(ns.Travel.Plan, { m = a.m, x = a.x, y = a.y }, { m = b.m, x = b.x, y = b.y }, { hearth = false })
+    local ok, legs, secs = ns.Call(ns.Travel.Plan, { m = a.m, x = a.x, y = a.y }, { m = b.m, x = b.x, y = b.y }, { hearth = false })
     if ok and legs and secs then
       e = { secs = secs }
       local function w(m, x, y) if not (m and x and y) then return nil end local wx, wy, wi = HBD:GetWorldCoordinatesFromZone(x, y, m); return wx and { wx, wy, wi } or nil end
@@ -459,6 +459,7 @@ function Next.VisitHere(list, planned, from, pm, px, py, pinst)
   local j, last = from, math.min(#list, from + Next.VISIT_SCAN)
   local prevPos -- the last place the plan is at before the visit (for the trip's length)
   while j <= last do
+    ns.MaybeYield() -- (in the background solve: a slice a frame)
     local s = list[j]
     if TRIP[s.k] or not s.m or s.m ~= pm or not left then
       if E.Status(j) ~= "done" and (TRIP[s.k] or (s.m and s.m ~= pm)) then left = true end
@@ -472,6 +473,7 @@ function Next.VisitHere(list, planned, from, pm, px, py, pinst)
       local load = (St.LogCount and St.LogCount()) or 0
       local cap = (St.MaxLog and St.MaxLog()) or 25
       for x = j, k do
+        if x % 8 == 0 then ns.MaybeYield() end
         local t = list[x]
         if E.Status(x) ~= "done" then
           any = true
@@ -704,6 +706,7 @@ local function pick(planned)
     if j0 then from = j0; holdPlanned, holdAt = false, nil; Next.rejoin = { at = j0, trip = planned } end
   end
   for j = from, math.min(#list, from + Next.SCAN) do
+    if j % 8 == 0 then ns.MaybeYield() end
     local s = list[j]
     local st = E.Status(j)
     scanEnd = j
@@ -926,12 +929,58 @@ end
 -- a solve: what its prices depend on is taken once, and the trip-planner searches they may start are bounded
 -- (Next.ASK_PER_PICK) - whatever way it ends
 function Next.Pick(planned)
+  Next.Cancel() -- (a solve running in the background is for a state this one replaces)
   sigNow, askLeft = nil, nil
   sigNow, askLeft = priceSig(), Next.ASK_PER_PICK
   local ok, r = pcall(pick, planned)
   sigNow, askLeft = nil, nil
   if not ok then error(r, 0) end
   return r
+end
+
+-- The same solve spread over frames: at most Next.BUDGET_MS of each frame (ns.MaybeYield pauses it inside the search
+-- and the trip planner), done(pick) when it ends - nil when it failed (logged). Walking re-solves this way: done in
+-- one frame, a solve at level 50 took 20-40 ms, a hitch every 30 yards. A newer request, or a solve run at once
+-- (Next.Pick), cancels the one running.
+Next.BUDGET_MS = 1
+local job
+local driver = CreateFrame and CreateFrame("Frame") or nil
+local function endJob() job = nil; if driver then driver:Hide() end end
+function Next.Busy() return job ~= nil end
+function Next.Cancel() if job then endJob() end end
+local function stepJob(budget)
+  local j = job
+  if not j then return end
+  ns.sliceCo, ns.sliceT0, ns.sliceBudget = j.co, debugprofilestop(), budget or Next.BUDGET_MS
+  sigNow, askLeft = j.sig, j.ask
+  local t0 = debugprofilestop()
+  local ok, r = coroutine.resume(j.co, j.planned)
+  if ns.Time then ns.Time("solve slice", debugprofilestop() - t0) end
+  j.ask = askLeft
+  sigNow, askLeft = nil, nil
+  ns.sliceCo = nil
+  if job ~= j then return end
+  if not ok then endJob(); if ns.LogError then ns.LogError("next", r) end; j.done(nil); return end
+  if coroutine.status(j.co) == "dead" then endJob(); j.done(r) end
+end
+if driver then driver:Hide(); driver:SetScript("OnUpdate", function() local ok, err = pcall(stepJob); if not ok then endJob(); if ns.LogError then ns.LogError("next", err) end end end) end
+Next._driver = driver -- (the perf battery ticks it)
+function Next.PickAsync(planned, done)
+  Next.Cancel()
+  sigNow, askLeft = nil, nil
+  job = { co = coroutine.create(pick), planned = planned, done = done, sig = priceSig(), ask = Next.ASK_PER_PICK }
+  if driver then driver:Show() end
+end
+-- (tests: run the one in the background to its end now)
+function Next.Settle() while job do stepJob(math.huge) end end
+
+-- the last solve's pick, by the step itself, while it is still to do (the card keeps it while the next solve runs)
+function Next.LastPick()
+  local list = ForeverRouteData and ForeverRouteData.steps
+  if not (last and last.pickStep and list) then return nil end
+  local j = last.pick
+  if not (j and list[j] == last.pickStep) then j = nil; for k = 1, #list do if list[k] == last.pickStep then j = k; break end end end
+  if j and ns.Engine.Status(j) == "todo" then return j end
 end
 
 -- why a step picked out of plan order, in words

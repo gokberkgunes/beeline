@@ -191,7 +191,7 @@ end
 -- what you wear changed: every verdict is stale (judged again in the background)
 ns.On("PLAYER_EQUIPMENT_CHANGED", function() if ns.char then ns.char.gearVerdict = {} end; judgeQueue = nil end)
 ns.On("FR_ROUTE_CHANGED", function() judgeQueue = nil end)
-ns.On("FR_LOADED", function() C_Timer.After(15, function() C_Timer.NewTicker(2, ns.Guard("gear", function() Q.JudgeTick(3) end)) end) end)
+ns.On("FR_LOADED", function() C_Timer.After(15, function() ns.NewTicker(2, ns.Guard("gear", function() Q.JudgeTick(3) end)) end) end)
 -- the step's note with the planner's reward guess replaced by the game's verdict
 function Q.RewardNote(s)
   local note = s and s.note
