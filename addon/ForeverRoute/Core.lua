@@ -20,6 +20,15 @@ ns.DEFAULTS = {
   autoFly = false,       -- at a flight master, take the flight the card's trip needs
   autoQuest = false,     -- accept route quests and hand in finished ones (no reward choice) by themselves
   markTarget = true,     -- the Target button (and its key) also puts a star on the NPC
+  -- what the card shows (the options' Card tab; its presets set these)
+  cardNotes = true,      -- the small hint line under a step (warnings always show)
+  cardZones = true,      -- the footer: "Next zone: Arathi, after 2 quests here"
+  cardOffers = true,     -- "another zone is worth a look" (Zones)
+  cardItemQuests = true, -- an item in your bags that starts a quest
+  remindBags = true,     -- bags nearly full: the nearest vendor
+  remindFood = true,     -- eat for Well Fed
+  remindGrimoire = true, -- warlocks: a grimoire at the demon trainer
+  newsBar = true,        -- the "updated to ..." bar under the card after an update
 }
 
 -- ns.Is(fn, ...): a yes/no question to the game (UnitOnTaxi, UnitIsAFK, IsFlying, IsIndoors...). Forever hides some

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.2 - 2026-11-15
+- New options window: tabs down the side (General, Auto, Map, Size, News, Help) instead of one long list, short labels, a Reset tab link on each, and a search box that finds any option ("food", "arrow", "scale").
+- Turn each card line on or off: step notes, the next-zone line, zone suggestions, quest items in your bags, and the reminders (bags full, Well Fed food, warlock grimoires). Or pick a look in one click: Full, Compact or Minimal.
+- What's new lives in the options now: the newest version open, older ones one line each, new ones marked. Turn off the bar after updates if you like.
+- Reset positions puts the card, arrow and Target button back; Help has the main commands and "Bring back skipped steps".
+
 ## 1.6.1 - 2026-11-15
 - A quest you finish early no longer waits for your plan to pass its hand-in levels later, gray by then: when going now is worth more than what waiting would lose, it is your next stop.
 - "Do it now" on a hand-in nearby: the card's Base count and the zones ahead stay on your plan while you hand it in (they showed the far part of the plan the hand-in was filed under), and the card goes back to your plan after.

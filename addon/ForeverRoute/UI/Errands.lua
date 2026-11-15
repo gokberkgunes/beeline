@@ -152,16 +152,17 @@ function Errands.Current()
   local needSell = free and free <= BAG_LOW
   -- (no repair reminder: other addons do that - tester)
   if not needSell then
-    local gt, gk = Errands.Grimoire()
+    local gt, gk
+    if ns.db.remindGrimoire ~= false then gt, gk = Errands.Grimoire() end
     if gt then return gt, gk end
-    if killing() and Errands.WellFed() == false then
+    if ns.db.remindFood ~= false and killing() and Errands.WellFed() == false then
       local food = Errands.Food()
       if food and ns.char.errandDismissed ~= "food" then return "Eat " .. food.name .. " for Well Fed (about +5% kill XP)", "food" end
     end
     return nil
   end
   local key = "bags"
-  if ns.char.errandDismissed == key then return nil end
+  if ns.char.errandDismissed == key or ns.db.remindBags == false then return nil end
   local v, d = Errands.Nearest()
   local where = v and string.format(": %s (%s), %s", v[3], v[4], ns.Style.Distance(d)) or " at the next vendor"
   -- the live solver fitted a vendor into your way (Next.lua): that one, and when

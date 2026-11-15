@@ -136,7 +136,7 @@ local function buildBar()
   Style.Panel(b, C.bg2)
   b.text = Style.Text(b, 11, C.gold); b.text:SetPoint("LEFT", 10, 0)
   local x = Style.Button(b, "x", 18, 18, function() News.Dismiss() end, "Dismiss"); x:SetPoint("RIGHT", -3, 0)
-  local open = Style.Button(b, "What's new", 80, 18, function() News.Show(ns.db.newsSeen) end, "What changed since your last version")
+  local open = Style.Button(b, "What's new", 80, 18, function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(ns.db.newsSeen) end end, "What changed since your last version")
   open:SetPoint("RIGHT", x, "LEFT", -4, 0)
   b.text:SetPoint("RIGHT", open, "LEFT", -6, 0); b.text:SetWordWrap(false)
   News.bar = b
@@ -144,7 +144,7 @@ local function buildBar()
 end
 
 function News.Check()
-  if not News.Due() then if News.bar then News.bar:Hide() end; return false end
+  if ns.db.newsBar == false or not News.Due() then if News.bar then News.bar:Hide() end; return false end
   local b = News.bar or buildBar()
   if not b then return false end
   b.text:SetText("Forever Route updated to " .. tostring(News.Current()))
@@ -153,4 +153,5 @@ function News.Check()
 end
 
 ns.On("FR_LOADED", function() C_Timer.After(5, ns.Guard("news", News.Check)) end)
-ns.On("FR_NEWS", function() News.Show(nil) end)
+-- /fr news: the options' News tab (one place for the changelog)
+ns.On("FR_NEWS", function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(nil) end end)

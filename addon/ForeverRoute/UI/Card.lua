@@ -845,6 +845,8 @@ function Card.Fill()
       cur.why.tip2 = "Your plan's next step: " .. Card.Plain((Card.Describe(steps()[planned])))
       cur.why:Show()
     end
+    -- (the options' "Step notes" off: hints go, warnings stay)
+    if ns.db.cardNotes == false and color ~= C.warn and color ~= C.bad then text = "" end
     setNote(text, color)
   end
   cur.choice = nil
@@ -886,7 +888,7 @@ function Card.SetButtons(s)
   local who = s and (s.target or ((s.k == "accept" or s.k == "turnin" or s.k == "bind" or s.k == "fp" or s.k == "train") and s.npc))
   local item = s and s.k ~= "bonus" and s.item -- books are looted, not used
   -- no item of the step's own: the button starts the quest an item in your bags offers (ns.ItemQuests)
-  local offer = not item and not ns.Engine.view and ns.ItemQuests and ns.ItemQuests.Current()
+  local offer = not item and not ns.Engine.view and ns.db.cardItemQuests ~= false and ns.ItemQuests and ns.ItemQuests.Current()
   if offer then item = offer.item end
   cur.offerItem = offer and true or false
   cur.wantTarget, cur.wantItem = who, item
@@ -1129,7 +1131,7 @@ function Card.Layout()
   end
   top = top + 8
   local lv, offer = nil, nil
-  if ns.Offers and not ns.Engine.view then lv, offer = ns.Offers.Current() end
+  if ns.Offers and not ns.Engine.view and ns.db.cardOffers ~= false then lv, offer = ns.Offers.Current() end
   f.offer:SetShown(offer and true or false)
   if offer then
     f.offer.text:SetText(offer.text)
@@ -1182,7 +1184,7 @@ function Card.Layout()
     f.ready:ClearAllPoints(); f.ready:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -top); f.ready:SetPoint("RIGHT", f, "RIGHT", -PAD, 0)
     top = top + 22
   end
-  local iq = not ns.Engine.view and ns.ItemQuests and ns.ItemQuests.Current()
+  local iq = not ns.Engine.view and ns.db.cardItemQuests ~= false and ns.ItemQuests and ns.ItemQuests.Current()
   f.itemq:SetShown(iq and true or false)
   if iq then
     -- (an explicit width, so the wrapped height is measured right: the "x" takes the last 22)
@@ -1490,7 +1492,7 @@ function Card.UpdateInner(animate)
   -- (inside a dungeon the header is the dungeon's: Card.FillDungeon)
   if not (f.cur.dungeon and ns.Dungeon and ns.Dungeon.Inside()) then Card.Header() end
   Card.UpdateProgress()
-  f.eta:SetText(Card.FooterText(i))
+  f.eta:SetText(ns.db.cardZones ~= false and Card.FooterText(i) or "")
   local cur = f.cur
   if animate then
     cur.animOut:Stop(); cur.animIn:Stop(); cur.pop:Stop()
