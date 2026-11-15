@@ -1676,8 +1676,8 @@ function Engine.UpdateFocus(px, py, pinst)
   if pick then setFocus(pick, why) end
 end
 
--- kills / loot counting for a later objective: that's what you're doing
-ns.On("FR_STATE", function()
+-- kills / loot counting for a later objective: that's what you're doing (FR_PROGRESS: only a count moved)
+local function countsMoved()
   local planned = Engine.planned or Engine.current
   if not planned or Engine.view then return end
   local list = steps()
@@ -1701,7 +1701,9 @@ ns.On("FR_STATE", function()
       end
     end
   end
-end)
+end
+ns.On("FR_STATE", countsMoved)
+ns.On("FR_PROGRESS", countsMoved)
 ns.On("FR_ROUTE_CHANGED", function() Engine.focus = nil; wipe(lastHave); wipe(progressAt) end)
 -- did your kills or loot count for this step lately (Engine.PROGRESS_HOLD)? You're plainly on it, then
 function Engine.RecentProgress(i)

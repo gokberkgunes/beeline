@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1 - 2026-11-14
+- No more frame drops when you kill a quest mob or loot a quest item: a count moving ("Gnoll Paws: 3/8") now only updates the card's counts instead of re-planning your whole route each time, and quests you haven't handed in are looked up once instead of on every update.
+- The built-in plans download is less than half the size (about 15 MB per faction, was 38): the steps every plan of a faction shares are kept once and put back for your plan when it loads.
+
 ## 1.5.0 - 2026-11-14
 - Pick a zone whose quests need an earlier part you haven't done, and those steps come first, cut from your own plan, when they're close by. When they aren't, the card says what was left out and what it needs.
 - "Planned route" goes back to where your plan still has quests for you, however much you wandered, not to where you left it.

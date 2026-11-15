@@ -465,7 +465,8 @@ function Card.TripKind(s)
   return Style.KIND[k]
 end
 
-local function objectiveBar(bar, s, o, kind)
+local function objectiveBar(bar, s, o, kind, idx)
+  bar.live = { s = s, kind = kind, idx = idx } -- (Card.Counts redraws it from this)
   if o and o.need and o.need > 0 then
     -- the count is shown on the right: drop it from the text, whether it comes first ("0/1 Thing") or last ("Thing: 0/1")
     local label = o.text:gsub(":%s*%d+%s*/%s*%d+%s*$", ""):gsub("^%s*%d+%s*/%s*%d+%s*", "")
@@ -548,7 +549,7 @@ function Card.Fill()
   if not f then return end
   local cur = f.cur
   local i = ns.Engine.Shown()
-  for _, b in ipairs(cur.bars) do b:Hide() end
+  for _, b in ipairs(cur.bars) do b:Hide(); b.live = nil end
   -- (pairs: the quest titles are kept by the number of the bar they sit over - 1, 4, 7 - and ipairs stopped at the
   -- first gap, leaving old titles ("Past Due") floating over the dungeon card - tester)
   for _, h in pairs(cur.heads) do h:Hide() end
@@ -635,8 +636,8 @@ function Card.Fill()
     local q = ns.State.Quest(s.q)
     local objs = q and q.on and q.objectives or {}
     if #objs == 0 then local b = bar(); b:Set(0, kind.color, "See your quest log", ""); b:Show() end
-    for _, o in ipairs(objs) do
-      if o.need and o.need > 0 then objectiveBar(bar(), s, o, kind)
+    for n, o in ipairs(objs) do
+      if o.need and o.need > 0 then objectiveBar(bar(), s, o, kind, n)
       else local b = bar(); b:Set(o.finished and 1 or 0, kind.color, o.text, ""); b:Show() end
     end
   elseif s.k == "obj" then
@@ -1016,7 +1017,8 @@ function Card.Layout()
       -- objectives coming up show your live count, so half-done ones are obvious
       local o = s.k == "obj" and ns.Engine.ObjectiveFor(s)
       local cnt = o and o.need and o.need > 0 and string.format("  |cff8a93a6%d/%d|r", o.have or 0, o.need) or ""
-      r.text:SetText((Card.Describe(s)) .. cnt); r.text:SetAlpha(1 - (k - 1) * 0.2)
+      r.base, r.cnt = (Card.Describe(s)), cnt
+      r.text:SetText(r.base .. cnt); r.text:SetAlpha(1 - (k - 1) * 0.2)
       r:ClearAllPoints(); r:SetPoint("TOPLEFT", f, "TOPLEFT", PAD - 4, -top); r:SetPoint("RIGHT", -PAD, 0); r:Show()
       top = top + 20
     else r:Hide() end
@@ -1351,6 +1353,32 @@ function Card.FooterText(i)
   local n = here.quests or 0
   return "Next zone: " .. Style.ShortZone(nxt.zone) .. (n > 0 and string.format(", after %d quest%s here", n, n == 1 and "" or "s") or "")
 end
+-- A count moved ("Gnoll Paws: 3/8", State.lua FR_PROGRESS): only the bars and counts on the card change - its text,
+-- height and buttons stay. The whole card took 3 ms to redo on every kill; this is a few bars.
+function Card.Counts()
+  if not f then return end
+  local cur = f.cur
+  if cur.dungeon or (cur.animOut and cur.animOut:IsPlaying()) then return Card.Update(false) end
+  for n = 1, cur.nbars or 0 do
+    local b = cur.bars[n]
+    local L = b and b.live
+    if L then
+      local o
+      if L.idx then local q = ns.State.Quest(L.s.q); o = q and q.on and q.objectives[L.idx] else o = ns.Engine.ObjectiveFor(L.s) end
+      local sig = o and ((o.have or 0) .. "/" .. (o.need or 0) .. (o.finished and "f" or "") .. (o.text or "")) or ""
+      if sig ~= b.liveSig then b.liveSig = sig; objectiveBar(b, L.s, o, L.kind, L.idx) end
+    end
+  end
+  for _, r in ipairs(f.rows or {}) do
+    local s = r:IsShown() and r.index and r.base and steps()[r.index]
+    if s and s.k == "obj" then
+      local o = ns.Engine.ObjectiveFor(s)
+      local cnt = o and o.need and o.need > 0 and string.format("  |cff8a93a6%d/%d|r", o.have or 0, o.need) or ""
+      if cnt ~= r.cnt then r.cnt = cnt; r.text:SetText(r.base .. cnt) end
+    end
+  end
+end
+
 function Card.Update(animate)
   if not f then return end
   local i = ns.Engine.Shown()
@@ -1370,6 +1398,7 @@ end
 ns.On("FR_LOADED", function() build(); f:SetShown(not ns.db.hidden); Card.Update() end)
 ns.On("FR_STEP_DONE", function() if f then Card.Update(true) end end)
 ns.On("FR_STEP", function() Card.Update(false) end)
+ns.On("FR_PROGRESS", function() Card.Counts() end) -- (a count moved: "Gnoll Paws: 3/8")
 ns.On("FR_DUNGEON", function() if f then Card.Update(false) end end) -- walked into or out of a dungeon
 ns.On("FR_XP", function() local s = ns.Engine.current and steps()[ns.Engine.current]; if f and s and s.k == "grind" and not f.cur.animOut:IsPlaying() then Card.Fill(); Card.Layout() end end)
 ns.On("FR_TOGGLE", function() ns.db.hidden = not ns.db.hidden; f:SetShown(not ns.db.hidden) end)

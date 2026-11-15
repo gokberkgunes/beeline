@@ -7,12 +7,16 @@ ns.State = State
 State.completed = {}   -- [questID] = true
 State.knownTaxi = {}   -- [nodeName] = true
 local cache = {}       -- [questID] = { on, complete, objectives } until the next log change
+-- [questID] = true: not handed in, as asked since the last full look (a refresh asks for every quest on the route, ~950
+-- times on a long plan, each a call into the game and a look at every quest that needs it)
+local notDone = {}
 
 local function call(fn, ...) if type(fn) == "function" then local ok, a, b, c, d = pcall(fn, ...); if ok then return a, b, c, d end end end
 
 function State.IsCompleted(id)
   if not id then return false end
   if State.completed[id] then return true end
+  if notDone[id] then return false end
   local done = C_QuestLog and call(C_QuestLog.IsQuestFlaggedCompleted, id)
   if done == nil and IsQuestFlaggedCompleted then done = call(IsQuestFlaggedCompleted, id) end
   if done then State.completed[id] = true end
@@ -20,6 +24,7 @@ function State.IsCompleted(id)
   -- chain carried on) - either way the giver won't offer it again. Jungle Secrets, abandoned with Bookie Herod handed
   -- in, was offered on the card again and again and flipped with the next pick (tester)
   if not done and State.SupersededBy(id) then State.completed[id] = true; return true end
+  if not done then notDone[id] = true end
   return done and true or false
 end
 -- the quests that need quest id (the reverse of ns.QUEST_PRE), built once
@@ -313,20 +318,82 @@ function State.ScanTaxi()
   return added
 end
 
-local pending
-local function refreshSoon()
-  wipe(cache)
+-- After a log change the addon looks again. A kill or a looted quest item only moves a count ("Gnoll Paws: 3/8"): the
+-- route is the same, so only the card's counts are redrawn (FR_PROGRESS) - every kill used to rebuild the whole route
+-- and re-plan the next stop, a hitch on each one ("frame drops after killing mobs for quests or looting quest items",
+-- a player on 1.5.0). A quest taken, finished, handed in or dropped, an objective done, a level: the full look
+-- (FR_STATE). The log the game fires QUEST_LOG_UPDATE for many times a minute; most of them change nothing at all.
+State.FULL_EVERY = 30 -- seconds: log changes this long after the last full look get one anyway (anything not read here)
+local pending, fullDue, lastFull = false, true, -1000
+local function now() return GetTime and GetTime() or 0 end
+-- the quests in your log as last read (the cache) against the game now: "same", "counts" (only counts moved: the cache
+-- now has them) or "changed"
+function State.CheckLog()
+  local any = false
+  local fresh = {}
+  for id, c in pairs(cache) do
+    if c.on then
+      any = true
+      local on = C_QuestLog and C_QuestLog.IsOnQuest and call(C_QuestLog.IsOnQuest, id)
+      if on == nil and C_QuestLog and C_QuestLog.GetLogIndexForQuestID then on = call(C_QuestLog.GetLogIndexForQuestID, id) ~= nil end
+      if not on then return "changed" end
+      local objs = C_QuestLog and call(C_QuestLog.GetQuestObjectives, id)
+      if type(objs) ~= "table" or #objs ~= #c.objectives then return "changed" end
+      local complete = C_QuestLog and C_QuestLog.IsComplete and call(C_QuestLog.IsComplete, id)
+      if complete ~= nil and (complete and true or false) ~= c.complete then return "changed" end
+      for i, o in ipairs(objs) do
+        local was = c.objectives[i]
+        if (o.finished and true or false) ~= (was.finished and true or false) then return "changed" end
+        if (o.text or "") ~= was.text or (o.numFulfilled or 0) ~= was.have or (o.numRequired or 0) ~= was.need then fresh[#fresh + 1] = { was, o } end
+      end
+    end
+  end
+  if not any then return "changed" end -- (nothing read yet: nothing to compare with)
+  if State.LogCount() ~= State.logCountWas then return "changed" end
+  if #fresh == 0 then return "same" end
+  for _, p in ipairs(fresh) do p[1].text, p[1].have, p[1].need = p[2].text or "", p[2].numFulfilled or 0, p[2].numRequired or 0 end
+  return "counts"
+end
+local function settle()
+  pending = false
+  if not fullDue and now() - lastFull < State.FULL_EVERY then
+    local ok, how = pcall(State.CheckLog)
+    if ok and how == "same" then return end
+    if ok and how == "counts" then
+      local t0 = debugprofilestop and debugprofilestop()
+      ns.Fire("FR_PROGRESS")
+      if t0 and ns.Time then ns.Time("counts", debugprofilestop() - t0) end
+      return
+    end
+  end
+  fullDue, lastFull = false, now()
+  wipe(cache); wipe(notDone)
+  State.logCountWas = State.LogCount()
+  local t0 = debugprofilestop and debugprofilestop()
+  ns.Fire("FR_STATE")
+  if t0 and ns.Time then ns.Time("logchange", debugprofilestop() - t0) end
+end
+local function schedule()
   if pending then return end
   pending = true
-  C_Timer.After(0.15, function() pending = false; wipe(cache); ns.Fire("FR_STATE") end)
+  C_Timer.After(0.15, settle)
 end
+-- something more than a count may have changed: the full look
+local function refreshSoon()
+  wipe(cache); wipe(notDone)
+  fullDue = true
+  schedule()
+end
+-- the log changed: maybe only a count
+local function logSoon() schedule() end
 State.Invalidate = refreshSoon
+State._notDone, State._settle = notDone, settle -- (tests)
 
 ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {}; C_Timer.After(3, ns.Guard("taxi", State.ScanTaxi)) end)
 ns.On("TAXI_NODE_STATUS_CHANGED", function() C_Timer.After(0.5, ns.Guard("taxi", State.ScanTaxi)) end)
 ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); C_Timer.NewTicker(300, function() State.Snapshot("periodic") end) end)
-ns.On("QUEST_LOG_UPDATE", refreshSoon)
-ns.On("UNIT_QUEST_LOG_CHANGED", function(unit) if unit == "player" then refreshSoon() end end)
+ns.On("QUEST_LOG_UPDATE", logSoon)
+ns.On("UNIT_QUEST_LOG_CHANGED", function(unit) if unit == "player" then logSoon() end end)
 ns.On("QUEST_ACCEPTED", refreshSoon)
 ns.On("QUEST_REMOVED", refreshSoon)
 ns.On("QUEST_TURNED_IN", function(id)

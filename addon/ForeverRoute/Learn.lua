@@ -112,6 +112,7 @@ function Learn.ProgressTick(now)
   end
 end
 ns.On("FR_STATE", guard(function() Learn.ProgressTick() end))
+ns.On("FR_PROGRESS", guard(function() Learn.ProgressTick() end))
 
 -- ---------- time per zone ----------
 -- how long you really spend in each zone (not on flights, not away) and how many steps you finish there: the report

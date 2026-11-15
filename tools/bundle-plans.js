@@ -34,6 +34,63 @@ const blocksOf = (src) => [...[...src.matchAll(ZR_BLOCK)].map((m) => [m[0], m[1]
 const packBlocks = (src, shared) => src.replace(ZR_BLOCK, (m, id) => (shared[id] === m ? marker(id) : m)).replace(VISITS_BLOCK, (m) => (shared.visits === m ? marker('visits') : m));
 const marker = (id) => `\n--@zr ${id}@`;
 const unpack = (src, shared) => src.replace(/\n--@zr ([^@\n]+)@/g, (m, id) => (id in shared ? shared[id] : m));
+// Steps (the design for zones and chains, 3.4 part 1): a faction's plans walk the same trunk, so most of their step
+// lines are word for word the same - 25 MB of main-path steps per faction held 1.4 MB of distinct lines. Each distinct
+// step line (without its position fields sec and id) is kept once per faction (ForeverRoutePlanShared.lines, one per
+// line), and a plan's step list becomes "--@sl i:sec:id,...@" (i: the line's number there); the addon puts the lines
+// back for your plan only (Core.lua LoadStarter). A block with a line this can't read stays as it was.
+const STEPS_BLOCK = /\n    steps = \{\n([\s\S]*?)\n    \},?(?=\n)/g;
+// the position of `token` in a step line outside quoted text, or -1
+function outside(line, token) {
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\' && q) { i++; continue; }
+    if (c === '"') q = !q;
+    else if (!q && line.startsWith(token, i)) return i;
+  }
+  return -1;
+}
+// a step line as { body (ending ' }', no sec/id), sec, id } or null
+function stepOf(line) {
+  const m = /^      (\{ .*\}),?$/.exec(line);
+  if (!m) return null;
+  let body = m[1], sec = '', id = '';
+  for (const f of ['sec', 'id']) {
+    const tok = ', ' + f + ' = ';
+    const at = outside(body, tok);
+    if (at < 0) continue;
+    const v = /^\d+/.exec(body.slice(at + tok.length));
+    if (!v) return null;
+    if (f === 'sec') sec = v[0]; else id = v[0];
+    body = body.slice(0, at) + body.slice(at + tok.length + v[0].length);
+  }
+  return body.endsWith(' }') ? { body, sec, id } : null;
+}
+const stepLine = (body, sec, id) => '      ' + body.slice(0, -2) + (sec ? ', sec = ' + sec : '') + (id ? ', id = ' + id : '') + ' },';
+function packSteps(src, dict) {
+  return src.replace(STEPS_BLOCK, (all, inner) => {
+    const parts = [];
+    for (const l of inner.split('\n')) {
+      const s = stepOf(l); if (!s) return all;
+      let n = dict.idx.get(s.body); if (n === undefined) { n = dict.list.length + 1; dict.list.push(s.body); dict.idx.set(s.body, n); }
+      parts.push(n + ':' + s.sec + ':' + s.id);
+    }
+    return '\n    steps = {\n--@sl ' + parts.join(',') + '@\n    },';
+  });
+}
+const unpackSteps = (src, list) => src.replace(/\n--@sl ([^@\n]*)@/g, (m, s) => '\n' + s.split(',').map((e) => { const [i, sec, id] = e.split(':'); return stepLine(list[+i - 1], sec, id); }).join('\n'));
+// the same plan, step for step: every line equal, a step line equal as a step (its fields; the trailing comma aside)
+function samePlan(a, b) {
+  const A = a.split('\n'), B = b.split('\n');
+  if (A.length !== B.length) return 'line count ' + A.length + ' vs ' + B.length;
+  for (let i = 0; i < A.length; i++) {
+    if (A[i] === B[i]) continue;
+    const x = stepOf(A[i]), y = stepOf(B[i]);
+    if (!(x && y && x.body === y.body && x.sec === y.sec && x.id === y.id)) return 'line ' + (i + 1) + ': ' + A[i].slice(0, 80) + ' | ' + B[i].slice(0, 80);
+  }
+  return null;
+}
 // a long bracket that the text never closes by accident
 const longString = (s) => { let n = 1; while (s.includes(']' + '='.repeat(n) + ']')) n++; const eq = '='.repeat(n); return `[${eq}[\n${s}]${eq}]`; };
 for (const [side, plans] of Object.entries(sides)) {
@@ -63,6 +120,15 @@ for (const [side, plans] of Object.entries(sides)) {
     p.packed = packBlocks(p.src, shared);
     if (unpack(p.packed, shared) !== p.src) throw new Error('bundle: ' + p.key + ' does not come back whole from its zone route markers');
   }
+  // the step lines, kept once (3.4 part 1): every plan must come back step for step
+  const dict = { list: [], idx: new Map() };
+  for (const p of plans) {
+    const zp = p.packed;
+    p.packed = packSteps(zp, dict);
+    const why = samePlan(unpack(unpackSteps(p.packed, dict.list), shared), p.src);
+    if (why) throw new Error('bundle: ' + p.key + ' does not come back step for step from its step lines (' + why + ')');
+  }
+  if (dict.list.length) shared.lines = dict.list.join('\n');
   const L = [`-- The built-in ${side} plans (tools/bundle-plans.js from addon/ForeverRoute_Starter_*): each as text, made into code`,
     '-- only for your race and class (Core.lua LoadMyPlan). Regenerate rather than edit.',
     'ForeverRoutePlanSources = ForeverRoutePlanSources or {}', 'ForeverRoutePlanShared = ForeverRoutePlanShared or {}'];
@@ -78,5 +144,5 @@ for (const [side, plans] of Object.entries(sides)) {
     const open = k + 2, close = back.indexOf("]" + "=".repeat(eq) + "]", open);
     if (back.slice(open, close) !== p.packed) throw new Error("bundle: " + p.key + " does not read back as written");
   }
-  console.log(`${name}: ${plans.length} plans, ${Object.keys(shared).length} shared zone routes, ${(fs.statSync(path.join(dir, 'Plans.lua')).size / 1e6).toFixed(1)} MB`);
+  console.log(`${name}: ${plans.length} plans, ${Object.keys(shared).length - (shared.lines ? 1 : 0)} shared zone routes, ${dict.list.length} shared step lines, ${(fs.statSync(path.join(dir, 'Plans.lua')).size / 1e6).toFixed(1)} MB`);
 }

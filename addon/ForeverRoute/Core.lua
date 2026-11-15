@@ -32,6 +32,7 @@ function ns.Is(fn, ...)
   return v and true or false
 end
 local listeners = {}
+ns._listeners = listeners -- (the simulator's kill probe times each one)
 local function isGameEvent(event)
   if event:find("^FR_") then return false end -- our own messages
   if C_EventUtils and C_EventUtils.IsEventValid then return C_EventUtils.IsEventValid(event) end
@@ -191,6 +192,22 @@ function ns.LoadStarter(sk)
   if src and type(ForeverRoutePlanShared) == "table" then
     local shared = ForeverRoutePlanShared
     src = src:gsub("\n%-%-@zr ([^@\n]+)@", function(id) return shared[id] end)
+    -- and the step lines (3.4 part 1): "--@sl i:sec:id,..." is your plan's step list, each step the faction's line i
+    -- with its section and id put back
+    if type(shared.lines) == "string" and src:find("\n--@sl ", 1, true) then
+      local lines = {}
+      for l in (shared.lines .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+      src = src:gsub("\n%-%-@sl ([^@\n]*)@", function(list)
+        local out = {}
+        for e in list:gmatch("[^,]+") do
+          local i, sec, id = e:match("^(%d+):(%d*):(%d*)$")
+          local body = i and lines[tonumber(i)]
+          if not body then return nil end -- (a marker this can't read stays a comment: no steps, the plan still loads)
+          out[#out + 1] = "      " .. body:sub(1, -3) .. (sec ~= "" and (", sec = " .. sec) or "") .. (id ~= "" and (", id = " .. id) or "") .. " },"
+        end
+        return "\n" .. table.concat(out, "\n")
+      end)
+    end
   end
   ForeverRoutePlanSources, ForeverRoutePlanShared = nil, nil -- every other plan's text goes
   if src then
