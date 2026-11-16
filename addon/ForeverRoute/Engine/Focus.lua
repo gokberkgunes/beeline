@@ -196,6 +196,10 @@ function Engine.UpdateFocus(px, py, pinst)
   Engine.WatchShortcut()
   Engine.SideOffer(px, py, pinst)
   if Engine.view or not px then return end
+  -- dead or a ghost: you can't take or hand in anything until you're back in your body, so where your ghost runs is not
+  -- where you are - the card keeps its step (the arrow points to your corpse) and solves again once you're alive. Running
+  -- past a hand-in as a ghost put it on the card (tester)
+  if ns.Is(UnitIsDeadOrGhost, "player") then nextFrom = nil; return end
   -- the live solver decides the order: it runs again as you move (30 yd, or every 5 s), the focus rules don't
   if ns.Next and ns.Next.Enabled() then
     local now = GetTime()
@@ -295,6 +299,10 @@ local function countsMoved()
   -- the planned step too: its loot counting means you're on it (UpdateFocus never jumps past it then), and if the card
   -- had moved on to another step, it comes back
   local js = Engine.Upcoming(planned, WINDOW); table.insert(js, 1, planned)
+  -- (and the card's step when the solve picked another - an extra, a quest from the part you passed: farming it set no
+  -- hold, and the card could leave mid-farm - code review)
+  local cur = Engine.current
+  if cur and cur ~= planned then local seen = false; for _, j in ipairs(js) do if j == cur then seen = true end end; if not seen then js[#js + 1] = cur end end
   for _, j in ipairs(js) do
     local s = list[j]
     if s and s.k == "obj" and not Engine.IsDone(j) then
@@ -306,7 +314,7 @@ local function countsMoved()
           if j == planned then
             if (Engine.focus and Engine.focus ~= planned) or Engine.current ~= planned then Engine.focus, Engine.focusWhy = nil, nil; Engine.Refresh() end
           elseif Engine.focus == j then Engine.focusWhy = "progress" -- shown for being here, now also counting: hold it as such
-          elseif j ~= Engine.current then setFocus(j, "you are making progress on it", "progress") end
+          else setFocus(j, "you are making progress on it", "progress") end -- (the card's own pick too: held while you farm it)
         end
         lastHave[k] = o.have
       end

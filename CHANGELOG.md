@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.4 - 2026-11-16
+- Landing somewhere other than where your plan expected (the flight path you know): the quests right around you come first, instead of a long walk to the plan's next one and back.
+- The card doesn't send you to another zone while your path still has quests where you are, unless that quest starts a chain for your zone (it sent a player from Riverglades to the Badlands with eight quests ready to hand in).
+- Before the card sends you out of town, it has you pick up the quests the plan takes in that town, so you work on them on the same trip (Farholde Keep sent players out for the Foreman's Crate with the quest givers beside them).
+- The arrow points at the game's own quest marker for an objective whose place the quest data doesn't have, instead of disappearing.
+- Dead: the card no longer changes as your ghost runs past quest givers; it picks up again once you're alive.
+- Your place in the plan only moves forward. A quest you take up again from a part you passed no longer pulls the card, its Base and the zones ahead back to an old zone; it is offered when you are near it.
+- A side quest or a quest from earlier in the plan is never filed into the part of the plan you passed (one sent a player back to Wetlands).
+- Time is priced at Forever's real pace for your level, not a fixed level an hour: what a trip is worth, whether a leftover is worth it, whether to hand in now.
+- A finished quest's hand-in, side quests' too, is weighed by the XP it would lose by waiting; while you farm the card's own pick, it stays on the card.
+- The quest log check uses the same "gray" as the route, and no longer says "on your route" for a quest the route skipped.
+- Fixed: training, hearthing or a flight path could be ticked from the step you were looking at in the route list.
+- A flag on the card: if something looks wrong, click it and send /fr report - your report then shows us exactly what happened.
+
 ## 1.6.3 - 2026-11-15
 - The Drowned City: inside, the card shows its quests from your log (Shady Saltseers, The Saltseer Captain, Ancient Gurubashi Secrets) instead of your next step outside.
 - Joining your plan partway into a zone no longer drops that zone's earlier quests: anything there at your level stays on your route (half of Riverglades - Gnoll Infestation, Bats in the Belfry - was left out, and the card jumped between them as you walked).

@@ -49,7 +49,9 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   local list = steps()
   local cur = Engine.current
   if not cur then return nil end
-  local from = math.max(cur, opts.minIndex or cur)
+  -- (from your place in the plan, not the card's step when that is a quest from the part you passed - review)
+  local fromPlan = (ns.Next and ns.Next.taken and ns.Next.taken == list[cur] and Engine.planned and Engine.planned > cur) and Engine.planned or cur
+  local from = math.max(fromPlan, opts.minIndex or cur)
   local X = wpos(new); if not X then return nil end
   -- gaps: (you -> current step) when you're on the same map, then each pair of neighbouring stops after it
   local best, bestCost = opts.at, nil
@@ -81,7 +83,11 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   end
   for i = from, opts.at and from - 1 or math.min(#list, opts.maxIndex or #list) do
     local s = list[i]
-    if s.k == "fly" or s.k == "hearth" then prev = nil -- a flight in between: the gap doesn't count
+    -- (never into the part of the plan behind you: the card showed a quest from there - an extra - and a side quest's
+    -- objective went in after it, at step 981 in Wetlands; being on the route, it became the plan's next step and the
+    -- card and its Base left Riverglades for Wetlands - tester)
+    if Engine.BehindYou and Engine.BehindYou(s) then prev = nil
+    elseif s.k == "fly" or s.k == "hearth" then prev = nil -- a flight in between: the gap doesn't count
     else
       local w = wpos(s)
       if w and w[3] == X[3] then
@@ -115,6 +121,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   -- on the card and a stray header in the list.
   local around = list[best] or list[best - 1]
   if around then new.sec = around.sec end
+  new.added = true -- (a stop put in here belongs where it went: the plan's floor leaves it alone, Engine.Compute)
   table.insert(list, best, new)
   -- everything after it moved down one: step numbers, and the "where next?" choices (they are kept by position)
   for i = best, #list do list[i].id = i end
@@ -220,18 +227,18 @@ function Engine.HandInNow(step, ql, at)
   local me = UnitLevel and UnitLevel("player") or 1
   if type(ql) ~= "number" or not at or not Engine.current then return nil end
   local t = list[at] or list[at - 1] or list[#list]
-  local then_ = math.max(me, tonumber(t and t.lvl) or me)
+  -- (the plan's level there, PlanLevel: travel, binds and added stops carry no lvl of their own - code review)
+  local then_ = math.max(me, tonumber(Engine.PlanLevel and Engine.PlanLevel(at)) or tonumber(t and t.lvl) or me)
   local lost = Engine.QuestXP(ql, me) - Engine.QuestXP(ql, then_)
   if lost <= 0 then return nil end
   local pm, px, py = ns.State.Position()
   if not (pm and step.m and step.x) or not (ns.Travel and ns.Travel.Plan) then return nil end
   local _, secs = ns.Travel.Plan({ m = pm, x = px, y = py }, { m = step.m, x = step.x, y = step.y, name = step.npc }, { hearth = false })
   if not secs then return nil end
-  local perLevel = (UnitXPMax and UnitXPMax("player")) or 0
-  if perLevel <= 0 then return nil end
-  local tripCost = perLevel / ((Engine.WORTH_LEVEL_HOURS or 2) * 3600) * (2 * secs) -- there and back
+  local tripCost = Engine.XpPerSec(me) * (2 * secs) -- there and back, at your pace (Engine.XpPerSec)
   if lost <= tripCost then return nil end
-  return Engine.current, lost, secs
+  -- (before the plan's own step, not the card's: the card can show a quest from the part behind you - code review)
+  return Engine.planned or Engine.current, lost, secs
 end
 local function applyInserts()
   local list = steps()
@@ -250,8 +257,9 @@ local function applyInserts()
         note = "Added: you finished this one on the way." }   -- its sec comes from where InsertStop puts it
       -- a gray quest (Messenger to Westfall at 26: 250 XP) gets a stop only right on the way: never a detour for it
       local ql, me = Engine.logLevels and Engine.logLevels[q], UnitLevel and UnitLevel("player")
-      local okG, green = pcall(function() return GetQuestGreenRange and GetQuestGreenRange() end)
-      local gray = type(ql) == "number" and type(me) == "number" and (me - ql) > ((okG and type(green) == "number" and green) or 8)
+      if type(ql) == "number" then step.level = ql end -- (the solve prices a hand-in by its quest's level: without it, a flat guess - code review)
+      -- (the engine's one gray line - code review: this used the game's green range, the route Engine.GrayAt)
+      local gray = type(ql) == "number" and type(me) == "number" and ql <= Engine.GrayAt(me) and not Engine.LeadsToWorth(q, me)
       local opts = gray and { maxCost = Engine.GRAY_DETOUR_YD, why = "gray, but right on the way" }
         or (behind[q] and { maxCost = Engine.MERGE_PATH_YARDS, why = "its hand-in is behind you in the plan, and the route passes by" }) or nil
       -- (not gray, not behind you: would waiting for the cheapest spot cost more XP than going now?)

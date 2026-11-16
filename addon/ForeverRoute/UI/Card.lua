@@ -20,6 +20,19 @@ Card.TOOL, Card.TOOL_GAP, Card.MAP_W = 16, 4, 38
 local function steps() return ForeverRouteData and ForeverRouteData.steps or {} end
 local function section(i) local s = steps()[i]; local secs = ForeverRouteData and ForeverRouteData.sections; return s and secs and secs[s.sec] end
 
+-- the footer's flag: "this looks wrong" keeps what the card showed for the next /fr report (Moments.lua) - no chat
+-- line; a brief green tick on the icon says it was kept
+Card.FLAG_TIP = { "Looks wrong? Click, then send /fr report." }
+function Card.FlagMoment(b)
+  local m = ns.Moments and ns.Moments.Flag()
+  if not (b and b.icon) then return m end
+  if m then b.icon:SetTexture(Style.MEDIA .. "icon-check"); b.icon:SetVertexColor(C.good[1], C.good[2], C.good[3]) end
+  if C_Timer and C_Timer.After then
+    C_Timer.After(2, function() b.icon:SetTexture(Style.MEDIA .. "btn-flag"); local r = C.sub; b.icon:SetVertexColor(r[1], r[2], r[3]) end)
+  end
+  return m
+end
+
 -- quests numbered from 10000 up came after the original game (all of its quests are below that): Forever's own and
 -- other later additions, whose quest data is younger and can miss what unlocks them
 Card.NEW_QUEST_MIN = 10000
@@ -240,7 +253,7 @@ local function build()
 
   -- footer: the next zone on the left (Card.FooterText), controls on the right (shown on hover)
   f.eta = Style.Text(f, 10, C.dim); f.eta:SetWordWrap(false)
-  f.ctl = CreateFrame("Frame", nil, f); f.ctl:SetSize(215, 20); f.ctl:SetAlpha(0)
+  f.ctl = CreateFrame("Frame", nil, f); f.ctl:SetSize(240, 20); f.ctl:SetAlpha(0)
   f.ctl.OnChildEnter = function() Card.Hover(true) end
   f.btn = {
     back = Style.IconButton(f.ctl, "btn-back", 20, function() ns.Engine.Back() end, "Look at the previous step"),
@@ -252,6 +265,8 @@ local function build()
     dungeon = Style.IconButton(f.ctl, "icon-kill", 20, function() ns.Fire("FR_TOGGLE_DUNGEONS") end, "Side trips: class quests, bonus items and dungeons  (/fr dungeons)"),
     min = Style.IconButton(f.ctl, "btn-min", 20, function() ns.db.collapsed = not ns.db.collapsed; Card.Update(); if ns.Zones then ns.Zones.Update() end end, "Collapse / expand"),
     opt = Style.IconButton(f.ctl, "btn-gear", 20, function() ns.Fire("FR_OPEN_OPTIONS") end, "Options"),
+    -- "this looks wrong": the moment kept for a bug report (Moments.lua), the flag turning green a moment to say so
+    flag = Style.IconButton(f.ctl, "btn-flag", 20, function(self) Card.FlagMoment(self) end, Card.FLAG_TIP),
   }
   for _, b in pairs(f.btn) do b:HookScript("OnLeave", function() Card.Hover(false) end) end
   f.ret = Style.Button(f, "Back to current step", 140, 18, function() ns.Engine.view = nil; ns.Fire("FR_STEP", ns.Engine.Shown()) end)
@@ -1108,7 +1123,12 @@ function Card.Layout()
     C_Timer.After(0, Card.PlaceSecure)
     return
   end
-  local up = ns.Engine.Upcoming(ns.Engine.Shown(), 8)
+  -- (the plan from its own place, not from the step on the card: a hand-in filed 20 levels ahead on the card listed
+  -- the level-59 steps after it - code review. The card's step itself isn't listed again)
+  local shownI = ns.Engine.Shown()
+  local base = ns.Engine.PlanAt and ns.Engine.PlanAt() or shownI
+  local up = {}
+  for _, j in ipairs(ns.Engine.Upcoming(base and base ~= shownI and base - 1 or shownI, 9)) do if j ~= shownI and #up < 8 then up[#up + 1] = j end end
   local grouped = {}; for _, j in ipairs(ns.Engine.Group(ns.Engine.Shown() or 0)) do grouped[j] = true end
   local rows = {}
   if cur.dungeon and ns.Engine.Shown() then rows[1] = ns.Engine.Shown() end -- the plan's step, for when you're out again
@@ -1236,11 +1256,12 @@ function Card.Layout()
   Card.PlaceDrop(Card.hovering or f.ctl:GetAlpha() > 0.5) -- (hovering: at the left, the controls have the right; after the home button is set)
   f.ctl:ClearAllPoints(); f.ctl:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 4, -top + 1)
   local x = 0
-  for _, name in ipairs({ "opt", "min", "dungeon", "list", "undo", "skip", "done", "fwd", "back" }) do
+  for _, name in ipairs({ "opt", "min", "dungeon", "list", "undo", "skip", "done", "fwd", "back", "flag" }) do
     local b = f.btn[name]
     local show = true
     if name == "undo" then show = #ns.char.history > 0 end
     if name == "fwd" then show = viewing end
+    if name == "flag" then show = not viewing end -- (the card looked at, not the route's answer: nothing to flag)
     if (name == "done" or name == "skip") and (viewing or cur.dungeon) then show = false end -- (in a dungeon the card's step isn't the one on show)
     b:SetShown(show)
     if show then b:ClearAllPoints(); b:SetPoint("RIGHT", f.ctl, "RIGHT", -x, 0); x = x + 23 end

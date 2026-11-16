@@ -33,3 +33,11 @@ reports/simplay-cache/
 sim-wtf/
 companion/node.txt
 addon/ForeverRoute/tests/save_*_test.lua
+
+# automatic bug reports: the companion's consent, install number, outbox and ledger (tools/report-upload.js); the
+# local endpoint's store (tools/report-server/mock-server.mjs)
+report-upload.json
+report-upload-seen.json
+report-outbox/
+tools/report-server/.store/
+tools/report-server/wrangler.toml

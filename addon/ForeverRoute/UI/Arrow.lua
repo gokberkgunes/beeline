@@ -271,8 +271,11 @@ local function noteHidden(why)
   if why == lastWhy then return end
   lastWhy = why
   if why and ns.Why then ns.Why("arrow", "hidden: " .. why) end
+  -- (hidden for no reason it knows: kept as a moment for a bug report - Moments.lua; on a change only, as this)
+  if why and ns.Moments then pcall(ns.Moments.ArrowHidden, why) end
 end
 Arrow.Visible = function(i) return visible(i) and true or false end
+Arrow.HiddenWhy = function() return lastWhy end
 local function hiddenReason(i, s)
   if not s then return "no step" end
   if not ns.db.arrow then return "turned off in settings" end
@@ -344,8 +347,10 @@ function Arrow.SetTarget(i, force)
   local inDungeon = ns.Dungeon and ns.Dungeon.Inside()
   if inDungeon then s = nil end
   -- work the quest data has no place for (s.unknown): its spot is only its place in the order, nothing to point at
+  -- - unless the game itself marks the quest on your map (its quest POI, as the game's own tracker uses): then that
+  -- marker is the spot (Foreman's Plight, new in Forever: the arrow hid with nowhere to point - tester)
   local unknown = s and s.unknown
-  if unknown then s = nil end
+  if unknown then s = Arrow.GameSpot(s) end
   local m, x, y, label = s and s.m, s and s.x, s and s.y, nil
   local leg -- how you travel from the waypoint the arrow points at ("fly", "boat", ...), when it is not the step itself
   if s and not x then
@@ -415,7 +420,29 @@ function Arrow.SetTarget(i, force)
   end
 end
 
+-- The game's own marker for a quest on the map you are on (C_QuestLog.GetQuestsOnMap: the quest POIs its tracker and
+-- world map show), as a stand-in step for one whose spot the quest data lacks. nil when the game marks nothing here.
+function Arrow.GameSpot(s)
+  if not (s and s.q and C_QuestLog and type(C_QuestLog.GetQuestsOnMap) == "function" and C_Map and C_Map.GetBestMapForUnit) then return nil end
+  local map = C_Map.GetBestMapForUnit("player")
+  if type(map) ~= "number" then return nil end
+  local ok, list = pcall(C_QuestLog.GetQuestsOnMap, map)
+  if not ok or type(list) ~= "table" then return nil end
+  for _, e in ipairs(list) do
+    if e.questID == s.q and type(e.x) == "number" and type(e.y) == "number" and e.x > 0 and e.x < 1 and e.y > 0 and e.y < 1 then
+      return { k = s.k, q = s.q, name = s.name, text = s.text, zone = s.zone, m = e.mapID or map, x = e.x, y = e.y, r = 40, gameSpot = true }
+    end
+  end
+end
+
 ns.On("FR_LOADED", build)
+-- the game's quest markers changed (it marks a quest once you are in its zone, or an objective moved on): a step with
+-- no spot of its own may have one now
+ns.On("QUEST_POI_UPDATE", function()
+  local i = ns.Engine and ns.Engine.Shown and ns.Engine.Shown()
+  local s = i and ForeverRouteData and ForeverRouteData.steps[i]
+  if s and s.unknown then Arrow.SetTarget(i, true) end
+end)
 ns.On("PLAYER_DEAD", function() Arrow.NoteDeath() end)
 -- released (a ghost now) or back in your body: the arrow goes to the corpse, or back to the step
 local function afterDeath() C_Timer.After(0.5, function() if f then Arrow.SetTarget(ns.Engine.Shown(), true); ns.Fire("FR_STEP", ns.Engine.Shown()) end end) end

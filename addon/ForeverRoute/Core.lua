@@ -29,6 +29,7 @@ ns.DEFAULTS = {
   remindFood = true,     -- eat for Well Fed
   remindGrimoire = true, -- warlocks: a grimoire at the demon trainer
   newsBar = true,        -- the "updated to ..." bar under the card after an update
+  moments = true,        -- keep notes of odd moments on the card for the next /fr report (Moments.lua; on your PC only)
 }
 
 -- ns.Is(fn, ...): a yes/no question to the game (UnitOnTaxi, UnitIsAFK, IsFlying, IsIndoors...). Forever hides some

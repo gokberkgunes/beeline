@@ -14,6 +14,8 @@ local HBD = LibStub("HereBeDragons-2.0")
 
 Next.WINDOW = 14        -- planned stops the solve looks at
 Next.SCAN = 90          -- steps scanned for them
+Next.HERE_YD = 250      -- the plan's own later steps this close to you (Next.HereBlock)...
+Next.HERE_FAR = 600     -- ...while its next step is this far: you are where the plan goes later - start there
 Next.NEAR_READY = 500   -- yards: finished quests further than this are left to the plan (a bound on the candidates: Next.Prize decides)
 Next.MARGIN = 40        -- seconds: a new pick must beat keeping the current one by this much (no flip-flopping)
 Next.PASS_NEAR = 40     -- yards: a stop this close is an interrupt (said at once, no margin) - you are at its NPC
@@ -97,6 +99,8 @@ Next._travel = travelSecs
 
 -- your XP per second: what an hour of levelling at your level makes (a level about every 1.5 h around the middle)
 local function rate()
+  -- (Forever's pace at your level, Engine.XpPerSec: "a level every 1.5 h" was double it in the 30s)
+  if ns.Engine and ns.Engine.XpPerSec then return ns.Engine.XpPerSec() end
   local need = (UnitXPMax and UnitXPMax("player")) or 10000
   return math.max(1, need / 5400)
 end
@@ -641,6 +645,95 @@ function Next.LocalBlock(list, planned, pm)
   return nil
 end
 
+-- you came into the plan's zone at another spot than its own (the flight path you know, a road from the next zone):
+-- its next step is far off, and Next.REJOIN_MIN or more of its own later steps, before its next trip, are right around
+-- you. Landing in Farholde the card sent a tester on a 3-minute walk north for Gaseous Gold, with two of the plan's
+-- quests in the town 40 yd away, 17 steps on (each step a pick passes over costs Horizon.STABILITY: the solve never
+-- went there). -> the first of them, or nil
+function Next.HereBlock(list, planned, px, py, pinst)
+  local s0 = list[planned]
+  if not (px and s0 and s0.m) then return nil end
+  local function near(s, yd) local w = wpos(s); return w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2 <= yd ^ 2 end
+  if near(s0, Next.HERE_FAR) then return nil end
+  -- (only when you just came in: the plan's next step is the first of a visit, right after its trip there - not when you
+  -- walk back to a town mid-visit, with full bags: its later steps there wait for the plan)
+  local arrived = false
+  for j = planned - 1, math.max(1, planned - 3), -1 do
+    local t = list[j]
+    if Next.TRIP[t.k] then arrived = true; break end
+    if t.q and t.q > 0 then break end
+  end
+  if not arrived then return nil end
+  local E = ns.Engine
+  local j0, n = nil, 0
+  for j = planned + 1, math.min(#list, planned + Next.REJOIN_SCAN) do
+    local s = list[j]
+    if Next.TRIP[s.k] then break end
+    if Next.KIND[s.k] and s.m and E.Status(j) == "todo" and near(s, Next.HERE_YD) then
+      j0 = j0 or j; n = n + 1
+      if n >= Next.REJOIN_MIN then return j0 end
+    end
+  end
+  return nil
+end
+
+-- Pick-ups before heading out. In Farholde Keep the card said: hand in at Demar Brant, run out for the Foreman's Crate,
+-- come back, hand it in, then pick up My Kingdom for a Horse from Demar Brant and Curious Trinkets from Ashe Amberhall -
+-- givers a few yards away the whole time (tester). The plan takes them when it comes back, so the solve saw nothing to
+-- gain: what it missed is that a quest taken now is worked on the same trip out. So: when the card's pick takes you away
+-- (beyond Next.HERE_YD, or to work with no known spot), the quests the plan picks up in this town before its next trip -
+-- offered now, givers within Next.HERE_YD of you - come first, nearest first. -> that pick-up, or nil
+-- Does quest q start a chain for this zone: does it open (ForeverRouteUnlocks) a quest with steps on your route in the
+-- map or zone given? (a pick-up just over the border whose follow-ups are here may take you out of the zone - Next's
+-- leavesZone). The quests per map are indexed once per route, not walked per solve.
+local zoneIdx = { list = nil, n = 0, byQ = nil }
+function Next.ChainsInto(q, map, zone)
+  local deps = q and ForeverRouteUnlocks and ForeverRouteUnlocks[q]
+  if not deps or #deps == 0 or not (map or zone) then return false end
+  local list = ForeverRouteData and ForeverRouteData.steps
+  if not list then return false end
+  if zoneIdx.list ~= list or zoneIdx.n ~= #list then
+    local byQ = {}
+    for _, t in ipairs(list) do
+      if t.q and t.q > 0 and (t.m or t.zone) then
+        local e = byQ[t.q]; if not e then e = {}; byQ[t.q] = e end
+        if t.m then e[t.m] = true end
+        if t.zone then e[t.zone] = true end
+      end
+    end
+    zoneIdx.list, zoneIdx.n, zoneIdx.byQ = list, #list, byQ
+  end
+  for _, d in ipairs(deps) do
+    local e = zoneIdx.byQ[d]
+    if e and ((map and e[map]) or (zone and e[zone])) and not (ns.State.IsCompleted and ns.State.IsCompleted(d)) then return true end
+  end
+  return false
+end
+
+function Next.PickupFirst(list, planned, pick, px, py, pinst)
+  if not (px and list and planned and list[planned]) then return nil end
+  local E = ns.Engine
+  local function d2(s) local w = wpos(s); return w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2 or nil end
+  local p = pick and list[pick]
+  if p and p.k == "accept" then return nil end
+  local pd = p and d2(p)
+  if p and pd and pd <= Next.HERE_YD ^ 2 then return nil end -- (the card's stop is right here: no heading out yet)
+  local best, bd
+  for j = planned, math.min(#list, planned + Next.REJOIN_SCAN) do
+    local s = list[j]
+    if Next.TRIP[s.k] then break end
+    -- (this visit only: the plan leaving town - a step with a known spot beyond Next.HERE_FAR - ends it. A later visit
+    -- here waits: back in town with full bags mid-visit, the town's pick-ups 30 steps on are not this visit's)
+    if j > planned and s.m and not s.unknown then local dd = d2(s); if not dd or dd > Next.HERE_FAR ^ 2 then break end end
+    if s.k == "accept" and s.q and E.Status(j) == "todo" and (not E.Available or E.Available(j)) and not (ns.Nope and ns.Nope(s.q))
+      and not (E.Outlevelled and E.Outlevelled(s)) then
+      local dd = d2(s)
+      if dd and dd <= Next.HERE_YD ^ 2 and (not bd or dd < bd) then best, bd = j, dd end
+    end
+  end
+  return best
+end
+
 local function pick(planned)
   local E, St = ns.Engine, ns.State
   local list = ForeverRouteData and ForeverRouteData.steps
@@ -674,13 +767,42 @@ local function pick(planned)
     last.pick = j
   end
   if last and last.sig == sig and now - last.at < Next.RESOLVE and last.pick and list[last.pick] and E.Status(last.pick) == "todo" then return last.pick end
+  -- (dead or a ghost: no solve from where your ghost is - a zone crossed on the run back re-plans too - the card keeps
+  -- its pick until you're alive; see Engine.UpdateFocus)
+  if ns.Is(UnitIsDeadOrGhost, "player") and last and last.pick and list[last.pick] and E.Status(last.pick) == "todo" then return last.pick end
 
   -- (a "not now" ends when you move on: checked every solve, not only when that stop is a candidate again)
   for key in pairs(Next.dismissed) do holds(key, px, py, pinst) end
   local stops, byStep, count, scanEnd = {}, {}, 0, planned
+  -- Staying in your zone (the tester's rule): an extra - a quest behind you, an early hand-in, a stop added to the route -
+  -- never takes you out of the zone you are in while your path still has steps here, unless its quest starts a chain for
+  -- this zone. Mirages in the Badlands, "nearby" from Riverglades, sent a tester away with eight quests to hand in at
+  -- Farholde (tester). The plan's own trips to its next zone are not extras: they go as planned.
+  local myMap = here[1]
+  local myZone = myMap and ns.Util and ns.Util.MapName and ns.Util.MapName(myMap)
+  local function inMyZone(s)
+    if not myMap or not s.m then return true end
+    return s.m == myMap or (s.zone ~= nil and s.zone == myZone)
+  end
+  local moreHere -- (lazy) your path has a step to do in this zone, from the plan's step on
+  local function pathHasMoreHere()
+    if moreHere == nil then
+      moreHere = false
+      for j = planned, math.min(#list, planned + Next.SCAN) do
+        local t = list[j]
+        if t.m and inMyZone(t) and E.Status(j) == "todo" then moreHere = true; break end
+      end
+    end
+    return moreHere
+  end
+  local function leavesZone(s)
+    if inMyZone(s) or not pathHasMoreHere() then return false end
+    return not Next.ChainsInto(s.q, myMap, myZone)
+  end
   local function add(j, extra)
     -- (a stop you said "not now" to stays out while you're still here: a plan step waits for its own place in the plan)
     if extra and extra.opt and isDismissed(j, px, py, pinst) then return nil end
+    if extra and extra.opt and leavesZone(list[j]) then return nil end
     local s = list[j]
     local w = wpos(s)
     -- (an objective takes what the planner expects it to - s.work, its kills and drops at their rates; the flat guess
@@ -700,6 +822,9 @@ local function pick(planned)
   if onTrip then
     local j0 = Next.LocalBlock(list, planned, here[1])
     if j0 then from = j0; holdPlanned, holdAt = false, nil; Next.rejoin = { at = j0, trip = planned } end
+  elseif px then
+    local j0 = Next.HereBlock(list, planned, px, py, pinst)
+    if j0 then from = j0; Next.rejoin = { at = j0, wait = planned } end
   end
   for j = from, math.min(#list, from + Next.SCAN) do
     if j % 8 == 0 then ns.MaybeYield() end
@@ -736,6 +861,8 @@ local function pick(planned)
   -- your level: the plan never comes back for them, so a pick-up is worth its XP at your rate, less the work still to
   -- do for it (Next.Prize, Next.BehindPrize) - the solve takes it when that beats the plan's way on. Taken, the quest is yours, and its objectives and hand-in come back to the route by themselves (a quest in
   -- your log is never behind you). A level 40 standing at Indurium (level 39) was sent away: the plan does it at 38.
+  -- (in your zone only, while your path has more here - leavesZone, above: Mirages in the Badlands was "nearby" from
+  -- Riverglades)
   if E.BehindYou and E.QuestXP then
     local L = (UnitLevel and UnitLevel("player")) or 1
     -- (the nearest Next.BEHIND_MAX of them within Next.BEHIND_YD: the solve weighs the way there against what they pay)
@@ -754,9 +881,13 @@ local function pick(planned)
         -- (the one on the card: further, Next.BEHIND_KEEP - walking along a zone border took a tester past 2000 yd and
         -- back, and the card flipped between The Lost Scout and the plan's step three times)
         local reach = (last and last.pick == j) and Next.BEHIND_YD * Next.BEHIND_KEEP or Next.BEHIND_YD
-        if d2 and d2 <= reach ^ 2 and not St.OnQuest(s.q) and not St.IsCompleted(s.q) then
+        -- (and on the route by the one gray line, Engine.Outlevelled: a level 29 pick-up at 37 that leads nowhere is not
+        -- an extra - its price came out above 0 and the card showed it as a done step - tester report replayed)
+        if d2 and d2 <= reach ^ 2 and not leavesZone(s) and not St.OnQuest(s.q) and not St.IsCompleted(s.q) and not (E.Outlevelled and E.Outlevelled(s)) then
           local prize = Next.Prize(list, s, planned, true)
-          if prize > 0 and E.BehindYou(s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q)) then
+          -- (or the one the card took: taking it makes BehindYou false for it - Next.taken - and it dropped out of its own
+          -- candidates, with no margin to hold it: the card flipped to the plan's step and back - code review)
+          if prize > 0 and (E.BehindYou(s) or Next.taken == s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q)) then
             found[#found + 1] = { j = j, d2 = d2, prize = prize }
           end
         end
@@ -768,6 +899,21 @@ local function pick(planned)
     -- nothing to keep, and the card flipped to another - tester)
     if last and last.pick and not byStep[last.pick] then
       for _, fd in ipairs(found) do if fd.j == last.pick then add(fd.j, { prize = fd.prize, opt = true, behind = true }); break end end
+    end
+  end
+  -- the steps below your place in the plan for quests in your log (Engine.BelowFloor: one you took up again from the
+  -- part you passed): extras, close by and worth it - they no longer pull your place back (code review)
+  if E.BelowFloor then
+    for _, j in ipairs(E.BelowFloor(planned, 12)) do
+      local s = list[j]
+      if not byStep[j] then
+        local w = wpos(s)
+        local reach = (last and last.pick == j) and Next.BEHIND_YD * Next.BEHIND_KEEP or Next.BEHIND_YD
+        if w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2 <= reach ^ 2 and not leavesZone(s) then
+          local prize = Next.Prize(list, s, planned, true)
+          if prize > 0 then add(j, { prize = prize, opt = true, behind = true }) end
+        end
+      end
     end
   end
   -- finished quests whose hand-in is further on in the plan but near you now: a prize worth the trip back it saves
@@ -852,6 +998,7 @@ local function pick(planned)
   -- one you can do now (a hand-in not finished yet): then the step that holds (the trip, the grind), or the plan's next
   -- one you can do
   local function keepPlanned()
+    Next.taken = nil -- (back on the plan's step: no quest from behind you on the card)
     -- (a hand-in you can't do yet stays: the card says what it needs - "Not finished" with the objective bars)
     if list[planned].inserted then
       local alt = holdAt
@@ -860,6 +1007,10 @@ local function pick(planned)
     end
     return nil
   end
+  -- (a pick-up in this town to take before heading out - Next.PickupFirst - is a stop even when the window stopped at the
+  -- plan's step: work with no known spot ends the scan there, and the card sent a tester out with the givers beside him)
+  local pf = roomInLog and Next.PickupFirst(list, planned, planned, px, py, pinst)
+  if pf and not byStep[pf] then add(pf, { plan = pf }) end
   if #stops == 0 then Next.res = nil; return keepPlanned() end
   local P = { start = start, stops = stops, anchor = anchor, travel = travelSecs, load = load,
     cap = (C_QuestLog and C_QuestLog.GetMaxNumQuestsCanAccept and C_QuestLog.GetMaxNumQuestsCanAccept()) or 25 }
@@ -892,7 +1043,7 @@ local function pick(planned)
   -- plan's trip as you walked - tester)
   local holdR = (last and last.pick and last.pick == pick) and Next.HOLD_NEAR * 1.5 or Next.HOLD_NEAR
   local closePrize = pst and pst.w and pst.w[3] == pinst and (pst.visit or (pst.opt and (pst.w[1] - px) ^ 2 + (pst.w[2] - py) ^ 2 <= holdR ^ 2))
-  if (holdPlanned or count == 0) and not closePrize then
+  if (holdPlanned or count == 0) and not closePrize and not pf then
     local opts = 0
     for _, st in ipairs(stops) do if st.opt then opts = opts + 1 end end
     if opts > 0 and ns.Why then ns.Why("next", "kept the plan's step " .. planned .. ": " .. opts .. " stop(s) close by weighed, none worth doing before it") end
@@ -920,6 +1071,22 @@ local function pick(planned)
     P.first = last.pick
     local kept = ns.Horizon.Solve(P)
     if kept.first and (samePlace or res.score - kept.score < Next.MARGIN) then Next.vendor = nil; local kp, kst = firstStep(kept); if kst then kept.first = kst end; res, pick = kept, kp or last.pick end
+  end
+  -- before you head out, the quests this town gives you (Next.PickupFirst): their work can be done on the same trip out
+  do
+    local j = roomInLog and Next.PickupFirst(list, planned, pick, px, py, pinst)
+    if j then
+      if not byStep[j] then add(j, {}) end
+      local stop = byStep[j]
+      if stop then
+        stop.pickupFirst = true
+        local was = P.first
+        P.first = j
+        local forced = ns.Horizon.Solve(P)
+        P.first = was
+        if forced.first then Next.vendor = nil; local kp, kst = firstStep(forced); if kst then forced.first = kst end; res, pick = forced, kp or j end
+      end
+    end
   end
   -- what the pick saves over doing the plan's step first: the window solved with that step first, against this one
   -- (the card says it: "saves ~3 min" - a reason without a number read as an opinion, persona review). Once per pick:
@@ -1031,10 +1198,15 @@ function Next.Reason(i)
   end
   local rj = Next.rejoin
   local L = ForeverRouteData and ForeverRouteData.steps
-  if rj and st.step and st.step >= rj.at and L and L[rj.trip] then
+  if rj and rj.wait and st.step and st.step >= rj.at and L and L[rj.wait] then
+    local t = L[rj.wait]
+    return "you're here already - the plan does these next; " .. (t.name or t.text or "its next step") .. " waits"
+  end
+  if rj and st.step and st.step >= rj.at and L and rj.trip and L[rj.trip] then
     local t = L[rj.trip]
     return "you're here already - the plan quests here next; " .. ((t.dest or t.text) and ("the trip to " .. (t.dest or t.text)) or "the trip") .. " waits"
   end
+  if st.pickupFirst then return "pick it up before you head out - its work can be done on the same trip" end
   if st.early and st.chain then return "the chain goes on right here - hand it in and take the next" end
   if st.early and st.visit then return "the plan comes back here for this later - done now, that trip back goes" end
   if st.early then return "while you're here - it saves coming back for it later" end
@@ -1055,6 +1227,7 @@ function Next.Tag(i)
     local near = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2 <= Next.HOLD_NEAR ^ 2
     tag = near and "right here" or "nearby"
   elseif Next.rejoin and st.step and st.step >= Next.rejoin.at then tag = "you're here already"
+  elseif st.pickupFirst then tag = "before you head out"
   elseif st.early and st.chain then tag = "chain continues"
   elseif st.early and st.visit then tag = "saves a trip back"
   elseif st.early then tag = "while you're here"

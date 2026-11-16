@@ -95,10 +95,12 @@ function ns.PlannedNextZone()
     if vz then return vz, ns.Util.PlanRoute() end
   end
   -- on your planned route: the engine knows what's done - the first quest step from where you are that isn't
-  if d and not d.zoneRoute and not d.dungeon and not d.special and E and E.current then
+  -- (from the plan's own place, not the step on the card - code review)
+  local at0 = E and (E.planned or E.current) -- (not PlanAt: the step you look at while browsing - review)
+  if d and not d.zoneRoute and not d.dungeon and not d.special and E and at0 then
     local list = ns.Steps(d)
     local via -- (a stop in a capital on the way: the row says so)
-    for i = E.current, #list do
+    for i = at0, #list do
       local s = list[i]
       if s and s.q and s.zone and QUEST_KIND[s.k] and E.Status(i) ~= "done" then
         if not CAPITAL[s.zone] then return s.zone, d, via end

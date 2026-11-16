@@ -98,7 +98,7 @@ function ns.EnterZoneRoute(id)
   -- (where: the first quest step the plan still has for you, as PLANNED NEXT read it - the engine's position can sit
   -- before a stretch it counts as behind you)
   if d and not d.dungeon and not d.special and not d.zoneRoute and not d.branch then
-    local E, at = ns.Engine, ns.Engine and ns.Engine.current
+    local E, at = ns.Engine, ns.Engine and (ns.Engine.planned or ns.Engine.current) -- (the plan's place, not the card's step - code review)
     if E and at and E.Status then local list = ns.Steps(d); for i = at, #list do local s = list[i]; if s and s.q and s.zone and (s.k == "accept" or s.k == "turnin" or s.k == "obj") and E.Status(i) ~= "done" then at = i; break end end end
     ns.char.returnTo = d.id; ns.char.returnAt = at
   end

@@ -209,6 +209,10 @@ function BUILD.auto(p)
   toggle(p, "Adapt to where I am", "smartNext", "Reorders nearby steps to save walking. Off: fixed order.")
   toggle(p, "Star the target", "markTarget", "The Target button also marks the NPC.")
   toggle(p, "Learn my city paths", "trails", "Remembers your walks in cities. Stays on your PC.")
+  -- (Moments.lua: the moments stay on your PC; sending them is the companion's own question, off until you say yes there)
+  header(p, "Bug reports")
+  toggle(p, "Keep notes for bug reports", "moments", "When the card looks off, notes it on your PC for /fr report.")
+  confirmButton(p, "Clear the notes", 190, function() if ns.Moments then ns.Moments.Clear() end end, "Deletes the notes kept for bug reports.")
 end
 
 function BUILD.map(p)

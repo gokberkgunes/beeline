@@ -13,7 +13,7 @@ local function key(i) return Engine.Key(i) end
 
 Engine.WORTH_MIN_TRIP = 300 -- seconds: a shorter trip is always worth it
 Engine.WORTH_MIN_PLANNED = 3 -- the plan's visit had at least this many quests (fewer: the plan meant it that way)
-Engine.WORTH_LEVEL_HOURS = 2 -- the quest must pay at least the trip's share of a level in this many hours
+Engine.WORTH_LEVEL_HOURS = 2 -- (old: a level every 2 h; the price now follows Forever's pace, Engine.XpPerSec)
 local TRAVEL = { fly = true, hearth = true, boat = true }
 
 -- the plan's visit that step j opens: j and the steps after it in the same zone, up to the next trip
@@ -73,9 +73,8 @@ function Engine.NotWorth(i)
   local secs
   if ns.Travel and ns.Travel.Plan then local _; _, secs = ns.Travel.Plan({ m = pm, x = px, y = py }, { m = s.m, x = s.x, y = s.y, name = s.zone }, { hearth = false }) end
   if not secs or secs < Engine.WORTH_MIN_TRIP then return no("trip " .. tostring(secs)) end
-  local perLevel = (UnitXPMax and UnitXPMax("player")) or 0
-  if perLevel <= 0 then return no("no level xp") end
-  local pays = perLevel / (Engine.WORTH_LEVEL_HOURS * 3600) * secs -- what the trip's time is worth at that pace
+  -- (what the trip's time earns at your pace: Forever's XP an hour at your level, Engine.XpPerSec)
+  local pays = Engine.XpPerSec(L) * secs
   if xp >= pays then return no("pays") end
   return q, name, z, secs, xp
 end

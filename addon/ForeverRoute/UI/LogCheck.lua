@@ -18,8 +18,8 @@ local W, PAD, ROW, BTNS = 560, 14, 34, 176
 local rows = {}
 
 local function call(fn, ...) if type(fn) == "function" then local ok, a = pcall(fn, ...); if ok then return a end end end
-local function greenRange() return (GetQuestGreenRange and call(GetQuestGreenRange)) or 8 end
-local function grayAt(qLevel, myLevel) return qLevel and myLevel and (myLevel - qLevel) > greenRange() end
+-- (the engine's one gray line, Engine.GrayAt: the log check said "drop" for quests the route kept - code review)
+local function grayAt(qLevel, myLevel) return qLevel and myLevel and qLevel <= ns.Engine.GrayAt(myLevel) end
 
 -- your quest log: id, title, level, zone header
 function LogCheck.Entries()
@@ -54,7 +54,8 @@ local function findIn(route, id)
   local steps = route.steps or {}
   for _, i in ipairs(stepsOf(steps, id)) do
     local s = steps[i]
-    if s.q == id and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) then -- (a step behind you is not on your route)
+    -- (a step behind you is not on your route; on the route you follow, neither is one it skipped, ticked or left)
+    if s.q == id and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) and not (route == ForeverRouteData and ns.Engine.Status(i) == "done") then
       -- the planned level there (steps the safety net added have none: use the nearest step that has one)
       for j = i, math.min(#steps, i + 30) do if steps[j].lvl then return i, steps[j].lvl end end
       for j = i - 1, math.max(1, i - 30), -1 do if steps[j].lvl then return i, steps[j].lvl end end
@@ -104,7 +105,7 @@ function LogCheck.Classify()
       if done and ns.Engine.GrayHandIn and ns.Engine.GrayHandIn(st) then
         -- the route passes this hand-in (finished, far below you, opens nothing): the card won't send you there
         verdict, why = "drop", "Gray and nothing follows it - your route skips this hand-in (not worth a trip)"
-      elseif not done and planLvl and grayAt(e.level, planLvl) then
+      elseif not done and planLvl and grayAt(e.level, math.max(myLevel or planLvl, planLvl)) and not (ns.Engine.LeadsToWorth and ns.Engine.LeadsToWorth(e.id, math.max(myLevel or planLvl, planLvl))) then
         verdict, why = "drop", string.format("Gray by the time the route gets to it (you'll be about %s) - very little XP", planLvl)
       else
         verdict, why = "keep", string.format("On your route at step %d%s", i, where ~= here and " of your path" or "")

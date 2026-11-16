@@ -12,7 +12,9 @@ local C = Style.C
 Report.FORMAT = 1
 -- sections: tag byte, then a varint byte length, then the body - a decoder skips tags it doesn't know
 -- (7: errors without version or time - an old report's; 10 and 11 replace it)
-local T = { meta = 1, log = 2, completed = 3, taxi = 4, ticks = 5, why = 6, errors = 11, card = 8, settings = 9, where = 10 }
+-- (12: a saved moment's tag - Moments.lua: why it was kept, noticed by itself or flagged by you, how many times;
+-- 13: the saved moments not sent yet, each a whole report of its own, with a count of those left out for size)
+local T = { meta = 1, log = 2, completed = 3, taxi = 4, ticks = 5, why = 6, errors = 11, card = 8, settings = 9, where = 10, moment = 12, moments = 13 }
 Report.TAGS = T
 -- why a step before the card's was passed over
 local REASON = { done = 1, todo = 2, blocked = 3, wait = 4, notready = 5, later = 6, skip = 7, tick = 8, nope = 9,
@@ -190,6 +192,16 @@ function Report.Pack(d)
   for i, k in ipairs({ "pathLine", "pins", "hideDone", "markTarget" }) do if d.settings[k] then flags = flags + 2 ^ (i - 1) end end
   varint(b, flags)
   section(out, T.settings, b)
+  if d.moment then
+    b = buf(); str(b, d.moment.tag, 20); str(b, d.moment.why, 120); byte(b, d.moment.auto and 1 or 0)
+    section(out, T.moment, b)
+  end
+  if d.moments and #d.moments > 0 then
+    b = buf(); varint(b, #d.moments); varint(b, d.momentsLeft or 0)
+    -- (each: how many times it happened, then its own report's bytes)
+    for _, mo in ipairs(d.moments) do varint(b, mo.n or 1); varint(b, #mo.bytes); for i = 1, #mo.bytes do b[#b + 1] = mo.bytes[i] end end
+    section(out, T.moments, b)
+  end
   local shownMap = (m.map and m.map > 0 and m.map) or (d.where and d.where.map)
   local zone = shownMap and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(shownMap)
   local head = string.format("FR report %s | %s | %s %s lvl %s | %s %.1f,%.1f | step %s: %s",
@@ -200,7 +212,8 @@ end
 
 ---------------------------------------------------------------------------------------------------------------
 -- reading one back (the tests; the same format as tools/report.js)
-function Report.Unpack(text)
+-- a report's "FR1." block -> its bytes (a saved moment goes into the next report as these)
+function Report.Bytes(text)
   local data = tostring(text or ""):match("FR%d+%.([%w%-_]+)")
   if not data then return nil end
   local val = {}; for i = 1, #B64 do val[B64:sub(i, i)] = i - 1 end
@@ -212,6 +225,14 @@ function Report.Unpack(text)
     if c[3] then bytes[#bytes + 1] = math.floor(v / 256) % 256 end
     if c[4] then bytes[#bytes + 1] = v % 256 end
   end
+  return bytes
+end
+local unpackBytes
+function Report.Unpack(text)
+  local bytes = Report.Bytes(text)
+  return bytes and unpackBytes(bytes) or nil
+end
+function unpackBytes(bytes)
   local p = 1
   local function rb() local v = bytes[p]; p = p + 1; return v or 0 end
   local function rv() local n, mul = 0, 1; while true do local x = rb(); n = n + (x % 128) * mul; if x < 128 then return n end; mul = mul * 128 end end
@@ -234,6 +255,16 @@ function Report.Unpack(text)
       d.taxi = {}; for k = 1, rv() do d.taxi[k] = rs() end
     elseif tag == T.card then
       d.card = {}; for k = 1, rv() do d.card[k] = { i = rv(), r = rb(), k = KINDS[rb()], q = rv() } end
+    elseif tag == T.moment then
+      d.moment = { tag = rs(), why = rs(), auto = rb() == 1 }
+    elseif tag == T.moments then
+      d.moments = {}; local n = rv(); d.momentsLeft = rv()
+      for k = 1, n do
+        local times, len = rv(), rv(); local sub = {}; for i = 1, len do sub[i] = rb() end
+        d.moments[k] = unpackBytes(sub); if d.moments[k].moment then d.moments[k].moment.n = times end
+      end
+    elseif tag == T.why then
+      d.why = {}; for k = 1, rv() do d.why[k] = { t = rv(), k = rs(), lv = rv(), m = rv(), x = rs() } end
     end
     p = stop
   end
@@ -253,6 +284,8 @@ local function build()
   f.help:SetText("Press Ctrl+C to copy, then paste it with a screenshot. No character name, realm or account is in it.")
   f.full = Style.Button(f, "Full", 60, 20, function() Report.Show(not f.isFull) end, "Full: adds your finished quests, for an exact replay (too long for one Discord message)")
   f.full:SetPoint("TOPRIGHT", close, "TOPLEFT", -6, 0)
+  -- (the saved moments in this report: copied once the box closes - the next report has only new ones)
+  f:HookScript("OnHide", function() if ns.Moments and f.copied then ns.Moments.MarkSent(f.copied); f.copied = nil end end)
   local sf = CreateFrame("ScrollFrame", "ForeverRouteReportScroll", f, "UIPanelScrollFrameTemplate")
   sf:SetPoint("TOPLEFT", 14, -56); sf:SetPoint("BOTTOMRIGHT", -32, 30)
   f.edit = CreateFrame("EditBox", nil, sf)
@@ -264,11 +297,28 @@ local function build()
   f.size = Style.Text(f, 10, C.dim); f.size:SetPoint("BOTTOMLEFT", 14, 10)
 end
 
+-- the report: what the card shows now, with the moments saved since the last report inside it (Moments.lua: flagged
+-- ones first, then noticed ones, newest first; past Moments.COPY_MAX characters the oldest noticed ones are left out
+-- and counted). The box looks as it always did. -> text, the moments in it
+function Report.Text(full)
+  local list, left = {}, 0
+  local ok, text = pcall(function()
+    local d = Report.Gather(full)
+    if ns.Moments then
+      list, left = ns.Moments.ForCopy(full and 4000 or 2000)
+      d.moments, d.momentsLeft = {}, left
+      for k, m in ipairs(list) do d.moments[k] = { n = m.n or 1, bytes = Report.Bytes(m.text) or {} } end
+    end
+    return Report.Pack(d)
+  end)
+  if not ok then text = "FR report failed: " .. tostring(text); list = {} end
+  return text, #list, list
+end
+
 function Report.Show(full)
   if not f then build() end
-  local ok, text = pcall(function() return Report.Pack(Report.Gather(full)) end)
-  if not ok then text = "FR report failed: " .. tostring(text) end
-  f.text, f.isFull = text, full and true or false
+  local text, n, list = Report.Text(full)
+  f.text, f.isFull, f.copied = text, full and true or false, list
   f.full.label:SetText(full and "Short" or "Full")
   f.edit:SetText(text); f:Show(); f.edit:SetFocus(); f.edit:HighlightText()
   f.size:SetText(string.format("%d characters%s", #text, full and " (full)" or (#text <= 1900 and " - fits a Discord message" or "")))

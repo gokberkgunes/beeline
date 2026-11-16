@@ -67,6 +67,7 @@ UI\Errands.lua
 UI\Extras.lua
 UI\Options.lua
 UI\Report.lua
+Moments.lua
 UI\News.lua
 UI\Hints.lua
 Demo.lua

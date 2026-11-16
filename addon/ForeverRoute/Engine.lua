@@ -227,6 +227,26 @@ end
 -- being gray itself. A quest the chain leads to that isn't on this plan counts as worth it - the chain goes on past
 -- what this plan knows (better to keep a link than to lose a chain).
 local levelOfQ, levelSrc = {}, nil
+-- Your XP per second at a level: Forever's pace, as the planner measured it - the median XP an hour of the plan's zone
+-- routes for that level (ns.ZoneRoutesAt; ~25k an hour at 38, where a level is 80.8k: over 3 hours). Every price of
+-- time against XP goes through this (the solve's stops, a leftover's trip, a hand-in now or later): they had fixed
+-- "a level every 1.5 h" and "every 2 h" - double Forever's pace in the 30s, and not its curve (tester). Without zone
+-- routes (an old plan): a level every 1.5 h, as before.
+local paceMemo = {}
+function Engine.XpPerSec(L)
+  L = L or (UnitLevel and UnitLevel("player")) or 1
+  local src = ns.Routes and ns.Routes()
+  local m = paceMemo
+  if m.src ~= src then paceMemo = { src = src }; m = paceMemo end
+  if m[L] then return m[L] end
+  local xs = {}
+  for _, r in ipairs((ns.ZoneRoutesAt and ns.ZoneRoutesAt(L)) or {}) do if tonumber(r.xph) and r.xph > 0 then xs[#xs + 1] = r.xph end end
+  local v
+  if #xs > 0 then table.sort(xs); v = xs[math.floor((#xs + 1) / 2)] / 3600
+  else v = ((UnitXPMax and UnitXPMax("player")) or 10000) / 5400 end
+  m[L] = math.max(1, v)
+  return m[L]
+end
 function Engine.LeadsToWorth(q, lvl)
   local deps = ForeverRouteUnlocks and ForeverRouteUnlocks[q]
   if not deps or #deps == 0 then return false end
@@ -757,6 +777,7 @@ function Engine.JoinHad()
 end
 function Engine.FindPlace(force)
   Engine.ForgetDone()
+  if force then Engine.ResetFloor() end -- (a rejoin: your place in the plan starts again from where you join)
   local key = ns.planKey and ns.planKey.starter
   if not (key and ns.char) then return nil end
   local L = UnitLevel("player") or 1
@@ -867,6 +888,48 @@ end
 -- (tests and the simulator: the run checked at once, every time it is used)
 Engine.CHECK_RUN_NOW = false
 function Engine.SettleDone() while verify do local v = verify; ns.sliceCo, ns.sliceT0, ns.sliceBudget = v.co, debugprofilestop(), math.huge; local ok, wrong = coroutine.resume(v.co); ns.sliceCo = nil; if verify == v and (not ok or coroutine.status(v.co) == "dead") then verify = nil; if wrong or not ok then Engine.doneRunMiss = Engine.doneRunMiss + 1; Engine.ForgetDone() end end end end
+-- Your place in the plan only moves forward: the floor, the furthest step of the plan the card has had as yours
+-- (kept per route by step key in ns.char.floor). A quest from the part of the plan you passed - one you took up again
+-- there, a pick-up that came back - no longer pulls your place back: Next offers its steps as extras when they are
+-- near and worth it (Engine.BelowFloor). It pulled the Base, the zones ahead and the solve's window back to Wetlands
+-- while the player was in Riverglades (code review). /fr undo, a rejoin or another place in the plan reset it.
+local function floorIndex(list)
+  local d = ForeverRouteData
+  if not d or d.dungeon or d.special or Engine.noPlace or not ns.char then return nil end
+  local fl = Engine._floor
+  if not (fl and fl.list == list and fl.char == ns.char) then
+    fl = { list = list, char = ns.char }
+    local k = ns.char.floor and ns.char.floor[d.id]
+    if k then for i = 1, #list do if Engine.Key(i) == k then fl.step = list[i]; break end end end
+    Engine._floor = fl
+  end
+  return fl.step and planIndex().idx[fl.step] or nil
+end
+local function raiseFloor(list, i)
+  local d = ForeverRouteData
+  if not d or d.dungeon or d.special or Engine.noPlace or not ns.char then return end
+  local cur = floorIndex(list)
+  if cur and cur >= i then return end
+  Engine._floor = { list = list, char = ns.char, step = list[i] }
+  ns.char.floor = ns.char.floor or {}
+  ns.char.floor[d.id] = Engine.Key(i)
+end
+Engine.FloorIndex = function() return floorIndex(steps()) end
+function Engine.ResetFloor()
+  local d = ForeverRouteData
+  Engine._floor = nil
+  if d and ns.char and ns.char.floor then ns.char.floor[d.id] = nil end
+end
+-- the plan's steps below your place still to do for quests in your log (Next.lua offers them as extras): at most n
+function Engine.BelowFloor(planned, n)
+  local out, list = {}, steps()
+  if not planned then return out end
+  for j = planned - 1, math.max(1, planned - 400), -1 do
+    local t = list[j]
+    if t.q and t.q > 0 and State.OnQuest(t.q) and Engine.Status(j) == "todo" then out[#out + 1] = j; if #out >= (n or 12) then break end end
+  end
+  return out
+end
 function Engine.Compute()
   -- the first step you can act on now. A step that needs a higher level ("wait") or a quest that isn't in your log
   -- ("blocked") doesn't hold up the route: it is passed over and comes back as soon as it can be done.
@@ -906,6 +969,24 @@ function Engine.Compute()
       if st == "wait" or st == "full" or st == "blocked" or st == "later" then fallback = fallback or i else found = i; break end
     elseif run == i - 1 then run = i end
   end
+  -- (not below your place in the plan: the floor. Only a step of a quest in your log is kept out down there - one you took
+  -- up again from the part you passed: a pick-up waiting for a level or room in your log, a hand-in waiting for its
+  -- quest, a quest you abandoned - those come back as they always did, and hold the floor)
+  local F = floorIndex(list)
+  local function below(i) local t = list[i]; return F and i < F and t.q and t.q > 0 and not t.added and State.OnQuest(t.q) end
+  if found and below(found) then
+    local f2
+    for i = found + 1, #list do
+      local st = (skipFrom and i >= skipFrom and i <= skipTo) and "done" or Engine.Status(i)
+      if st ~= "done" and not (st == "todo" and below(i)) then
+        if st == "wait" or st == "full" or st == "blocked" or st == "later" then fallback = fallback or i else f2 = i; break end
+      end
+    end
+    found = f2
+  end
+  -- (the floor rises to the first step not done - waiting ones too: they come back from there)
+  local first = (found and fallback) and math.min(found, fallback) or found or fallback
+  if first and not below(first) then raiseFloor(list, first) end
   if not Engine.noPlace then
     doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, key, run, list[run]
     doneRun.skipFrom0, doneRun.skipTo0 = skipFrom or 0, skipTo or -1
@@ -1168,7 +1249,9 @@ function Engine.RefreshInner()
         end)
       else
         local ok, pick = pcall(ns.Next.Pick, Engine.current)
-        if ok and pick then Engine.current = pick elseif not ok and ns.LogError then ns.LogError("next", pick) end
+        -- (a pick is shown only while it is still to do - skipped, ticked or not offered: not again; as Engine.ShowPick)
+        -- (or the quest from behind you it just took: its status was worked out a moment before it was taken)
+        if ok and pick and (Engine.Status(pick) == "todo" or (ns.Next.taken and ns.Next.taken == steps()[pick])) then Engine.current = pick elseif not ok and ns.LogError then ns.LogError("next", pick) end
       end
     end
   else
@@ -1236,6 +1319,7 @@ function Engine.Undo()
   local h = table.remove(ns.char.history)
   if not h then ns.Print("nothing to undo."); return end
   for _, id in ipairs(h.ids) do ns.char.skipped[id] = nil; ns.char.manualDone[id] = nil end
+  Engine.ResetFloor() -- (what you undid may be behind your place in the plan: it is yours again)
   for _, q in ipairs(h.nope or {}) do if ns.char.nope then ns.char.nope[q] = nil end end
   Engine.view = nil
   Engine.Refresh()
@@ -1279,8 +1363,9 @@ end
 
 local function currentStep() local i = Engine.current; return i, i and steps()[i] end
 local function nearCurrent(kind, within)
-  -- the first not-done step of this kind among the next few (lets you do things a little early)
-  local i = Engine.current
+  -- the first not-done step of this kind among the next few (lets you do things a little early) - counted from the
+  -- plan's place: with a quest from elsewhere on the card, training in town didn't tick the plan's train step (code review)
+  local i = Engine.planned or Engine.current -- (not PlanAt: that is the step you look at while you browse the route - review)
   if not i then return nil end
   for j = i, math.min(#steps(), i + (within or 0)) do
     local s = steps()[j]

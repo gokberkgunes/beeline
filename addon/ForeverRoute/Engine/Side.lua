@@ -199,7 +199,14 @@ local function sideStops()
       elseif State.QuestReady(q) then
         if sq.e and not has["turnin:"] and not (ForeverRouteEnders and ForeverRouteEnders[q]) then
           local step = { k = "turnin", q = q, name = sq.n, level = sq.l, npc = sq.e[1], m = sq.e[2], x = sq.e[3], y = sq.e[4], r = 6, inserted = true, side = true, note = "Added: you finished this one on the way." }
-          if Engine.InsertStop(step, px, py, pinst) then added = true end
+          -- (weighed like the plan's own finished quests: waiting for the cheapest spot can lose more XP than going now -
+          -- it was placed by walking cost alone, levels later and gray by then - code review)
+          local opts
+          if tonumber(sq.l) and Engine.HandInNow then
+            local now, lost, secs = Engine.HandInNow(step, tonumber(sq.l), Engine.InsertStop(step, px, py, pinst, { dry = true }))
+            if now then opts = { at = now, why = string.format("worth going now: waiting would lose ~%d XP, ~%d min there and back", lost, math.floor(2 * secs / 60 + 0.5)) } end
+          end
+          if Engine.InsertStop(step, px, py, pinst, opts) then added = true end
         end
       else
         for _, o in ipairs(sq.o or {}) do
