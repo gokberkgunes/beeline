@@ -132,11 +132,16 @@ function ns.Guard(where, fn)
     return err
   end
 end
+-- (a listener runs under pcall, so it may never pause a job: the job's slice is off while listeners run - inside a
+-- route pass, FR_STEP_DONE's listeners run in the pass's coroutine, and a pause in one would be lost with its work)
 function ns.Fire(event, ...)
+  local co = ns.sliceCo
+  ns.sliceCo = nil
   for _, fn in ipairs(listeners[event] or {}) do
     local ok, err = pcall(fn, ...)
     if not ok then ns.LogError(event, err) end
   end
+  ns.sliceCo = co
 end
 
 -- item API: Forever moved these into C_Item (the old globals are gone)
@@ -382,7 +387,7 @@ function ns.ShowOnMap(i)
   local m, pin = ns.MapSpot(i)
   if not m then ns.Print("That step has no map spot (it's inside a dungeon, or a note)."); return end
   if InCombatLockdown() then ns.Print("Can't open the map in combat."); return end
-  if i ~= ns.Engine.current then ns.Engine.view = i end
+  if i ~= ns.Engine.CardAt() then ns.Engine.view = i end
   ns.Fire("FR_STEP", ns.Engine.Shown()) -- pins follow the step being looked at
   local function setMap()
     if WorldMapFrame and WorldMapFrame:IsShown() and WorldMapFrame.SetMapID and WorldMapFrame:GetMapID() ~= m then WorldMapFrame:SetMapID(m) end

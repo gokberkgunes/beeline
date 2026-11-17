@@ -78,7 +78,7 @@ end
 
 -- arriving across the sea while a boat step is current: the spot you waited at is the pier
 local function arrived()
-  local i = ns.Engine and ns.Engine.current
+  local i = ns.Engine and ns.Engine.CardAt()
   local s = i and ForeverRouteData and ForeverRouteData.steps and ForeverRouteData.steps[i]
   if not (s and s.boat and s.to and s.m and ns.Engine.InZone and ns.Engine.InZone(s.to)) then return end
   local w = waited[s.m]

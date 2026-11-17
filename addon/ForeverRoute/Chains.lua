@@ -93,22 +93,20 @@ function ns.ChainsAtRisk(margin)
   margin = margin or 2
   local level = (UnitLevel and UnitLevel("player")) or 1
   local out, seen = {}, {}
-  for _, s in ipairs(ns.Steps(d)) do
-    local q = s.q
-    if q and not seen[q] and S.OnQuest(q) then
-      seen[q] = true
-      local ch = ns.ChainOf(q)
-      if ch and not seen["c" .. ch.id] then
-        local nextQ
-        for n = ch.at + 1, #ch.q do if not S.IsCompleted(ch.q[n]) then nextQ = ch.q[n]; break end end
-        local ql = nextQ and ns.QuestLevel(nextQ)
-        if ql then
-          local L = level
-          while L < 60 and E.GrayAt(L) < ql do L = L + 1 end
-          if E.GrayAt(L) >= ql and L <= level + margin then
-            seen["c" .. ch.id] = true
-            out[#out + 1] = { q = q, line = ns.ChainLine(q, level), grayAt = L }
-          end
+  -- (your log's quests on the route, in the order they first come: ns.LogQuestsOn's one walk, shared with Where to?'s
+  -- rows and kept until the log changes)
+  for _, q in ipairs(ns.LogQuestsOn(d).order) do
+    local ch = ns.ChainOf(q)
+    if ch and not seen["c" .. ch.id] then
+      local nextQ
+      for n = ch.at + 1, #ch.q do if not S.IsCompleted(ch.q[n]) then nextQ = ch.q[n]; break end end
+      local ql = nextQ and ns.QuestLevel(nextQ)
+      if ql then
+        local L = level
+        while L < 60 and E.GrayAt(L) < ql do L = L + 1 end
+        if E.GrayAt(L) >= ql and L <= level + margin then
+          seen["c" .. ch.id] = true
+          out[#out + 1] = { q = q, line = ns.ChainLine(q, level), grayAt = L }
         end
       end
     end

@@ -658,6 +658,41 @@ function Card.Fill()
   -- waiting pick-up instead and never said so (tester)
   local WAITING = { wait = true, blocked = true, later = true }
   local forNow = data.zoneRoute and i and not ns.Engine.view and WAITING[ns.Engine.Status(i)] or false
+  -- (the plan the same, when nothing on it is to do now - Engine.forNow: a level 59 at its last training was shown
+  -- "Nothing to learn until level 60" with three zones' quests open - mutate --play)
+  local planForNow = not forNow and i and not ns.Engine.view and ns.Engine.forNow and not (data.zoneRoute or data.dungeon or data.special or data.branch)
+    and WAITING[ns.Engine.Status(i)] or false
+  -- your best few zones now, to pick the next home base from (here: the zone you stand in too)
+  local function nextBases(here)
+    local opts = {}
+    local zc = ns.ZoneChoices and ns.ZoneChoices()
+    if zc then
+      local rows = {}
+      for _, r in ipairs(zc.rows or {}) do if (r.route or r.planned) and (here or not r.here) then rows[#rows + 1] = r end end
+      table.sort(rows, function(a, b)
+        if (a.best and 1 or 0) ~= (b.best and 1 or 0) then return a.best and true or false end
+        local ra, rb = ns.ZoneRate and ns.ZoneRate(a), ns.ZoneRate and ns.ZoneRate(b)
+        if ra and rb and ra ~= rb then return ra > rb end
+        return (a.xpLeft or 0) > (b.xpLeft or 0)
+      end)
+      for k = 1, math.min(3, #rows) do opts[#opts + 1] = rows[k] end
+    end
+    return opts
+  end
+  if planForNow then
+    look(C.good, "icon-check")
+    -- (the step waiting stays the plan's: it comes back as the card's step once it opens)
+    local why, _, lv = ns.Engine.NotYet(i)
+    -- (zone rows only: the plan's own row is where you are)
+    local opts = {}
+    for _, r in ipairs(nextBases(true)) do if r.route and (r.questsLeft or 0) > 0 then opts[#opts + 1] = r end end
+    cur.titleText:SetText("Route done for now")
+    cur.detail:SetText(((why == "level" and lv) and ("Its next step opens at level " .. lv .. ". ") or "Its next steps wait for earlier quests. ")
+      .. (#opts > 0 and "Pick your next home base:" or "Other zones: Where to? on the route window."))
+    if #opts > 0 then cur.choice = { rows = opts }; fillChoice() end
+    setNote("")
+    Card.SetButtons(nil); return
+  end
   if not i or forNow then
     look(C.good, "icon-check")
     if data.dungeon then cur.titleText:SetText((data.dungeonName or "Dungeon") .. " route done"); cur.detail:SetText("Everything for it is handed in. \"Back to plan\" carries on leveling.")
@@ -677,19 +712,7 @@ function Card.Fill()
           end
         end
       end
-      local opts = {}
-      local zc = ns.ZoneChoices and ns.ZoneChoices()
-      if zc then
-        local rows = {}
-        for _, r in ipairs(zc.rows or {}) do if (r.route or r.planned) and not r.here then rows[#rows + 1] = r end end
-        table.sort(rows, function(a, b)
-          if (a.best and 1 or 0) ~= (b.best and 1 or 0) then return a.best and true or false end
-          local ra, rb = ns.ZoneRate and ns.ZoneRate(a), ns.ZoneRate and ns.ZoneRate(b)
-          if ra and rb and ra ~= rb then return ra > rb end
-          return (a.xpLeft or 0) > (b.xpLeft or 0)
-        end)
-        for k = 1, math.min(3, #rows) do opts[#opts + 1] = rows[k] end
-      end
+      local opts = nextBases(false)
       cur.titleText:SetText((Style.ShortZone(data.zoneName or "Zone")) .. (forNow and " done for now" or " done"))
       local wait = ""
       if forNow and later > 0 then
@@ -782,7 +805,12 @@ function Card.Fill()
     elseif status == "later" then
       return "Finish it inside the dungeon next time you run it.", C.sub
     elseif status == "wait" then
+      -- (training: the trainer has nothing for you below the stop's level - not "not offered", a quest's words)
+      local tl = s.k == "train" and ns.Engine.TrainFrom and ns.Engine.TrainFrom(i)
+      if tl then return string.format("Nothing to learn until level %d.", tl) .. ((Card.Note(s) and ("  " .. Card.Note(s))) or ""), C.warn end
       local lv = s.minLevel or s.until_
+      local red = ns.Engine.TooHigh and ns.Engine.TooHigh(s) -- (red to you: back within 4 levels of it)
+      if red and (not lv or red > lv) then lv = red end
       if not lv and s.q and ns.QUEST_PRE and ns.QUEST_PRE[s.q] then
         local pre = ns.QUEST_PRE[s.q]
         for _, p in ipairs(pre.g or pre.s or {}) do
@@ -1535,7 +1563,7 @@ ns.On("FR_STEP", function() Card.Update(false) end)
 ns.On("FR_ZONETRIPS", function() if f and Card.zoneDoneSince then Card.Update(false) end end) -- (the next bases' trips are in)
 ns.On("FR_PROGRESS", function() Card.Counts() end) -- (a count moved: "Gnoll Paws: 3/8")
 ns.On("FR_DUNGEON", function() if f then Card.Update(false) end end) -- walked into or out of a dungeon
-ns.On("FR_XP", function() local s = ns.Engine.current and steps()[ns.Engine.current]; if f and s and s.k == "grind" and not f.cur.animOut:IsPlaying() then Card.Fill(); Card.Layout() end end)
+ns.On("FR_XP", function() local s = ns.Engine.CardAt() and steps()[ns.Engine.CardAt()]; if f and s and s.k == "grind" and not f.cur.animOut:IsPlaying() then Card.Fill(); Card.Layout() end end)
 ns.On("FR_TOGGLE", function() ns.db.hidden = not ns.db.hidden; f:SetShown(not ns.db.hidden) end)
 ns.On("FR_SETTINGS", function() if f then Style.ApplyScale(); f:SetWidth(ns.db.cardWidth); Card.Update() end end)
 -- leg = the arrow points at a waypoint on the way (the flight master, the pier), not the step: say which, so

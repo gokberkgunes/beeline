@@ -18,8 +18,19 @@ local W, PAD, ROW, BTNS = 560, 14, 34, 176
 local rows = {}
 
 local function call(fn, ...) if type(fn) == "function" then local ok, a = pcall(fn, ...); if ok then return a end end end
--- (the engine's one gray line, Engine.GrayAt: the log check said "drop" for quests the route kept - code review)
-local function grayAt(qLevel, myLevel) return qLevel and myLevel and qLevel <= ns.Engine.GrayAt(myLevel) end
+-- (the engine's one gray rule, Engine.GrayDrop: gray and leading to nothing worth XP is off the route and "drop" here; gray
+-- but leading on is kept in both. The log check said "drop" for quests the route kept - code review, and user's rule)
+-- -> "drop"; or "leads", the follow-up's name; or nil (not gray)
+local function grayRule(e, level)
+  local E = ns.Engine
+  if not (E.GrayDrop and e.level and level) then return nil end
+  local drop, via = E.GrayDrop(e.id, level, e.level)
+  if drop then return "drop" end
+  if via then
+    local L = ns.QuestLevel and ns.QuestLevel(via)
+    return "leads", (E.QuestName and E.QuestName(via) or ("quest " .. via)) .. (L and (" (level " .. L .. ")") or "")
+  end
+end
 
 -- your quest log: id, title, level, zone header
 function LogCheck.Entries()
@@ -94,30 +105,29 @@ function LogCheck.Classify()
     if not i then for _, r in ipairs(ns.DungeonRoutes()) do if ns.QuestIds(r)[e.id] then inDungeon = r.dungeonName; break end end end
     local verdict, why
     local keep = keepReason(e)
+    local gray, via = grayRule(e, myLevel)
     if ns.Nope(e.id) then
       verdict, why = "drop", "You said you're not doing this one"
     elseif keep then
       verdict, why = "keep", "Worth keeping: " .. keep
+    elseif gray == "drop" then
+      -- (the route has dropped it too: its steps, its hand-in, any stop for it - Engine.GrayDrop)
+      verdict, why = "drop", done and "Gray, and nothing after it is worth XP - off your route (not worth a trip)" or "Gray, and nothing after it is worth XP - off your route"
     elseif i then
-      local st -- this quest's hand-in step on the route (the first step found may be its accept)
-      local wl = (where and where.steps) or {}
-      for _, x in ipairs(stepsOf(wl, e.id)) do local s = wl[x]; if s.q == e.id and s.k == "turnin" and not (ns.Engine.BehindYou and ns.Engine.BehindYou(s)) then st = s; break end end
-      if done and ns.Engine.GrayHandIn and ns.Engine.GrayHandIn(st) then
-        -- the route passes this hand-in (finished, far below you, opens nothing): the card won't send you there
-        verdict, why = "drop", "Gray and nothing follows it - your route skips this hand-in (not worth a trip)"
-      elseif not done and planLvl and grayAt(e.level, math.max(myLevel or planLvl, planLvl)) and not (ns.Engine.LeadsToWorth and ns.Engine.LeadsToWorth(e.id, math.max(myLevel or planLvl, planLvl))) then
+      local later = planLvl and myLevel and planLvl > myLevel and grayRule(e, planLvl)
+      if not done and later == "drop" then
+        -- (the same rule at the level the plan has you there: it leaves the route when you get there)
         verdict, why = "drop", string.format("Gray by the time the route gets to it (you'll be about %s) - very little XP", planLvl)
       else
-        verdict, why = "keep", string.format("On your route at step %d%s", i, where ~= here and " of your path" or "")
+        verdict, why = "keep", string.format("On your route at step %d%s", i, where ~= here and " of your path" or "") .. (via and (" - gray, but it leads to " .. via) or "")
       end
     elseif inDungeon then
       verdict, why = "keep", "For " .. inDungeon .. " (dungeon route)"
-    elseif done and grayAt(e.level, myLevel) then
-      verdict, why = "drop", "Gray and not on your route - not worth a trip (hand it in only if you pass by)"
+    elseif gray == "leads" then
+      -- (gray, off your route, but its chain goes on to a quest still worth XP: yours, not "drop")
+      verdict, why = "yours", "Gray, but it leads to " .. via .. (done and " - hand it in if you pass by" or " - yours to finish")
     elseif done then
       verdict, why = "turnin", "Finished but not on your route - hand it in if you pass by"
-    elseif grayAt(e.level, myLevel) then
-      verdict, why = "drop", "Gray already and not on your route"
     else
       -- (not "drop": it was "Not on any of your routes - you won't be sent there", untrue for a quest another zone's
       -- route has, and a tester abandoned four of those - persona review). Another zone's route has it: picking that
@@ -430,4 +440,10 @@ end
 
 ns.On("FR_LOADED", build)
 ns.On("FR_TOGGLE_LOGCHECK", function() LogCheck.Toggle() end)
-ns.On("QUEST_LOG_UPDATE", function() if f and f:IsShown() then LogCheck.Draw() end end)
+-- (open, it follows your log: once for a burst of log updates - a kill or a loot sends two or three - not for each)
+local redrawDue = false
+ns.On("QUEST_LOG_UPDATE", function()
+  if redrawDue or not (f and f:IsShown()) then return end
+  redrawDue = true
+  C_Timer.After(0.2, function() redrawDue = false; LogCheck.Draw() end)
+end)

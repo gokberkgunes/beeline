@@ -179,13 +179,18 @@ local function sideStops()
   local d = ForeverRouteData
   if not ((ns.SIDE_QUESTS or ns.ITEM_QUESTS) and d and #list > 0 and Engine.current) or d.dungeon or d.special or d.branch then return false end
   local added = false
+  local zoneMaps -- (lazy: a picked zone's maps, Stitch.ZoneMaps; false on your plan)
   local px, py, pinst = HBD:GetPlayerWorldPosition()
   -- (also the ones in your log from before the addon knew about them: A Noble Brew, picked up by hand)
   ns.char.side = ns.char.side or {}
   for _, t in ipairs({ ns.SIDE_QUESTS or {}, ns.ITEM_QUESTS or {} }) do
     for q in pairs(t) do if not ns.char.side[q] and State.OnQuest(q) then ns.char.side[q] = true end end
   end
-  for q in pairs(ns.char.side) do
+  -- (the quests first, then each with a pause after it in a route job: a quest picked up meanwhile is not added to the
+  -- table being walked)
+  local qs = {}; for q in pairs(ns.char.side) do qs[#qs + 1] = q end
+  for _, q in ipairs(qs) do
+    ns.MaybeYield()
     local sq = sideData(q)
     -- (what its stops say they are for: the item that started it, or a side quest you picked up)
     local _, itemName = next((sq and sq.it) or {})
@@ -224,10 +229,16 @@ local function sideStops()
             -- (only while the quest is worth it: up to the last step the plan has you at most SIDE_LATE levels above it)
             local last -- (a plan without levels: anywhere)
             for j in ipairs(list) do local L = Engine.PlanLevel(j); if L then last = last or 0; if L <= sq.l + Engine.SIDE_LATE then last = j end end end
+            -- (on a zone you picked, only on that zone's maps, as the quests you carry there (Stitch.Carried): a side
+            -- quest's objective in the next zone over went first on the card after picking Thousand Needles, and sent
+            -- you to Stonetalon - mutate sweep. Back on your plan it is fitted again)
+            if d.zoneRoute and zoneMaps == nil then zoneMaps = (ns.Stitch and ns.Stitch.ZoneMaps and ns.Stitch.ZoneMaps(d)) or false end
             local best, bestCost
             for k = 3, #o do
-              local at, cost = Engine.InsertStop(stop(o[k]), px, py, pinst, { dry = true, maxCost = 2.5 * Engine.SIDE_OBJ_YD, maxIndex = last })
-              if at and (not best or (cost or math.huge) < bestCost) then best, bestCost = o[k], cost or math.huge end
+              if not zoneMaps or zoneMaps[o[k][1]] then
+                local at, cost = Engine.InsertStop(stop(o[k]), px, py, pinst, { dry = true, maxCost = 2.5 * Engine.SIDE_OBJ_YD, maxIndex = last })
+                if at and (not best or (cost or math.huge) < bestCost) then best, bestCost = o[k], cost or math.huge end
+              end
             end
             -- (never a long way round: with no place close to the route yet, it waits - asked again as you go)
             if best and Engine.InsertStop(stop(best), px, py, pinst, { maxCost = 2.5 * Engine.SIDE_OBJ_YD, maxIndex = last, why = "a side quest in your log (" .. sq.n .. "): where it costs least" }) then
@@ -250,4 +261,4 @@ ns.On("QUEST_ACCEPTED", function(a, b)
 end)
 ns.On("FR_STATE", function() if sideStops() then Engine.Refresh() end end)
 ns.On("FR_LOADED", function() C_Timer.After(3.2, function() if sideStops() then Engine.Refresh() end end) end)
-ns.On("FR_ROUTE_CHANGED", function() C_Timer.After(0.55, function() if sideStops() then Engine.Refresh() end end) end)
+ns.On("FR_ROUTE_CHANGED", function() Engine.After(0.55, "side", function() if Engine.SideStops() then Engine.Refresh() end end) end)

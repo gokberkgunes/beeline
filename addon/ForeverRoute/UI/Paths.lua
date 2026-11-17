@@ -80,6 +80,7 @@ end
 
 -- rows and cards are kept by identity (a zone, a path id), so one keeps its look from one draw to the next
 local rows, cards = {}, {}
+Paths._rows = rows -- (the perf battery hovers one)
 
 local function zoneRow(key)
   if rows[key] then return rows[key] end
@@ -101,7 +102,7 @@ local function zoneRow(key)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(z.zone, 1, 1, 1)
     if z.planned then GameTooltip:AddLine("Next on your plan. The plan weighs more than one zone's XP: the trip there, chains that carry on, what comes after it, and coming back to zones you've done. Picking it keeps you on your path.", 0.72, 0.76, 0.84, true)
-    elseif z.route and z.xpLeft then GameTooltip:AddLine(string.format("About %s XP left there for you. Click to make it your home base: the route takes you there with the pick-ups on the way%s.", Paths.Short(z.xpLeft), (ns.HasCompanion and ns.HasCompanion()) and ", and your next plan is built from there" or ""), 0.72, 0.76, 0.84, true)
+    elseif z.route and z.xpLeft and z.xpLeft > 0 then GameTooltip:AddLine(string.format("About %s XP left there for you. Click to make it your home base: the route takes you there with the pick-ups on the way%s.", Paths.Short(z.xpLeft), (ns.HasCompanion and ns.HasCompanion()) and ", and your next plan is built from there" or ""), 0.72, 0.76, 0.84, true)
     elseif z.route then GameTooltip:AddLine("Click to make it your home base: the route takes you there with the pick-ups on the way, and your plan carries on from it.", 0.72, 0.76, 0.84, true)
     else GameTooltip:AddLine("No ready route at your level yet." .. ((ns.HasCompanion and ns.HasCompanion()) and " Click to ask the planner for one." or ""), 0.72, 0.76, 0.84, true) end
     -- the chain behind the row's reason (Chains.lua ns.ChainLine): how far you are, what's left, where it goes on
@@ -276,11 +277,11 @@ function Paths.Request(zone, route)
   local zr = (route and route.zoneRoute and route) or (zone and ns.ZoneRouteFor and ns.ZoneRouteFor(zone))
   if zone == Paths.PLANNED then
     ns.char.requestZone = nil
-    ns.LeaveDungeonRoute(); ns.Fire("FR_ROUTE_CHANGED"); ns.Engine.Refresh()
+    ns.Engine.Switch(function() ns.LeaveDungeonRoute(); ns.Fire("FR_ROUTE_CHANGED") end)
     Paths.Draw(); return
   end
   if zr then
-    ns.EnterZoneRoute(zr.id); ns.Fire("FR_ROUTE_CHANGED"); ns.Engine.Refresh()
+    ns.Engine.Switch(function() ns.EnterZoneRoute(zr.id); ns.Fire("FR_ROUTE_CHANGED") end)
     if ns.Why then ns.Why("path", "home base: " .. zone .. " - on its ready-made route now, with the quests you carry there; your next plan starts there") end
     ns.Print("Home base: " .. zone .. ". \"Back to plan\" in Where to? returns you to your plan.")
   else

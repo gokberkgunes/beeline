@@ -130,7 +130,7 @@ end
 -- paying at the level you'd be by then - until nothing more there is yours to take: the wall that sends you elsewhere.
 -- Quests that open up as you level in the zone count; ones you would outlevel before you get to them don't.
 local wallCache = {}
-for _, e in ipairs({ "FR_STATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "FR_ROUTE_CHANGED" }) do
+for _, e in ipairs({ "FR_STATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
   ns.On(e, function() wallCache = {} end)
 end
 -- assume: { [quest] = true } handed in before you start (what a zone would hold once you did the chain start it needs)
@@ -162,12 +162,19 @@ function ns.ZoneXpLeft(r, level, assume, onlyZone)
   end
   for _, s in ipairs(ns.Steps(r)) do
     local q = s.q
-    if q and not S.IsCompleted(q) and not handed[q] and (not onlyZone or s.zone == onlyZone or CAPITAL[s.zone]) then
-      if s.k == "accept" and not taken[q] and not S.OnQuest(q) then
-        local gray = E and E.GrayAt and tonumber(s.level) and s.level > 0 and s.level <= E.GrayAt(L)
-        if not gray and not (s.minLevel and L < s.minLevel) and preMet(q) and not (ns.Avail and ns.Avail.Unavailable(q))
-          and not (E and E.Excluded and E.Excluded(s)) and not (ns.Nope(q)) then taken[q] = true end
-      elseif s.k == "turnin" and (taken[q] or S.OnQuest(q)) then
+    -- (handed in or not is asked last, of a pick-up or hand-in that would count: the game is asked about fewer quests -
+    -- an objective step, a gray pick-up, a hand-in of a quest you don't have count for nothing either way)
+    if q and not handed[q] and (not onlyZone or s.zone == onlyZone or CAPITAL[s.zone]) then
+      if s.k == "accept" then
+        if not taken[q] and not S.OnQuest(q) then
+          local gray = E and E.GrayAt and tonumber(s.level) and s.level > 0 and s.level <= E.GrayAt(L)
+          -- (not red at the level you'd be by then, Engine.TooHigh, and not cut off by an earlier quest you skipped or
+          -- refused, Engine.ChainCut: the engine waits on the one and passes the other)
+          if not gray and not (s.minLevel and L < s.minLevel) and not S.IsCompleted(q) and preMet(q) and not (ns.Avail and ns.Avail.Unavailable(q))
+            and not (E and E.Excluded and E.Excluded(s)) and not (ns.Nope(q)) and not (E and E.TooHigh and E.TooHigh(s, L))
+            and not (E and E.ChainCut and E.ChainCut(q)) then taken[q] = true end
+        end
+      elseif s.k == "turnin" and (taken[q] or S.OnQuest(q)) and not S.IsCompleted(q) then
         handed[q] = true
         gain(ns.QuestXp(q, L) or 0)
       end
@@ -186,11 +193,41 @@ ns.ZoneKey = zoneKey
 local leftCache = {}
 -- (cleared on every quest or level change: kept by time, a count outlived a quest's hand-in and sent the zone-hopper to
 -- Redridge for quests it had already done)
-for _, e in ipairs({ "FR_STATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "FR_ROUTE_CHANGED" }) do
+-- (and on "not doing": a quest you refused, and what its chain leads to, is no longer counted)
+for _, e in ipairs({ "FR_STATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
   ns.On(e, function() leftCache = {} end)
 end
--- (the simulated world changes quests without the game's events: its player clears the counts before it looks)
-function ns.ZoneCountsChanged() leftCache = {} end
+-- (the simulated world changes quests without the game's events: its player clears the counts before it looks; Skip
+-- and Undo too - a skipped pick-up cuts its chain, Engine.ChainCut)
+function ns.ZoneCountsChanged() leftCache = {}; wallCache = {} end
+-- your log's quests on a route, from one walk over its steps, kept with the counts (cleared on any quest, level or route
+-- change; walked again when its length changed): order = them in the order they first come on the route (S.OnQuest),
+-- maps[q] = the maps of q's objective and hand-in steps there, at[q] = the first of those steps (its level: Engine.TooHigh).
+-- What Where to? needs of your plan - the quests you carry on
+-- a row's maps (Stitch.CarriedFrom), the chains you carry (ns.ChainsAtRisk) - walked it once per row and once more per
+-- draw: about 2x the time of opening it (perf gate)
+local NO_STEPS = {}
+function ns.LogQuestsOn(r)
+  local steps = (r and ns.Steps(r)) or NO_STEPS
+  local all = leftCache.logOn
+  if not all then all = {}; leftCache.logOn = all end
+  local c = all[steps]
+  if c and c.n == #steps then return c end
+  local onQuest, order, maps, seen, at = ns.State.OnQuest, {}, {}, {}, {}
+  for j = 1, #steps do
+    local t = steps[j]
+    local q = t.q
+    -- (a quest not in your log is asked each time it comes, as before: a set of every quest on the route is garbage)
+    if q and (seen[q] or onQuest(q)) then
+      if not seen[q] then seen[q] = true; order[#order + 1] = q end
+      local m = t.m
+      if m and (t.k == "obj" or t.k == "turnin") then local mm = maps[q]; if not mm then mm = {}; maps[q] = mm end; mm[m] = true; at[q] = at[q] or t end
+    end
+  end
+  c = { n = #steps, order = order, maps = maps, at = at }
+  all[steps] = c
+  return c
+end
 -- a quest's prerequisites met (ns.QUEST_PRE: g all of these handed in, s any one of them)
 function ns.PrereqsMet(q)
   local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
@@ -208,11 +245,19 @@ end
 -- handed in) and quests in your log with work or a hand-in there. Counting every quest id on the route made a zone
 -- you had finished look like 19 quests (the zone-hopper went back to Ashenvale it had already done)
 local QUEST_STEP = { accept = true, turnin = true, obj = true }
--- where a quest is done on your plan (its pick-up or hand-in step): { name, zone }, for "needs X (zone) first"
-local function onPlan(q)
+-- where quests are done on your plan (the first step naming each): wanted = { [q] = true } -> { [q] = step }, for
+-- "needs X (zone) first". (Every row's at once, in one walk that stops when all are found: a walk over the whole plan
+-- per row was a good part of opening Where to? - perf gate)
+local function onPlan(wanted, n)
+  local found = {}
+  if n == 0 then return found end
   local d = ForeverRouteData
   local r = (d and d.zoneRoute and ns.ResolvePath(ns.char.returnTo)) or (d and not d.zoneRoute and d) or ns.MainRoutes()[1]
-  for _, s in ipairs((r and ns.Steps(r)) or {}) do if s.q == q and s.name then return s.name, s.zone end end
+  for _, s in ipairs((r and ns.Steps(r)) or {}) do
+    local q = s.q
+    if q and wanted[q] and s.name and not found[q] then found[q] = s; n = n - 1; if n == 0 then break end end
+  end
+  return found
 end
 -- also returns why the zone matters to you: a quest in your log with work there (continues), and the first quest there
 -- held up by a prerequisite you haven't handed in (need = { q, prerequisite })
@@ -225,24 +270,44 @@ local function questsLeft(r, level)
   local ids = {} -- (the quests counted: for the simulated player's report)
   for _, s in ipairs(ns.Steps(r)) do
     local q = s.q
-    if q and QUEST_STEP[s.k] and not seen[q] and not S.IsCompleted(q) then
+    -- (handed in or not is asked only of a quest in your log or a pick-up that passed the checks that don't ask the game:
+    -- the rest count for nothing either way, and asking about every quest on every row's route was most of the quest
+    -- API calls opening Where to? made - perf gate)
+    local on = q and QUEST_STEP[s.k] and not seen[q] and S.OnQuest(q)
+    -- (a gray one the route dropped is nothing there for you: the one gray rule, Engine.GrayDrop - a level 57 was
+    -- offered The Barrens for the low chains it carried)
+    if on and not S.IsCompleted(q) and not (E and E.Outlevelled and E.Outlevelled(s)) then
       -- a quest you carry: only work to do there, or its hand-in there with the quest ready (a hand-in waiting on work
       -- elsewhere left Wetlands looking like it had quests when the card had nothing there)
-      if S.OnQuest(q) then
-        -- (an objective step counts only while its own objective is unfinished, as the engine has it: Baron Longshore's
-        -- kill done in Stonetalon, his head handed in in Ratchet, made Stonetalon look like it had a quest left)
-        local o = s.k == "obj" and not S.QuestReady(q) and (s.unknown or not (E and E.ObjectiveFor and (E.ObjectiveFor(s) or {}).finished))
-        -- (and a ready hand-in only when the engine would send you to it: not a gray one, Baron Longshore at 23)
-        if o or (s.k == "turnin" and S.QuestReady(q) and not (E and E.GrayHandIn and E.GrayHandIn(s))) then seen[q] = true; n = n + 1; cont = cont or s.name; contQ = contQ or q; ids[#ids + 1] = q end
-      elseif not need and s.k == "accept" and not (s.minLevel and level < s.minLevel) and not ns.PrereqsMet(q) then
+      -- (an objective step counts only while its own objective is unfinished, as the engine has it: Baron Longshore's
+      -- kill done in Stonetalon, his head handed in in Ratchet, made Stonetalon look like it had a quest left)
+      -- (and not red to you: its work waits for your level, Engine.TooHigh - the row read "continues X", and once picked
+      -- the card had only a wait - code review)
+      local o = s.k == "obj" and not S.QuestReady(q) and (s.unknown or not (E and E.ObjectiveFor and (E.ObjectiveFor(s) or {}).finished))
+        and not (E and E.TooHigh and E.TooHigh(s, level))
+      -- (and a ready hand-in only when the engine would send you to it: not a gray one, Baron Longshore at 23)
+      if o or (s.k == "turnin" and S.QuestReady(q) and not (E and E.GrayHandIn and E.GrayHandIn(s))) then seen[q] = true; n = n + 1; cont = cont or s.name; contQ = contQ or q; ids[#ids + 1] = q end
+    -- (with the reason found, a quest held up by a prerequisite is nothing more: the checks are skipped for it)
+    -- (not one you refused, not red to you - it waits - and not one whose earlier quest you skipped or refused: the game
+    -- never offers it, Engine.ChainCut. Such a pick-up was the row's "needs X first", and picking the zone gave an empty
+    -- card - code review)
+    elseif q and not on and s.k == "accept" and not seen[q] and not (s.minLevel and level < s.minLevel) and not ns.Nope(q)
+        and not (E and E.TooHigh and E.TooHigh(s, level))
+        -- gray by level alone: whether it leads to something worth it depends on the route you are on, and on the zone's
+        -- own route it often leads nowhere (A Free Lunch counted from your plan, outlevelled once you got to Redridge).
+        -- (Asked first: E.Outlevelled is gray and more, so never true when this is false - and it asks the game about
+        -- each quest a gray one leads to)
+        and not (E and E.GrayAt and tonumber(s.level) and s.level > 0 and s.level <= E.GrayAt(level))
+        and not S.IsCompleted(q) and (need == nil or ns.PrereqsMet(q))
+        and not (E and ((E.Outlevelled and E.Outlevelled(s)) or (E.Excluded and E.Excluded(s)) or (E.Breadcrumbed and E.Breadcrumbed(s))))
+        and not (ns.Avail and ns.Avail.Unavailable(q)) and not (E and E.ChainCut and E.ChainCut(q)) then
+      -- (a quest held up by a prerequisite is the zone's reason only when you'd take it: a gray one kept Hillsbrad's
+      -- 22 route on offer at 39, "needs Battle of Hillsbrad first", with nothing there for you - mutate sweep)
+      if ns.PrereqsMet(q) then seen[q] = true; n = n + 1; ids[#ids + 1] = q
+      elseif not need then
         local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
         for _, p in ipairs((pre and (pre.g or pre.s)) or {}) do if not S.IsCompleted(p) then need = { q = q, pre = p }; break end end
-      elseif s.k == "accept" and not (s.minLevel and level < s.minLevel) and ns.PrereqsMet(q) and not (E and (
-          (E.Outlevelled and E.Outlevelled(s)) or (E.Excluded and E.Excluded(s)) or (E.Breadcrumbed and E.Breadcrumbed(s))
-          -- gray by level alone: whether it leads to something worth it depends on the route you are on, and on the zone's
-          -- own route it often leads nowhere (A Free Lunch counted from your plan, outlevelled once you got to Redridge)
-          or (E.GrayAt and tonumber(s.level) and s.level > 0 and s.level <= E.GrayAt(level))))
-          and not (ns.Avail and ns.Avail.Unavailable(q)) then seen[q] = true; n = n + 1; ids[#ids + 1] = q end
+      end
     end
   end
   leftCache[k] = { n = n, cont = cont, need = need, ids = ids, contQ = contQ }
@@ -295,38 +360,90 @@ function ns.ZoneChoices()
   if not here and hereZone then for _, r in ipairs(rows) do if r.route and ns.RouteAlso(r.route) == hereZone then here = r; break end end end
   if here then here.here = true end
   -- quests you finished whose hand-in is in a zone on the list
+  -- (row.handIns: those its route will have even with nothing of its own left - its own hand-in step, or one your plan
+  -- does on its maps, Stitch.Carried; row.handInsAny: all of them, for a route with work of its own, where the engine
+  -- adds a finished quest's hand-in where it costs least. A hand-in the zone's route had no place for kept Thousand
+  -- Needles on offer with nothing left there, and picking it left the card empty - mutate sweep)
+  -- (the route's own hand-ins: a walk over its steps; the carried ones from your log's quests on your plan,
+  -- ns.LogQuestsOn, only for a row with a finished quest to hand in - kept with the quest counts, cleared on any quest,
+  -- level or route change)
+  local function routeTakes(row, carried)
+    local k = "takes:" .. tostring(row.route.id) .. (carried and ":c" or "")
+    local t = leftCache[k]
+    if not t then
+      t = {}
+      for _, s in ipairs(ns.Steps(row.route)) do if s.k == "turnin" and s.q then t[s.q] = "own" end end
+      if carried and ns.Stitch and ns.Stitch.CarriedFrom then
+        local memo = leftCache.carryMemo or {}; leftCache.carryMemo = memo
+        for c in pairs(ns.Stitch.CarriedFrom(ns.Steps(row.route), ns.LogQuestsOn(ns.Util.PlanRoute()), memo)) do t[c] = t[c] or "carried" end
+      end
+      leftCache[k] = t
+    end
+    return t
+  end
   if ns.Engine and ns.Engine.LogEnders then
-    for q, e in pairs(ns.Engine.LogEnders()) do
-      if S.QuestReady(q) and not S.IsCompleted(q) then
+    local E = ns.Engine
+    for q, e in pairs(E.LogEnders()) do
+      -- (a gray one the route dropped is no reason to go there: Engine.GrayDrop)
+      if S.QuestReady(q) and not S.IsCompleted(q) and not (E.GrayDrop and E.GrayDrop(q, level, E.logLevels and E.logLevels[q]) == true) then
         local row = byKey[zoneKey(zoneOfMap(e.m))]
-        if row then row.handIns = row.handIns + 1 end
+        local how = row and (not row.route or routeTakes(row, true)[q])
+        if row then row.handInsAny = (row.handInsAny or 0) + 1 end
+        if how then
+          row.handIns = row.handIns + 1
+          -- (a carried hand-in's XP is the zone's too: ZoneXpLeft walks only the route's own steps, and the row read
+          -- "0 XP" for two quests waiting to be handed in there)
+          if how == "carried" and ns.QuestXp then row.carriedXp = (row.carriedXp or 0) + (ns.QuestXp(q, level) or 0) end
+        end
       end
     end
   end
-  local out = {}
-  for _, r in ipairs(rows) do
+  -- what each row's quests need first, and where your plan does those (onPlan: every row's at once)
+  local left, wanted, nWanted = {}, {}, 0
+  for j, r in ipairs(rows) do
     if r.route then
-      local cont, need
-      r.questsLeft, cont, need, r.leftIds, r.contQ = questsLeft(r.route, level)
+      local need
+      r.questsLeft, r.continues, need, r.leftIds, r.contQ = questsLeft(r.route, level)
+      left[j] = need or false
+      if need and not wanted[need.pre] then wanted[need.pre] = true; nWanted = nWanted + 1 end
+    end
+  end
+  local planned = onPlan(wanted, nWanted)
+  local out = {}
+  for j, r in ipairs(rows) do
+    if r.route then
+      local need = left[j]
       r.xpLeft = ns.ZoneXpLeft and ns.ZoneXpLeft(r.route, level) or nil
+      if r.xpLeft and r.carriedXp then r.xpLeft = r.xpLeft + r.carriedXp end
       r.also = ns.RouteAlso(r.route)
-      -- one reason per row: hand-ins waiting, else a quest you carry, else what it needs first (Paths.lua)
-      if cont then r.continues = cont end
-      if need then local name, zone = onPlan(need.pre); if name then
+      -- one reason per row: hand-ins waiting, else a quest you carry (r.continues), else what it needs first (Paths.lua)
+      local ps = need and planned[need.pre]
+      if ps then local name, zone = ps.name, ps.zone; do
         r.needs = { name = name, zone = zone, q = need.q }
         -- what doing it first would open up there (the walk again, with it and what it needs handed in)
         if ns.Stitch and r.xpLeft then
           local a = { [need.pre] = true }
           for _, id in ipairs(ns.Stitch.Closure(need.pre, function(q) return S.IsCompleted(q) end)) do a[id] = true end
-          r.needs.xpMore = math.max(0, (ns.ZoneXpLeft(r.route, level, a) or 0) - r.xpLeft)
+          r.needs.xpMore = math.max(0, (ns.ZoneXpLeft(r.route, level, a) or 0) - (r.xpLeft - (r.carriedXp or 0)))
         end
       end end
     end
     if r.route and not r.here then r.tripSecs = ns.ZoneTrip(r.route) end
-    -- your plan's next zone with no zone route of its own: the XP your plan has for you there
-    if not r.route and r.planRoute and ns.ZoneXpLeft then r.xpLeft = ns.ZoneXpLeft(r.planRoute, level, nil, r.zone) end
+    -- your plan's next zone with no zone route of its own: the XP your plan has for you there. With one, too, when the
+    -- zone's route has none: the row takes you back to your plan, not to that route (Mount Hyjal read "0 XP" as PLANNED
+    -- NEXT - mutate sweep)
+    if r.planRoute and ns.ZoneXpLeft and (not r.route or r.xpLeft == 0) then r.xpLeft = ns.ZoneXpLeft(r.planRoute, level, nil, r.zone) end
+    -- A row says what is there for you: quests its route hands in, a quest you carry with work there, hand-ins, or a
+    -- chain start (questsLeft: only for a quest you'd take). Pick-ups whose hand-ins the zone's route doesn't have are
+    -- nothing (a band cut off mid-quest: Azshara's 52 route ends on A Taste of Home's objective, offered with no XP left).
     -- (a zone whose quests need a start you haven't done stays, saying so)
-    if r.planned or r.here or r.handIns > 0 or not r.route or r.needs or (r.questsLeft or 0) > 0 then out[#out + 1] = r end
+    local something = false
+    if r.route and (r.questsLeft or 0) > 0 then
+      if r.continues then something = true
+      else local t = routeTakes(r); for _, q in ipairs(r.leftIds or {}) do if t[q] then something = true; break end end end
+    end
+    if something and r.handInsAny then r.handIns = r.handInsAny end
+    if r.planned or r.here or r.handIns > 0 or not r.route or r.needs or something then out[#out + 1] = r end
   end
   table.sort(out, function(a, b)
     if (a.best and true or false) ~= (b.best and true or false) then return a.best and true or false end
@@ -377,6 +494,7 @@ local function priceOne(r, k, pm, px, py)
 end
 local function tripStep()
   if not tripJob then if tripDriver then tripDriver:Hide() end return end
+  if ns.Jobs.Busy("route") then return end -- (one slicer a frame: a route change's passes first)
   ns.sliceCo, ns.sliceT0, ns.sliceBudget = tripJob, debugprofilestop(), 1
   local ok, err = coroutine.resume(tripJob)
   ns.sliceCo = nil

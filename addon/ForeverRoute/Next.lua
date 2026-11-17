@@ -475,10 +475,14 @@ function Next.VisitHere(list, planned, from, pm, px, py, pinst)
       for x = j, k do
         if x % 8 == 0 then ns.MaybeYield() end
         local t = list[x]
-        if E.Status(x) ~= "done" then
+        local stx = E.Status(x)
+        if stx ~= "done" then
           any = true
           local can = true
-          if t.minLevel and t.minLevel > Lv then can = false
+          -- (a step waiting on your level is not doable now, whatever its kind: the engine's "wait" is the one answer -
+          -- training for level 32/34 at 30 waits there, and this visit's own level checks put it in "now", the solve
+          -- picked it, the card couldn't show it and fell back to a hand-in 505 yd off with a giver at 189 yd - mutate)
+          if stx == "wait" or (t.minLevel and t.minLevel > Lv) or (E.TooHigh and E.TooHigh(t, Lv)) then can = false
           elseif t.k == "obj" or t.k == "grind" or t.unknown then can = false -- work, not a stop: the visit is still needed
           elseif t.k == "accept" then
             can = t.q and preMet(t.q, handed) and load < cap
@@ -626,20 +630,36 @@ Next.IsDismissed = isDismissed
 -- in the zone you're in come first, the trip and what it was for wait (they are still to do - the card comes back to
 -- them once these are done). In Stormwind with hand-ins left, a player flew to the Wetlands; the card kept saying
 -- "fly back to Stormwind" while the plan's Wetlands questing was a few steps on - tester.
+-- Only past an errand: what the plan does elsewhere before it comes here (the trip's own visit, and any after it) is at
+-- most Next.REJOIN_ERRAND seconds of work. Past a whole zone it is the plan's later visit, not its next: in Duskwood at 24
+-- with the plan flying to the Wetlands' 60 steps first, the card took up Duskwood's quests of the plan's next visit -
+-- those it could at 24 - then flew out with them half done, did the Wetlands and came back for the rest (mutate --play,
+-- a Wetlands - Duskwood ping-pong; Redridge's leg pulled ahead of the Darkshore - Ashenvale one the same way)
 -- -> the first of Next.REJOIN_MIN or more plan steps in a row on your map, within Next.REJOIN_SCAN steps; or nil
-Next.REJOIN_SCAN, Next.REJOIN_MIN = 250, 4
+Next.REJOIN_SCAN, Next.REJOIN_MIN, Next.REJOIN_ERRAND = 250, 4, 600
 function Next.LocalBlock(list, planned, pm)
   local trip = list[planned]
   if not (pm and trip and trip.to and trip.to ~= pm) then return nil end
   local E = ns.Engine
-  local j0, n = nil, 0
+  local j0, n, away = nil, 0, 0
   for j = planned + 1, math.min(#list, planned + Next.REJOIN_SCAN) do
     local s = list[j]
-    if Next.KIND[s.k] and s.m and E.Status(j) == "todo" then
+    if Next.KIND[s.k] and s.m then
+      local st = E.Status(j)
       if s.m == pm then
-        j0 = j0 or j; n = n + 1
-        if n >= Next.REJOIN_MIN then return j0 end
-      elseif j0 then j0, n = nil, 0 end -- (a few steps here, then away again: not worth leaving the plan for)
+        if st == "todo" then
+          j0 = j0 or j; n = n + 1
+          if n >= Next.REJOIN_MIN then return j0 end
+        end
+      elseif st ~= "done" then
+        if st == "todo" and j0 then j0, n = nil, 0 end -- (a few steps here, then away again: not worth leaving the plan for)
+        -- (the plan's own work elsewhere first - waiting ones too, the plan does them on that visit; a stop the route only
+        -- took in is a prize, not the plan's way)
+        if not s.inserted then
+          away = away + ((s.k == "obj" and tonumber(s.work)) or Next.SERVICE[s.k] or 15)
+          if away > Next.REJOIN_ERRAND then return nil end
+        end
+      end
     end
   end
   return nil
@@ -710,7 +730,10 @@ function Next.ChainsInto(q, map, zone)
   return false
 end
 
-function Next.PickupFirst(list, planned, pick, px, py, pinst)
+-- fits(j) (optional): the pick-up has a log slot - the solve's window holds it, or room is left past the window's own.
+-- The nearest giver with no slot was the must-stop, the solve could not put it first, and the card sent you out past
+-- a giver of the window 247 yd away (mutate --play, Auberdine: Fruit of the Sea)
+function Next.PickupFirst(list, planned, pick, px, py, pinst, fits)
   if not (px and list and planned and list[planned]) then return nil end
   local E = ns.Engine
   local function d2(s) local w = wpos(s); return w and w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2 or nil end
@@ -726,7 +749,7 @@ function Next.PickupFirst(list, planned, pick, px, py, pinst)
     -- here waits: back in town with full bags mid-visit, the town's pick-ups 30 steps on are not this visit's)
     if j > planned and s.m and not s.unknown then local dd = d2(s); if not dd or dd > Next.HERE_FAR ^ 2 then break end end
     if s.k == "accept" and s.q and E.Status(j) == "todo" and (not E.Available or E.Available(j)) and not (ns.Nope and ns.Nope(s.q))
-      and not (E.Outlevelled and E.Outlevelled(s)) then
+      and not (E.Outlevelled and E.Outlevelled(s)) and (not fits or fits(j)) then
       local dd = d2(s)
       if dd and dd <= Next.HERE_YD ^ 2 and (not bd or dd < bd) then best, bd = j, dd end
     end
@@ -756,7 +779,9 @@ local function pick(planned)
   local roomInLog = load < cap -- (a full log: no pick-up is a candidate at all)
   local here = ns.State.Position and { ns.State.Position() } or {}
   local bags = ns.Errands and ns.Errands.FreeSlots and ns.Errands.FreeSlots() or -1
-  local sig = table.concat({ planned, #list, load, math.floor(px / 15), math.floor(py / 15), pinst or 0, tostring(d), math.min(bags, 7) }, ":")
+  -- (your level too: a level-up wakes the pick-ups that waited for it, and the pick kept from before it sent you out past
+  -- a giver 80 yd away whose quest had just opened - mutate --play, Webwood Venom at 3)
+  local sig = table.concat({ planned, #list, load, math.floor(px / 15), math.floor(py / 15), pinst or 0, tostring(d), math.min(bags, 7), (UnitLevel and UnitLevel("player")) or 0 }, ":")
   local now = GetTime and GetTime() or 0
   -- the pick on the card, by the step itself: a stop inserted before it (a hand-in you finished) moves its number on, and
   -- by number the margin below compared the wrong steps and the card showed whatever sat at the old number - "Accept
@@ -826,15 +851,36 @@ local function pick(planned)
     local j0 = Next.HereBlock(list, planned, px, py, pinst)
     if j0 then from = j0; Next.rejoin = { at = j0, wait = planned } end
   end
+  -- (the log as the window fills it, in the plan's order: a pick-up past the room left ends the window like a full log.
+  -- Ten of the plan's pick-ups in the window with four free slots made the solve infeasible - no order fits - and its
+  -- leftovers put a trip to Eastern Plaguelands before a quest giver 53 yd away - mutate sweep. In plan order the
+  -- window always has one order that fits: the plan's own)
+  -- (and a slot for a pick-up of this town before you head out, Next.PickupFirst: the window filled the last slot with
+  -- the plan's next pick-up 557 yd off, the giver 51 yd away had none, and the card sent you out past it - mutate,
+  -- Zephras Isle at 39/40. Kept until the window takes a pick-up here itself: then that one goes first, below)
+  local pfAny = roomInLog and Next.PickupFirst(list, planned, planned, px, py, pinst)
+  local reserve = pfAny and 1 or 0
+  local hereYd2 = Next.HERE_YD ^ 2
+  local wload = load
   for j = from, math.min(#list, from + Next.SCAN) do
     if j % 8 == 0 then ns.MaybeYield() end
     local s = list[j]
+    -- (the trip the plan holds at, Engine.Compute: meant for levels above you while quests here wait for your level or
+    -- for room in your log - the window ends there, or the solve flew you on past the plan's own hold - code review)
+    if s == E.levelHold then break end
     local st = E.Status(j)
     scanEnd = j
     if st == "todo" then
       -- (a pick-up whose earlier chain quest isn't handed in is not offered yet: Chef Grual has nothing until Jitters'
       -- Growling Gut is in - it waits where the plan has it)
-      if Next.KIND[s.k] and wpos(s) and (s.k ~= "accept" or ((not E.Available or E.Available(j)) and roomInLog)) then
+      if Next.KIND[s.k] and wpos(s) and (s.k ~= "accept" or ((not E.Available or E.Available(j)) and wload + ((j == pfAny) and 0 or reserve) < cap)) then
+        -- (a slot is freed only by a hand-in the plan does: an inserted one is a prize, Next.Prize - the solve may leave it,
+        -- and counted it let one pick-up too many into the window - code review)
+        if s.k == "accept" and reserve > 0 then
+          local w = wpos(s)
+          if j == pfAny or (w[3] == pinst and (w[1] - px) ^ 2 + (w[2] - py) ^ 2 <= hereYd2) then reserve = 0 end
+        end
+        if s.k == "accept" then wload = wload + 1 elseif s.k == "turnin" and not s.inserted then wload = wload - 1 end
         -- an off-plan stop the route only took in (a finished quest's hand-in, a side quest's objective): a prize, not a
         -- must (Next.Prize). A hand-in whose NPC the plan comes back to - a capital, a hub - waits for that visit like
         -- any other: worth only the trip back it saves. One the plan never passes again is worth its XP at your level:
@@ -887,7 +933,10 @@ local function pick(planned)
           local prize = Next.Prize(list, s, planned, true)
           -- (or the one the card took: taking it makes BehindYou false for it - Next.taken - and it dropped out of its own
           -- candidates, with no margin to hold it: the card flipped to the plan's step and back - code review)
-          if prize > 0 and (E.BehindYou(s) or Next.taken == s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q)) then
+          -- (and only one that taking makes a step to do: done for another reason - a breadcrumb whose quest is yours, not
+          -- offered - it went on the card as a done step, Raven Hill: Engine.TodoIfTaken)
+          if prize > 0 and (E.BehindYou(s) or Next.taken == s) and (not E.Available or E.Available(j)) and not (ns.Nope(s.q))
+            and (not E.TodoIfTaken or E.TodoIfTaken(j)) then
             found[#found + 1] = { j = j, d2 = d2, prize = prize }
           end
         end
@@ -1009,8 +1058,10 @@ local function pick(planned)
   end
   -- (a pick-up in this town to take before heading out - Next.PickupFirst - is a stop even when the window stopped at the
   -- plan's step: work with no known spot ends the scan there, and the card sent a tester out with the givers beside him)
-  local pf = roomInLog and Next.PickupFirst(list, planned, planned, px, py, pinst)
-  if pf and not byStep[pf] then add(pf, { plan = pf }) end
+  -- (a must stop: only with a slot left after the window's own, or the solve has no order that fits)
+  local function fits(j) return byStep[j] ~= nil or wload < cap end
+  local pf = roomInLog and Next.PickupFirst(list, planned, planned, px, py, pinst, fits)
+  if pf and not byStep[pf] then add(pf, { plan = pf }); wload = wload + 1 end
   if #stops == 0 then Next.res = nil; return keepPlanned() end
   local P = { start = start, stops = stops, anchor = anchor, travel = travelSecs, load = load,
     cap = (C_QuestLog and C_QuestLog.GetMaxNumQuestsCanAccept and C_QuestLog.GetMaxNumQuestsCanAccept()) or 25 }
@@ -1074,7 +1125,7 @@ local function pick(planned)
   end
   -- before you head out, the quests this town gives you (Next.PickupFirst): their work can be done on the same trip out
   do
-    local j = roomInLog and Next.PickupFirst(list, planned, pick, px, py, pinst)
+    local j = roomInLog and Next.PickupFirst(list, planned, pick, px, py, pinst, fits)
     if j then
       if not byStep[j] then add(j, {}) end
       local stop = byStep[j]
@@ -1107,8 +1158,11 @@ local function pick(planned)
     local s = list[pick]
     ns.Why("next", "step " .. pick .. " (" .. tostring(s.name or s.k) .. ") before the plan's step " .. planned .. ": " .. Next.Reason(pick))
   end
-  -- a quest the plan passed as behind you, picked up again here: it's on your route now (Engine.BehindYou)
-  Next.taken = (pick and byStep[pick] and byStep[pick].behind) and list[pick] or nil
+  -- a quest the plan passed as behind you, picked up again here: it's on your route now (Engine.BehindYou). However it
+  -- came into the stops: one the window ahead of your plan step took in while it was the card's pick (todo only because
+  -- it was taken) lost "taken" here, read done again and stayed on the card (mutate sweep: Tundra MacGrann's Stolen Stash)
+  local ps = pick and list[pick]
+  Next.taken = ps and ((byStep[pick] and byStep[pick].behind) or (E.BehindYou and E.BehindYou(ps, true))) and ps or nil
   return pick
 end
 
@@ -1118,7 +1172,7 @@ function Next.Pick(planned)
   Next.Cancel() -- (a solve running in the background is for a state this one replaces)
   sigNow, askLeft = nil, nil
   sigNow, askLeft = priceSig(), Next.ASK_PER_PICK
-  local ok, r = pcall(pick, planned)
+  local ok, r = ns.Call(pick, planned) -- (inside a route job: no pcall - a pause can't cross one)
   sigNow, askLeft = nil, nil
   if not ok then error(r, 0) end
   return r
@@ -1129,52 +1183,41 @@ end
 -- one frame, a solve at level 50 took 20-40 ms, a hitch every 30 yards. A newer request, or a solve run at once
 -- (Next.Pick), cancels the one running.
 Next.BUDGET_MS = 1
-local job
 local pendingDone -- (a finished solve's pick, for the next frame; a newer solve drops it)
-local driver = CreateFrame and CreateFrame("Frame") or nil
-local function endJob() job = nil; if driver then driver:Hide() end end
-function Next.Busy() return job ~= nil end
-function Next.Cancel() pendingDone = nil; if job then endJob() end end
-local function stepJob(budget)
-  local j = job
-  if not j then return end
-  ns.sliceCo, ns.sliceT0, ns.sliceBudget = j.co, debugprofilestop(), budget or Next.BUDGET_MS
-  sigNow, askLeft = j.sig, j.ask
-  local t0 = debugprofilestop()
-  local ok, r = coroutine.resume(j.co, j.planned)
-  if ns.Time then ns.Time("solve slice", debugprofilestop() - t0) end
-  j.ask = askLeft
-  sigNow, askLeft = nil, nil
-  ns.sliceCo = nil
-  if job ~= j then return end
-  if not ok then endJob(); if ns.LogError then ns.LogError("next", r) end; j.done(nil); return end
-  -- (its pick goes on the card in the next frame: the card and the arrow's trip are a frame's work of their own)
-  if coroutine.status(j.co) == "dead" then
-    endJob()
-    local mine = function() j.done(r) end
-    pendingDone = mine
-    if C_Timer and C_Timer.After then C_Timer.After(0, function() if pendingDone == mine then pendingDone = nil; local t0 = debugprofilestop(); mine(); if ns.Time then ns.Time("pick on card", debugprofilestop() - t0) end end end) end
-  end
-end
-if driver then driver:Hide(); driver:SetScript("OnUpdate", function() local ok, err = pcall(stepJob); if not ok then endJob(); if ns.LogError then ns.LogError("next", err) end end end) end
-Next._driver = driver -- (the perf battery ticks it)
+-- (the solve is a job of ns.Jobs, kind "solve": its price signature and its bound on trip searches are its own, swapped
+-- in for each slice and out after it)
+function Next.Busy() return ns.Jobs.Busy("solve") end
+function Next.Cancel() pendingDone = nil; ns.Jobs.Cancel("solve") end
+local function enter(j) sigNow, askLeft = j.sig, j.ask end
+local function leave(j) j.ask = askLeft; sigNow, askLeft = nil, nil end
+Next._driver = ns.Jobs._driver -- (the perf battery ticks it)
+function Next._Reset() sigNow, askLeft = nil, nil end -- (a route job dropped inside a solve: Engine.Post)
 function Next.PickAsync(planned, done)
+  -- (while a route change's passes run, no background solve: it would be for a state they are changing - their own
+  -- refreshes solve, and one more runs when they end)
+  if ns.Engine and ns.Engine.Busy and ns.Engine.Busy() then ns.Engine.Due(); return end
   Next.Cancel()
   sigNow, askLeft = nil, nil
   -- (and the trip to its pick, worked out here too - paused like the rest: the card and the arrow ask for it the frame it
   -- goes on the card, and planning it then was most of that frame, 8-10 ms at level 50)
-  local co = coroutine.create(function(p)
+  local j = ns.Jobs.Post("solve", function(p)
     local r = pick(p)
     local L = ForeverRouteData and ForeverRouteData.steps
     local st = L and L[r or p]
     if st and ns.Engine and ns.Engine.TravelFor then ns.Call(ns.Engine.TravelFor, st) end
     return r
-  end)
-  job = { co = co, planned = planned, done = done, sig = priceSig(), ask = Next.ASK_PER_PICK }
-  if driver then driver:Show() end
+  end, { arg = planned, budget = Next.BUDGET_MS, enter = enter, leave = leave, logAs = "next", timeAs = "solve slice",
+    fail = function() done(nil) end,
+    -- (its pick goes on the card in the next frame: the card and the arrow's trip are a frame's work of their own)
+    done = function(r)
+      local mine = function() done(r) end
+      pendingDone = mine
+      if C_Timer and C_Timer.After then C_Timer.After(0, function() if pendingDone == mine then pendingDone = nil; local t0 = debugprofilestop(); mine(); if ns.Time then ns.Time("pick on card", debugprofilestop() - t0) end end end) end
+    end })
+  j.sig, j.ask = priceSig(), Next.ASK_PER_PICK
 end
 -- (tests: run the one in the background to its end now)
-function Next.Settle() while job do stepJob(math.huge) end; local f = pendingDone; pendingDone = nil; if f then f() end end
+function Next.Settle() ns.Jobs.Settle("solve"); local f = pendingDone; pendingDone = nil; if f then f() end end
 
 -- the last solve's pick, by the step itself, while it is still to do (the card keeps it while the next solve runs)
 function Next.LastPick()

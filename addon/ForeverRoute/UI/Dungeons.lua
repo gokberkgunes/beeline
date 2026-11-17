@@ -138,4 +138,10 @@ end
 ns.On("FR_LOADED", build)
 ns.On("FR_TOGGLE_DUNGEONS", function() Dungeons.Toggle() end)
 ns.On("FR_ROUTE_CHANGED", function() Dungeons.Draw() end)
-ns.On("QUEST_LOG_UPDATE", function() if f and f:IsShown() then Dungeons.Draw() end end)
+-- (open, it follows your log: once for a burst of log updates - a kill or a loot sends two or three - not for each)
+local redrawDue = false
+ns.On("QUEST_LOG_UPDATE", function()
+  if redrawDue or not (f and f:IsShown()) then return end
+  redrawDue = true
+  C_Timer.After(0.2, function() redrawDue = false; Dungeons.Draw() end)
+end)

@@ -11,19 +11,39 @@ ns.AutoQuest = Auto
 
 function Auto.Enabled() return ns.db and ns.db.autoQuest == true and not (IsShiftKeyDown and IsShiftKeyDown()) end
 
--- the quests your route picks up: an accept step for it, on any of your routes; cached per plan
-local wantCache, wantFor
-function Auto.Wanted(q)
-  q = tonumber(q)
-  if not q or (ns.Nope(q)) then return false end
+-- the quests your route picks up: an accept step for it, on any of your routes; cached per plan. Escort quests too
+-- (the plan's pick-up says "Escort: <NPC> leaves with whoever takes this", or an objective "Escort <NPC>"): those are
+-- never accepted for you - the escort starts at once and fails if you aren't ready (tester)
+local wantCache, wantFor, escortCache
+local function build()
   local routes = {}
   for _, r in ipairs(ns.Routes and ns.Routes() or {}) do routes[#routes + 1] = r end
   if ForeverRouteData then routes[#routes + 1] = ForeverRouteData end -- (the plan you are on)
   if wantFor ~= routes[1] or not wantCache then
-    wantCache, wantFor = {}, routes[1]
-    for _, r in ipairs(routes) do for _, s in ipairs((ns.Steps and ns.Steps(r)) or r.steps or {}) do if s.k == "accept" and s.q then wantCache[s.q] = true end end end
+    wantCache, escortCache, wantFor = {}, {}, routes[1]
+    for _, r in ipairs(routes) do
+      for _, s in ipairs((ns.Steps and ns.Steps(r)) or r.steps or {}) do
+        if s.q then
+          if s.k == "accept" then wantCache[s.q] = true end
+          if (s.k == "accept" and type(s.note) == "string" and s.note:find("Escort:", 1, true))
+            or (s.k == "obj" and type(s.text) == "string" and s.text:find("^Escort ")) then escortCache[s.q] = true end
+        end
+      end
+    end
   end
+end
+function Auto.Wanted(q)
+  q = tonumber(q)
+  if not q or (ns.Nope(q)) then return false end
+  build()
   return wantCache[q] == true
+end
+-- an escort quest: by the plan's own marks, or the quest's objective text as the game shows it ("Escort ...")
+function Auto.IsEscort(q)
+  q = tonumber(q)
+  if q then build(); if escortCache[q] then return true end end
+  local obj = GetObjectiveText and GetObjectiveText()
+  return type(obj) == "string" and obj:lower():find("escort", 1, true) ~= nil
 end
 ns.On("FR_ROUTE_CHANGED", function() wantCache = nil end)
 
@@ -41,7 +61,11 @@ function Auto.Detail()
   if not Auto.Enabled() then return false end
   local q = GetQuestID and GetQuestID()
   if QuestGetAutoAccept and QuestGetAutoAccept() then return false end -- the game accepts those itself
-  if q and q > 0 and Auto.Wanted(q) and not inLog(q) then AcceptQuest(); did("accepted", q, GetTitleText and GetTitleText()); return true end
+  if q and q > 0 and Auto.Wanted(q) and not inLog(q) then
+    -- (an escort: yours to start when you're ready - the quest window stays open)
+    if Auto.IsEscort(q) then did("left for you (escort)", q, GetTitleText and GetTitleText()); return false end
+    AcceptQuest(); did("accepted", q, GetTitleText and GetTitleText()); return true
+  end
   return false
 end
 -- "do you have the items?": go on when it's finished and in your log

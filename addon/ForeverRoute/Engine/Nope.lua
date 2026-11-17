@@ -32,8 +32,9 @@ end
 -- changed your mind: the quest is back on your route (its steps show again; the next replan plans it)
 function Engine.Unnope(q)
   if not (q and ns.Nope(q)) then return end
-  ns.char.nope[q] = nil
+  ns.char.nope[q] = nil; Engine.GrayForget()
   if ns.Why then ns.Why("abandon", questName(q) .. ": you brought it back; on your route again") end
+  if ns.ZoneCountsChanged then ns.ZoneCountsChanged() end -- (Where to? counts it again)
   Engine.Refresh()
 end
 -- the quests on the route that come after this one in its chain (and aren't done yet)
@@ -49,6 +50,7 @@ function Engine.NopeNow(qs)
   -- "ready": it was already finished when you dropped it (a hand-in you chose to skip) - it stays dropped (FR_STATE below)
   for _, q in ipairs(qs) do ns.char.nope[q] = State.QuestReady(q) and "ready" or true end
   table.insert(ns.char.history, { kind = "nope", ids = {}, nope = qs })
+  Engine.GrayForget() -- (a refused quest is no follow-up: Engine.LeadsTo)
   Engine.view = nil
   Engine.Refresh()
   ns.Fire("FR_NOPE", qs) -- (the quest log check says which of their items you still carry)
@@ -63,6 +65,7 @@ function Engine.Abandoned(qs, why)
   for _, q in ipairs(qs) do ns.char.nope[q] = State.QuestReady(q) and "ready" or true; if ns.Why then ns.Why("abandon", questName(q) .. ": abandoned from the quest log check (" .. (why or "not worth doing") .. "); dropped from the route") end end
   table.insert(ns.char.history, { kind = "nope", ids = {}, nope = qs })
   if #ns.char.history > 50 then table.remove(ns.char.history, 1) end
+  Engine.GrayForget()
   Engine.Refresh()
   ns.Fire("FR_NOPE", qs)
 end

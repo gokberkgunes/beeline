@@ -21,7 +21,9 @@ function Extras.Current()
   if not px then return {} end
   local out = {}
   for q, e in pairs(ns.Engine.LogEnders()) do -- only quests in your log (every 3 s: not all ~1000 spots)
-    if ns.State.QuestReady(q) and not ns.State.IsCompleted(q) and not routeTurnsIn(q) then
+    -- (not a gray one the route dropped: Engine.GrayDrop - the log check says to drop it)
+    if ns.State.QuestReady(q) and not ns.State.IsCompleted(q) and not routeTurnsIn(q)
+      and not (ns.Engine.GrayDrop and ns.Engine.GrayDrop(q, nil, ns.Engine.logLevels and ns.Engine.logLevels[q]) == true) then
       local ex, ey, einst = HBD:GetWorldCoordinatesFromZone(e.x, e.y, e.m)
       if ex and einst == pinst then
         local d = math.sqrt((ex - px) ^ 2 + (ey - py) ^ 2)

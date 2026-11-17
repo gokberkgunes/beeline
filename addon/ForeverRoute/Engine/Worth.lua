@@ -62,6 +62,14 @@ function Engine.NotWorth(i)
   local np = 0; for _ in pairs(planned) do np = np + 1 end
   if np < Engine.WORTH_MIN_PLANNED or left.n ~= 1 then return no("planned " .. np .. ", left " .. tostring(left.n)) end
   if neededLater(q, b) then return no("needed later") end
+  -- (and only with something after it: skipped, the last quest of a route left the card empty - a zone picked for the one
+  -- quest you carry there, offered by Where to? and emptied by this rule at once - mutate sweep)
+  local more = false
+  for k = b + 1, #list do
+    local t = list[k]
+    if t.q and t.q > 0 and t.q ~= q then local st = Engine.Status(k); if st == "todo" or st == "notready" or st == "full" then more = true; break end end
+  end
+  if not more then return no("the last on this route") end
   local L = UnitLevel and UnitLevel("player") or 1
   local xp = ns.QuestXp and ns.QuestXp(q, L)
   if not xp then

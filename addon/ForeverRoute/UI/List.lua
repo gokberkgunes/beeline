@@ -25,7 +25,7 @@ local function rebuild()
   -- loot counting for a later quest), that step comes first, as "Now", then "Next on your plan".
   local hide = ns.db.hideDone ~= false
   -- (not the step you clicked to look at: it read "Now - out of plan order: you're at it" - state map)
-  local cur, planned = (ns.Engine.view and ns.Engine.current) or ns.Engine.Shown(), ns.Engine.planned or ns.Engine.current
+  local cur, planned = (ns.Engine.view and ns.Engine.CardAt()) or ns.Engine.Shown(), ns.Engine.planned or ns.Engine.CardAt()
   local lastSec
   local function add(i)
     local st = data.steps[i]
@@ -139,17 +139,9 @@ end
 --   List.Draw(true)    opened, switched route: all of it
 List.REDRAW_SECS = 5
 local lastSig, lastAt = nil, 0
-function List.Draw(mode)
-  if not f or not f:IsShown() then return end
-  local data = ForeverRouteData
-  local E = ns.Engine
-  local sig = table.concat({ tostring(data), tostring(data and data.steps), tostring(data and data.steps and #data.steps), tostring(E.Shown and E.Shown()),
-    tostring(E.current), tostring(E.planned), tostring(E.view), tostring(E.focus), tostring(ns.db.hideDone) }, ":")
-  local now = GetTime and GetTime() or 0
-  local changed = sig ~= lastSig or now - lastAt >= List.REDRAW_SECS
-  if mode == nil and not changed then return end
-  local full = changed or mode == true
-  if full then lastSig, lastAt = sig, now end
+local passData, passFull
+local function drawPass()
+  local data, full = passData, passFull
   -- stops get added while the list is open (finished quests' hand-ins, side trips on the way, flight paths): those
   -- only redraw, so a stale list would put every header after the new stop one row off and lose the last step
   -- (with done steps hidden, the list changes as you play: rebuilt when it changed)
@@ -158,6 +150,21 @@ function List.Draw(mode)
   end
   if full then List.DrawHeader(data) end
   List.DrawRows(data)
+end
+function List.Draw(mode)
+  if not f or not f:IsShown() then return end
+  local data = ForeverRouteData
+  local E = ns.Engine
+  local sig = table.concat({ tostring(data), tostring(data and data.steps), tostring(data and data.steps and #data.steps), tostring(E.Shown and E.Shown()),
+    tostring(E.CardAt()), tostring(E.planned), tostring(E.view), tostring(E.focus), tostring(ns.db.hideDone) }, ":")
+  local now = GetTime and GetTime() or 0
+  local changed = sig ~= lastSig or now - lastAt >= List.REDRAW_SECS
+  if mode == nil and not changed then return end
+  local full = changed or mode == true
+  if full then lastSig, lastAt = sig, now end
+  passData, passFull = data, full
+  -- (each step's status once for the whole draw: Engine.ReadPass)
+  E.ReadPass(drawPass)
 end
 function List.DrawHeader(data)
   f.title:SetText("Route")
@@ -293,11 +300,14 @@ local function scrollToCurrent()
 end
 
 scrollToCurrentSoon = function() scrollToCurrent() end
-function List.Toggle()
-  if f:IsShown() then f:Hide(); return end
+local function open()
   rebuild(); f:Show()
   scrollToCurrent()
   List.Draw(true)
+end
+function List.Toggle()
+  if f:IsShown() then f:Hide(); return end
+  ns.Engine.ReadPass(open) -- (the list, the done count and the zones ahead ask each step's status once between them)
 end
 
 ns.On("FR_LOADED", build)

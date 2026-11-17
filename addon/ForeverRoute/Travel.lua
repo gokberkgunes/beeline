@@ -414,7 +414,7 @@ end
 -- from = { m, x, y }, to = { m, x, y, name } -> legs { { how = "ride"|"fly"|"boat", m, x, y (where to go), text } }, seconds
 -- opts.ground: on foot only (no flights, boats, spells or hearthstone) - what the same trip takes without them
 -- opts.hearth = false: without your hearthstone
-function Travel.Plan(from, to, opts)
+local function planTrip(from, to, opts)
   local ground = opts and opts.ground
   from.w = from.w or world(from.m, from.x, from.y); to.w = to.w or world(to.m, to.x, to.y)
   if not (from.w and to.w) then return nil end
@@ -626,7 +626,7 @@ function Travel.Plan(from, to, opts)
   if flightWConv ~= HBD.GetWorldCoordinatesFromZone then flightW, flightWConv = setmetatable({}, { __mode = "k" }), HBD.GetWorldCoordinatesFromZone end
   -- flight paths you do not have yet, right where a leg starts (the dock you land at, a town you ride through): grab
   -- them on the way - a minute now, flights later
-  for _, l in ipairs(legs) do
+  for li, l in ipairs(legs) do
     local lw = world(l.sm or l.m, l.sx or l.x, l.sy or l.y) -- where the leg starts (the dock you step off at)
     if lw then
       for m, list in pairs(ns.FLIGHT or {}) do
@@ -636,7 +636,7 @@ function Travel.Plan(from, to, opts)
             if fw and fw[3] == lw[3] then
               local dd = math.sqrt((fw[1] - lw[1]) ^ 2 + (fw[2] - lw[2]) ^ 2)
               local zn = mapName(m)
-              if dd <= Travel.FP_NEAR and not l.fp then l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd }; l.text = l.text .. " - get the " .. zn .. " flight path from " .. (f[3] or "the flight master") .. " there first" end
+              if dd <= Travel.FP_NEAR and not l.fp then l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd }; l.text = l.text .. Travel.FPNote(f[4] or zn, f[3], li == 1, ns.char and ns.char.taxiSeen) end
             end
           end
         end
@@ -645,6 +645,72 @@ function Travel.Plan(from, to, opts)
   end
   -- the trip's real seconds, its seconds on a flight or boat, and what it costs you in time spent playing
   return legs, secs[2], afk[2], dist[2]
+end
+
+-- the note on a leg for a flight path you don't have where it starts. The first leg starts where you stand: "before you
+-- go" - "Run to Orgrimmar - get the The Barrens flight path from Devrak there first" read as being sent to Orgrimmar
+-- for a flight path (a player, standing at Devrak in the Crossroads). Until a flight master's map was opened on this
+-- character the addon does not know your flight paths (Forever's world map marks none undiscovered: State.ScanTaxi):
+-- talking to him tells it, and the trip is planned again with the flights you have
+function Travel.FPNote(node, npc, here, seen)
+  local name = tostring(node or ""):match("^([^,]+)") or tostring(node)
+  npc = npc or "the flight master"
+  local s = here and (" - before you go, get the " .. name .. " flight path from " .. npc .. " nearby") or (" - get the " .. name .. " flight path from " .. npc .. " where this leg starts")
+  if not seen then s = s .. " (his flight map also shows the addon the flight paths you already have)" end
+  return s
+end
+
+-- The same trip asked again in the same frame is answered from that frame's first search: adding the stops of a zone
+-- you picked in Where to? and the solve after it asked ~250 trips in one frame at level 50, a fifth of them twice.
+-- Nothing a trip depends on changes within a frame but what the key holds (the graph it was searched on stands for
+-- your level, faction, race, class, speed, flight paths and piers; the hearthstone's state is its own part). Callers
+-- change the legs they get (the card's "- about 3 min quicker" is added to the first leg's text): each gets a copy.
+local frameMemo, frameAt, frameInn = {}, nil, nil
+local function copyLegs(legs)
+  if type(legs) ~= "table" then return legs end
+  local out = {}
+  for k, l in ipairs(legs) do if type(l) == "table" then local c = {}; for f, v in pairs(l) do c[f] = v end; out[k] = c else out[k] = l end end
+  return out
+end
+-- While a route change's passes run over frames (Engine.After) the memo is kept from frame to frame, as if they ran in
+-- one: the key already holds everything a trip depends on (Travel.PinMemo by the run, UnpinMemo when it ends)
+local pinned
+Travel.searches = 0 -- (searches made, not answered from the memo: tests and the perf battery)
+function Travel.PinMemo(token)
+  local now = GetTime and GetTime()
+  if now ~= frameAt then frameMemo, frameAt, frameInn = {}, now, nil end
+  pinned = token
+end
+function Travel.UnpinMemo(token) if pinned == token then pinned = nil end end
+function Travel.Plan(from, to, opts)
+  local now = GetTime and GetTime()
+  if not now then return planTrip(from, to, opts) end
+  if now ~= frameAt and not pinned then frameMemo, frameAt, frameInn = {}, now, nil end
+  local ground = opts and opts.ground
+  local noHearth = opts and opts.hearth == false
+  local G = graphFor(ground, UnitLevel and UnitLevel("player") or 60, Travel.Side(), myRaceClass())
+  local inn = "-"
+  if not ground and not noHearth then
+    -- (the hearthstone's state, once a frame)
+    if not frameInn then
+      local count = GetItemCount and GetItemCount(6948)
+      local b = ns.char and ns.char.boundAt
+      frameInn = table.concat({ tostring(count), tostring(ns.HearthCooldown and ns.HearthCooldown()), tostring(GetBindLocation and GetBindLocation()), tostring(b and b.m), tostring(b and b.name) }, ",")
+    end
+    inn = frameInn
+  end
+  local key = table.concat({ tostring(from.m), tostring(from.x), tostring(from.y), tostring(to.m), tostring(to.x), tostring(to.y), tostring(to.name),
+    tostring(ground), tostring(noHearth), tostring(G), inn, tostring(UnitLevel and UnitLevel("player")), tostring(Travel.SPELLS), tostring(ns.VENDORS),
+    tostring(Travel.HEARTH_CAST), tostring(Travel.HEARTH_VALUE), tostring(Travel.AFK_WEIGHT), tostring(Travel.OFFNET) }, "|")
+  local hit = frameMemo[key]
+  if hit then
+    from.w = from.w or world(from.m, from.x, from.y); to.w = to.w or world(to.m, to.x, to.y) -- (as the search leaves them)
+    return copyLegs(hit[1]), hit[2], hit[3], hit[4]
+  end
+  Travel.searches = Travel.searches + 1
+  local legs, secs, afk, dist = planTrip(from, to, opts)
+  frameMemo[key] = { copyLegs(legs), secs, afk, dist }
+  return legs, secs, afk, dist
 end
 
 -- A trip inside one zone is a walk - unless a flight you know lands so much nearer the spot that flying is clearly

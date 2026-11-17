@@ -19,29 +19,41 @@ function ns.ZoneRoutes()
 end
 -- a zone route that fits a level: a built-in plan's tree has one per zone and level band (r.level: planned from the
 -- trunk at that level - tools/zone-routes.js); the newest one you are in reach of (its level up to 2 above yours). A
--- plan's own zone routes carry no level: the first for the zone, as before
+-- plan's own zone routes carry no level: the first for the zone, when no band of that zone fits. (A built-in plan has
+-- both: its own route per zone, planned at the plan's start - Hillsbrad at 22 - and the tree's bands. The one without a
+-- level came first at any level, so at 28 Where to? offered Hillsbrad's 22 route, done long ago, and picking it left
+-- the card empty - mutate sweep.)
 local function fits(r, level) return not r.level or not level or (r.level <= level + 2 and r.level >= level - 6) end
+-- (over ns.Routes() itself, not ns.ZoneRoutes(): no list made per call - Where to? asks once per zone on your plan)
 function ns.ZoneRouteFor(zone, level)
   level = level or (UnitLevel and UnitLevel("player")) or nil
-  local best
-  for _, r in ipairs(ns.ZoneRoutes()) do
-    if r.zoneName == zone and fits(r, level) then
-      if not r.level then return r end
-      if not best or r.level > best.level then best = r end
+  local best, plain
+  for _, r in ipairs(ns.Routes()) do
+    if r.zoneRoute and r.zoneName == zone and fits(r, level) then
+      if not r.level then plain = plain or r
+      elseif not best or r.level > best.level then best = r end
     end
   end
-  return best
+  return best or plain
 end
--- the zones you could go to now (one route each, the best fit for your level): what "fancy a change?" offers
+-- the zones you could go to now (one route each, the best fit for your level): what "fancy a change?" offers.
+-- (one walk over the routes: each zone's ZoneRouteFor pick, the zones in the order their first band that fits comes -
+-- a ZoneRouteFor per zone walked every route again, ~100 zone routes on a built-in plan's tree, each time Where to?
+-- opened)
 function ns.ZoneRoutesAt(level)
   level = level or (UnitLevel and UnitLevel("player")) or nil
-  local seen, out = {}, {}
-  for _, r in ipairs(ns.ZoneRoutes()) do
-    if r.zoneName and not seen[r.zoneName] and r.level and fits(r, level) then
-      local pick = ns.ZoneRouteFor(r.zoneName, level)
-      if pick then seen[r.zoneName] = true; out[#out + 1] = pick end
+  local best, order = {}, {}
+  for _, r in ipairs(ns.Routes()) do
+    local z = r.zoneRoute and r.zoneName
+    if z and r.level and fits(r, level) then
+      local b = best[z]
+      if not b then order[#order + 1] = z; best[z] = r
+      elseif r.level > b.level then best[z] = r end
     end
   end
+  -- (a zone with a band that fits has its pick there: a band beats a route without a level)
+  local out = {}
+  for j, z in ipairs(order) do out[j] = best[z] end
   table.sort(out, function(a, b) return (a.xph or 0) > (b.xph or 0) end)
   return out
 end

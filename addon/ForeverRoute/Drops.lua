@@ -26,7 +26,7 @@ local function entry(item)
 end
 -- only the step you're actually on: a step you're just looking at in the list is not what you're killing for
 local function currentCollect()
-  local i = ns.Engine and ns.Engine.current
+  local i = ns.Engine and ns.Engine.CardAt()
   local s = i and ForeverRouteData and ForeverRouteData.steps and ForeverRouteData.steps[i]
   if s and s.k == "obj" and s.loot and s.match and s.q then return s end
 end

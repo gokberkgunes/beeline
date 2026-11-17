@@ -90,6 +90,18 @@ function State.Quest(id)
   return c
 end
 function State.OnQuest(id) local q = State.Quest(id); return q and q.on end
+-- in your log, from the list read once per log change: no objectives read (a quest asked about through State.Quest is
+-- looked at again on every log update, State.CheckLog). Asked by ID when the list can't be read whole
+local realQuest = State.Quest
+function State.InLog(id)
+  if not id then return false end
+  if State.Quest ~= realQuest then return State.OnQuest(id) and true or false end -- (a scripted quest state: tests)
+  local c = cache[id]
+  if c then return c.on end
+  if logSet == nil then logSet = readLog() end
+  if logSet then return logSet[id] and true or false end
+  return State.OnQuest(id) and true or false
+end
 function State.QuestReady(id) local q = State.Quest(id); return q and q.on and (q.complete or q.noObjectives) end
 
 function State.LogCount()
@@ -295,15 +307,53 @@ function ns.HearthCooldown()
   return ok and left or nil
 end
 
-ns.On("TAXIMAP_OPENED", function()
-  if not NumTaxiNodes then return end
-  for i = 1, NumTaxiNodes() do
-    local name, kind = TaxiNodeName(i), TaxiNodeGetType and TaxiNodeGetType(i)
-    if name and (kind == "REACHABLE" or kind == "CURRENT") then State.knownTaxi[name] = true end
+-- FR_STATE (the full look) and FR_PROGRESS (a count moved): while a route change's passes run over frames, the
+-- strongest of them is kept and fired once they end (Engine.Announce) - their listeners act on steps by number
+function State.Announce(ev, coalesce)
+  local E = ns.Engine
+  if E and E.Announce and E.Announce(ev) then return end
+  if ev == "FR_STATE" and coalesce ~= false and E and E.Coalesce then E.Coalesce(function() ns.Fire(ev) end) else ns.Fire(ev) end
+end
+-- where a flight point is in the world (its flight master's spot, FlightMasters.lua): name -> { x, y, instance }
+local function taxiWorld()
+  local HBD = LibStub("HereBeDragons-2.0", true)
+  local out = {}
+  if not HBD then return out end
+  for m, list in pairs(ns.FLIGHT or {}) do
+    for _, f in ipairs(list) do
+      if f[4] and not out[f[4]] then
+        local x, y, inst = HBD:GetWorldCoordinatesFromZone(f[1], f[2], m)
+        if x then out[f[4]] = { x, y, inst } end
+      end
+    end
+  end
+  return out
+end
+-- A flight master's map is the truth for its continent: what it lists as reachable you know, and every guess there
+-- (State.GuessTaxi) goes - a wrong guess costs one trip at most. Guesses on the other continent stay until a flight map
+-- is opened there.
+function State.TaxiMapSeen(nodes, inst)
+  local W = taxiWorld()
+  for name, v in pairs(State.knownTaxi) do
+    if v == "guess" and (inst == nil or (W[name] and W[name][3] == inst)) then State.knownTaxi[name] = nil end
+  end
+  for _, n in ipairs(nodes) do
+    if n.name and (n.kind == "REACHABLE" or n.kind == "CURRENT") then State.knownTaxi[n.name] = true end
   end
   ns.char.knownTaxi = State.knownTaxi
+  ns.char.taxiSeen = true -- (a flight map seen: the flight paths you know are known - Travel.FPNote, no more guessing)
+end
+ns.On("TAXIMAP_OPENED", function()
+  if not NumTaxiNodes then return end
+  local nodes = {}
+  for i = 1, NumTaxiNodes() do
+    nodes[#nodes + 1] = { name = TaxiNodeName(i), kind = TaxiNodeGetType and TaxiNodeGetType(i) }
+  end
+  local HBD = LibStub("HereBeDragons-2.0", true)
+  local inst = HBD and select(3, HBD:GetPlayerWorldPosition())
+  State.TaxiMapSeen(nodes, inst)
   ns.Fire("FR_TAXI_OPENED")
-  ns.Fire("FR_STATE")
+  State.Announce("FR_STATE", false)
 end)
 
 -- The flight paths you know without opening a flight master's map: the world map's own flight points
@@ -311,8 +361,71 @@ end)
 -- time already knows a dozen, and until a flight map was opened the plan walked them everywhere.
 -- A client that marks nothing undiscovered among many nodes is not telling: nothing is taken from it then.
 State.TAXI_SCAN_MAPS = { 1414, 1415 } -- Kalimdor, the Eastern Kingdoms; the zones of FlightMasters.lua and TravelData join them
+-- The flight paths you most likely know, from the quests you handed in, while the addon can't tell (on Forever the world
+-- map marks no flight point undiscovered, so State.ScanTaxi never trusts it) and no flight master's map was opened on
+-- this character (ns.char.taxiSeen). A level 16 trying the addon in the Barrens was taken to know no flight path: told
+-- to run to Orgrimmar, and to get the Crossroads flight path he had (a player). Conservative, two rules:
+--   1. a flight point of your side (or neutral: ns.FLIGHT has both) with GUESS_NEAR_N or more quests you completed whose
+--      pick-up or hand-in on any of your routes is within GUESS_NEAR_YD yards of its flight master - his town: you
+--      handed in there, and a player in a town takes its flight path
+--   2. the capital's flight point of a starting zone you did GUESS_HOME_N or more quests in, at level GUESS_HOME_LEVEL or
+--      above - Durotar's quests send you to Orgrimmar, Tirisfal's to the Undercity
+-- Guesses are kept apart (knownTaxi[name] = "guess", read as known everywhere) and a flight map replaces them
+-- (State.TaxiMapSeen). Once at load and when the world map is scanned again (TAXI_NODE_STATUS_CHANGED): never per frame.
+State.GUESS_NEAR_YD, State.GUESS_NEAR_N, State.GUESS_HOME_N, State.GUESS_HOME_LEVEL = 300, 3, 5, 10
+State.HOME_CAPITAL = { [1411] = 1454, [1412] = 1456, [1420] = 1458, [1429] = 1453, [1426] = 1455 } -- starting zone -> its capital
+function State.GuessTaxi()
+  if ns.char and ns.char.taxiSeen then return 0 end
+  local W = taxiWorld()
+  local near, home = {}, {}
+  local R2 = State.GUESS_NEAR_YD ^ 2
+  local seen = {}
+  local FL = ns.FLIGHT or {}
+  -- (only steps on a map with a flight master or in a starting zone are looked at, the place first and whether you did
+  -- the quest last: a quest's state may be asked of the game)
+  local function done(q) local d = seen[q]; if d == nil then d = State.IsCompleted(q) and true or false; seen[q] = d end; return d end
+  for _, r in ipairs(ns.Routes and ns.Routes() or {}) do
+    for _, s in ipairs(r.steps or {}) do
+      local q, m = s.q, s.m
+      if q and q > 0 and m and (s.k == "accept" or s.k == "turnin") then
+        if State.HOME_CAPITAL[m] and done(q) then
+          local h = home[m] or {}; home[m] = h; h[q] = true
+        end
+        if FL[m] then
+          local w = ns.Util.WPos(s)
+          if w then
+            for _, f in ipairs(FL[m]) do
+              local p = f[4] and W[f[4]]
+              if p and p[3] == w[3] and (p[1] - w[1]) ^ 2 + (p[2] - w[2]) ^ 2 <= R2 and done(q) then
+                local n = near[f[4]] or {}; near[f[4]] = n; n[q] = true
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  local guess = {}
+  local function count(t) local k = 0; for _ in pairs(t) do k = k + 1 end; return k end
+  for name, qs in pairs(near) do if count(qs) >= State.GUESS_NEAR_N then guess[name] = true end end
+  if (UnitLevel and UnitLevel("player") or 1) >= State.GUESS_HOME_LEVEL then
+    for zone, qs in pairs(home) do
+      if count(qs) >= State.GUESS_HOME_N then
+        for _, f in ipairs((ns.FLIGHT or {})[State.HOME_CAPITAL[zone]] or {}) do if f[4] then guess[f[4]] = true end end
+      end
+    end
+  end
+  local added = 0
+  for name in pairs(guess) do if not State.knownTaxi[name] then State.knownTaxi[name] = "guess"; added = added + 1 end end
+  ns.char.knownTaxi = State.knownTaxi
+  if added > 0 then
+    if ns.Why then ns.Why("taxi", added .. " flight path(s) you most likely know, from the quests you handed in near them (a flight master's map tells for sure)") end
+    State.Announce("FR_STATE", false)
+  end
+  return added
+end
 function State.ScanTaxi()
-  if not (C_TaxiMap and C_TaxiMap.GetTaxiNodesForMap) then return 0 end
+  if not (C_TaxiMap and C_TaxiMap.GetTaxiNodesForMap) then return State.GuessTaxi() end
   local okF, fac = pcall(UnitFactionGroup, "player")
   local mine = Enum and Enum.FlightPathFaction and (okF and fac == "Horde" and Enum.FlightPathFaction.Horde or Enum.FlightPathFaction.Alliance)
   local neutral = Enum and Enum.FlightPathFaction and Enum.FlightPathFaction.Neutral or 0
@@ -331,16 +444,18 @@ function State.ScanTaxi()
       end
     end
   end
+  -- (no flight point at all: the client tells nothing either - guessed the same way)
+  if total == 0 then return State.GuessTaxi() end
   if total >= 10 and undiscovered == 0 then
     if ns.Why then ns.Why("taxi", "world map lists " .. total .. " flight points, none undiscovered: not trusted (open a flight master's map)") end
-    return 0
+    return State.GuessTaxi()
   end
   local added = 0
   for name in pairs(found) do if not State.knownTaxi[name] then State.knownTaxi[name] = true; added = added + 1 end end
   ns.char.knownTaxi = State.knownTaxi
   if added > 0 then
     if ns.Why then ns.Why("taxi", added .. " flight path(s) you know, from the world map") end
-    ns.Fire("FR_STATE")
+    State.Announce("FR_STATE", false)
   end
   return added
 end
@@ -354,20 +469,33 @@ State.FULL_EVERY = 120 -- seconds: log changes this long after the last full loo
 local pending, fullDue, lastFull = false, true, -1000
 local function now() return GetTime and GetTime() or 0 end
 -- the quests in your log as last read (the cache) against the game now: "same", "counts" (only counts moved: the cache
--- now has them) or "changed"
+-- now has them) or "changed", "undone" (something done is not any more).
+-- It runs on every kill, loot and log update, and a full log made it dear: three calls into the game for each quest in
+-- it (in your log? its objectives, finished?), 65 on a log of 21 at level 50. The log's count is read first (one call):
+-- while it is the same, the same quests are in it (a quest taken or dropped is QUEST_ACCEPTED / QUEST_REMOVED, the full
+-- look; one taken and one dropped between two looks would need both), so "in your log?" is not asked; and "finished?"
+-- only of a quest whose objectives don't tell it (none, or all done but not finished - one to go somewhere too). One
+-- call a quest. The count moved: each quest asked all three, as before (a quest dropped: "undone"), then the full look.
+-- (anything else: the full look every FULL_EVERY)
+local function allFinished(objs) for _, o in ipairs(objs) do if not o.finished then return false end end; return true end
 function State.CheckLog()
+  local full = State.LogCount() ~= State.logCountWas
   local any = false
   local fresh = {}
   for id, c in pairs(cache) do
     if c.on then
       any = true
-      local on = C_QuestLog and C_QuestLog.IsOnQuest and call(C_QuestLog.IsOnQuest, id)
-      if on == nil and C_QuestLog and C_QuestLog.GetLogIndexForQuestID then on = call(C_QuestLog.GetLogIndexForQuestID, id) ~= nil end
-      if not on then return "undone" end
+      if full then
+        local on = C_QuestLog and C_QuestLog.IsOnQuest and call(C_QuestLog.IsOnQuest, id)
+        if on == nil and C_QuestLog and C_QuestLog.GetLogIndexForQuestID then on = call(C_QuestLog.GetLogIndexForQuestID, id) ~= nil end
+        if not on then return "undone" end
+      end
       local objs = C_QuestLog and call(C_QuestLog.GetQuestObjectives, id)
       if type(objs) ~= "table" or #objs ~= #c.objectives then return "changed" end
-      local complete = C_QuestLog and C_QuestLog.IsComplete and call(C_QuestLog.IsComplete, id)
-      if complete ~= nil and (complete and true or false) ~= c.complete then return c.complete and "undone" or "changed" end
+      if full or #c.objectives == 0 or c.complete ~= allFinished(c.objectives) then
+        local complete = C_QuestLog and C_QuestLog.IsComplete and call(C_QuestLog.IsComplete, id)
+        if complete ~= nil and (complete and true or false) ~= c.complete then return c.complete and "undone" or "changed" end
+      end
       for i, o in ipairs(objs) do
         local was = c.objectives[i]
         if (o.finished and true or false) ~= (was.finished and true or false) then return was.finished and "undone" or "changed" end
@@ -376,7 +504,7 @@ function State.CheckLog()
     end
   end
   if not any then return "changed" end -- (nothing read yet: nothing to compare with)
-  if State.LogCount() ~= State.logCountWas then return "changed" end
+  if full then return "changed" end
   if #fresh == 0 then return "same" end
   for _, p in ipairs(fresh) do p[1].text, p[1].have, p[1].need = p[2].text or "", p[2].numFulfilled or 0, p[2].numRequired or 0 end
   return "counts"
@@ -390,16 +518,17 @@ local function settle()
     if ok and how == "undone" and ns.Engine and ns.Engine.ForgetDone then ns.Engine.ForgetDone() end
     if ok and how == "counts" then
       local t0 = debugprofilestop and debugprofilestop()
-      ns.Fire("FR_PROGRESS")
+      State.Announce("FR_PROGRESS")
       if t0 and ns.Time then ns.Time("counts", debugprofilestop() - t0) end
       return
     end
   end
   fullDue, lastFull = false, now()
   wipe(cache); logSet = nil
+  if ns.Engine and ns.Engine.GrayForget then ns.Engine.GrayForget() end -- (the gray rule's chains: Engine.LeadsTo)
   State.logCountWas = State.LogCount()
   local t0 = debugprofilestop and debugprofilestop()
-  if ns.Engine and ns.Engine.Coalesce then ns.Engine.Coalesce(function() ns.Fire("FR_STATE") end) else ns.Fire("FR_STATE") end
+  State.Announce("FR_STATE")
   if t0 and ns.Time then ns.Time("logchange", debugprofilestop() - t0) end
 end
 local function schedule()
@@ -410,6 +539,7 @@ end
 -- something more than a count may have changed: the full look
 local function refreshSoon()
   wipe(cache); logSet = nil
+  if ns.Engine and ns.Engine.GrayForget then ns.Engine.GrayForget() end
   fullDue = true
   schedule()
 end
@@ -433,7 +563,20 @@ ns.On("QUEST_TURNED_IN", function(id)
 end)
 ns.On("PLAYER_LEVEL_UP", function() refreshSoon(); C_Timer.After(1, function() State.Snapshot("levelup") end) end)
 ns.On("PLAYER_XP_UPDATE", function() ns.Fire("FR_XP") end)
-ns.On("BAG_UPDATE_DELAYED", function() local i = ns.Engine and ns.Engine.current; local s = i and ForeverRouteData and ForeverRouteData.steps[i]; if s and s.k == "bonus" then ns.Fire("FR_STATE") end end)
+-- a bonus step (a book, a collectible) is done once its item is in your bags: the full look when that count moved -
+-- not on every loot while the card is on it (a bonus step with no item of its own: on each bag change, as before)
+local bonusSeen = {}
+ns.On("BAG_UPDATE_DELAYED", function()
+  local i = ns.Engine and ns.Engine.CardAt(); local s = i and ForeverRouteData and ForeverRouteData.steps[i]
+  if not (s and s.k == "bonus") then return end
+  if s.item and ns.GetItemCount then
+    local ok, n = pcall(ns.GetItemCount, s.item, true)
+    n = ok and n or nil
+    if n ~= nil and bonusSeen.s == s and bonusSeen.n == n then return end
+    bonusSeen.s, bonusSeen.n = s, n
+  end
+  State.Announce("FR_STATE", false)
+end)
 -- the cache is kept here: it holds the last live reads, and asking the game again during logout can return nothing
 -- (memory only at logout: timing ten route rebuilds there ran past the game's script limit on long plans - "State.lua:25:
 -- script ran too long" at PLAYER_LOGOUT in a tester's report - and the snapshot after it never got written)

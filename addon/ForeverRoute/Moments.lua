@@ -271,7 +271,7 @@ Moments.last, Moments.pending = nil, nil
 function Moments.Look()
   Moments.pending = nil
   if quiet() then return nil end
-  local i = ns.Engine.current
+  local i = ns.Engine.CardAt()
   if not i then return nil end
   local tag, why = Moments.CheckStep(i)
   if not tag then tag, why = Moments.CheckFlip() end
@@ -282,16 +282,16 @@ end
 function Moments.OnStep()
   if ns.db.moments == false or not ForeverRouteData then return end
   local list = ForeverRouteData.steps
-  local s = ns.Engine.current and list and list[ns.Engine.current]
+  local s = ns.Engine.CardAt() and list and list[ns.Engine.CardAt()]
   if ns.Engine.view or not s then return end
   if s == Moments.last then
     -- (the same step again, after a refresh: looked at again only if it went done under the card - one status read)
-    if Moments.pending or ns.Engine.Status(ns.Engine.current) ~= "done" then return end
+    if Moments.pending or ns.Engine.Status(ns.Engine.CardAt()) ~= "done" then return end
   else
     local prevI = Moments.lastI
     if prevI and list[prevI] ~= Moments.last then prevI = nil end -- (a stop inserted before it moved its number)
-    Moments.last, Moments.lastI = s, ns.Engine.current
-    if Moments.Counts(ns.Engine.current, prevI) then Moments.NoteChange(s) else Moments.ForgetChanges() end
+    Moments.last, Moments.lastI = s, ns.Engine.CardAt()
+    if Moments.Counts(ns.Engine.CardAt(), prevI) then Moments.NoteChange(s) else Moments.ForgetChanges() end
   end
   if Moments.pending or not (C_Timer and C_Timer.After) then return end
   Moments.pending = true
@@ -314,11 +314,11 @@ end
 function Moments.ArrowHidden(why)
   if not why or not tostring(why):find("^no position for this step") then return end
   if ns.db.moments == false or not (C_Timer and C_Timer.After) then return end
-  local s = ns.Engine.current and ForeverRouteData and ForeverRouteData.steps[ns.Engine.current]
+  local s = ns.Engine.CardAt() and ForeverRouteData and ForeverRouteData.steps[ns.Engine.CardAt()]
   if not Moments.ArrowCase(why, s) then return end
   C_Timer.After(Moments.SETTLE, function()
     local still = ns.Arrow and ns.Arrow.HiddenWhy and ns.Arrow.HiddenWhy() == why
-    local same = s and ForeverRouteData and ForeverRouteData.steps[ns.Engine.current or 0] == s
+    local same = s and ForeverRouteData and ForeverRouteData.steps[ns.Engine.CardAt() or 0] == s
     if still and same and not quiet() and Moments.ArrowCase(why, s) then pcall(Moments.Capture, "arrow", "the arrow is hidden: " .. tostring(why), true) end
   end)
 end

@@ -328,7 +328,17 @@ local function corpseTarget(i)
   return true
 end
 
+local waiting -- (a target asked for while a route change's passes run: { force })
 function Arrow.SetTarget(i, force)
+  -- while a route change's passes run over frames, the arrow's trip (a search across the world, 25-50 ms at level 50)
+  -- waits for their end: their own jobs set it when the card's step changes, and it is set once more after them
+  local E = ns.Engine
+  if E and E.Busy and E.Busy() then
+    if waiting then waiting.force = waiting.force or force; return end
+    waiting = { force = force }
+    E.WhenIdle(function() local w = waiting; waiting = nil; Arrow.SetTarget(E.Shown(), w and w.force) end)
+    return
+  end
   if f and corpseTarget(i) then return end
   if target and target.corpse then target = nil end -- alive again: the step's target is built afresh
   local s = i and ForeverRouteData and ForeverRouteData.steps[i]

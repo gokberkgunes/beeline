@@ -115,7 +115,14 @@ function Engine.NotYet(i)
   if not s then return nil end
   local st = Engine.Status(i)
   if st == "done" then return nil end
-  if st == "wait" then return "level", nil, s.minLevel or s.until_ end
+  if st == "wait" then
+    -- (training: the lowest level it names - Engine.TrainFrom; no level at all is nil, never "at level 0" on the pin)
+    local lv = math.max(s.minLevel or s.until_ or 0, Engine.TooHigh(s) or 0, Engine.TrainFrom(i) or 0)
+    if lv > 0 then return "level", nil, lv end
+    -- (a pick-up on a zone you picked, its earlier quest not handed in: the card says which)
+    if s.q and ns.PrereqsMet and not ns.PrereqsMet(s.q) then return "handin" end
+    return "level"
+  end
   if st == "full" then return "full" end
   if st == "later" then
     local name = Engine.InsideOf(s)
@@ -160,10 +167,19 @@ end
 -- card and the arrow are told, and keep saying the same thing. (Only a step in the zone you are in is asked about: a
 -- trip to another zone is planned when the card or the arrow need it, not once a second here.)
 local shortcutSeen
+-- (a fresh trip plan is up to 3 ms in one frame; the trip memo's own key moves every ~8 yd, so walking re-planned once
+-- a second. Asked again only once you've moved a hundredth of the map (~20-50 yd) or the step changed: whether a
+-- flight beats the walk doesn't flip in less - the perf battery's "walking, a frame", orc @25)
+local watchAt = {}
+Engine.WATCH_MOVE = 0.01
 function Engine.WatchShortcut()
   local i = Engine.Shown()
   local s = i and steps()[i]
-  local t = s and s.k ~= "fly" and s.m and s.x and s.m == (State.Position()) and Engine.TravelFor(s)
+  local pm, px, py = State.Position()
+  if s and px and watchAt.s == s and watchAt.m == pm and math.abs(px - watchAt.x) < Engine.WATCH_MOVE
+    and math.abs(py - watchAt.y) < Engine.WATCH_MOVE and watchAt.i == i and watchAt.n == State.KnownTaxiCount() then return false end
+  watchAt.s, watchAt.m, watchAt.x, watchAt.y, watchAt.i, watchAt.n = s, pm, px, py, i, px and State.KnownTaxiCount()
+  local t = s and s.k ~= "fly" and s.m and s.x and s.m == pm and Engine.TravelFor(s)
   local sig = (i or 0) .. ":" .. ((t and t.shortcut) and (tostring(t.how) .. ":" .. tostring(t.m) .. ":" .. tostring(t.x) .. ":" .. tostring(t.y)) or "-")
   local was = shortcutSeen
   shortcutSeen = sig
@@ -193,6 +209,7 @@ function Engine.Repick()
   end)
 end
 function Engine.UpdateFocus(px, py, pinst)
+  if Engine.Busy() then return end -- (a route change's passes are moving the steps: the next look, after them)
   Engine.WatchShortcut()
   Engine.SideOffer(px, py, pinst)
   if Engine.view or not px then return end

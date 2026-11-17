@@ -59,33 +59,66 @@ end
 -- the tooltip of the dish it teaches, "well fed" and all (recipes are item class 9; food is a consumable, class 0).
 -- Not food above your level: the tooltip's "Requires Level N" (or the item's own required level) says when.
 local CONSUMABLE, RECIPE = 0, 9
-function Errands.IsWellFedFood(itemID, tip)
-  local getInstant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
-  if getInstant and itemID then
-    local ok, _, _, _, _, _, classID = pcall(getInstant, itemID)
-    if ok and type(classID) == "number" and classID ~= CONSUMABLE then return false end
+-- an item's class never changes: asked once per item (the bags are looked through again after every loot)
+local classOf = {}
+local function itemClass(itemID)
+  local c = classOf[itemID]
+  if c == nil then
+    local getInstant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+    c = false
+    if getInstant and itemID then
+      local ok, _, _, _, _, _, classID = pcall(getInstant, itemID)
+      if ok and type(classID) == "number" then c = classID end
+    end
+    if c ~= false or not getInstant then classOf[itemID] = c end -- (not known yet: asked again next time)
   end
+  return c or nil
+end
+-- what can be told without the item's tooltip: false (not food you can eat now), or nil (the tooltip says)
+local function notFood(itemID)
+  if not itemID then return nil end
+  local classID = itemClass(itemID)
+  if classID and classID ~= CONSUMABLE then return false end
   local level = UnitLevel and UnitLevel("player") or 1
   local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
-  if getInfo and itemID then
+  if getInfo then
     local ok, _, _, _, _, minLevel = pcall(getInfo, itemID)
     if ok and type(minLevel) == "number" and minLevel > level then return false end
   end
-  local fed = false
-  for _, line in ipairs(tip and tip.lines or {}) do
-    local t = line.leftText
+  return nil
+end
+-- what a food's tooltip says: { fed (a "Use:" line with Well Fed), need (the highest "Requires Level"), teaches (a
+-- recipe), name (its first line), whole (it has a "Use:" line and nothing hidden: the item's data had come in) }
+local function foodWords(tip)
+  local w = { fed = false, need = 0, teaches = false, whole = false }
+  local lines = tip and tip.lines
+  for k = 1, (lines and #lines or 0) do
+    local t = lines[k] and lines[k].leftText
+    if k == 1 then w.name = t end
     if type(t) == "string" and not (issecretvalue and issecretvalue(t)) then
-      if t:find("^Use: Teaches you") then return false end
+      if t:find("^Use: Teaches you") then w.teaches = true end
       local need = tonumber(t:match("^Requires Level (%d+)"))
-      if need and need > level then return false end
-      if t:find("^Use:") and t:lower():find("well fed", 1, true) then fed = true end
+      if need and need > w.need then w.need = need end
+      if t:find("^Use:") then w.whole = true; if t:lower():find("well fed", 1, true) then w.fed = true end end
+    elseif t ~= nil then w.secret = true
     end
   end
-  return fed
+  if w.secret then w.whole = false end
+  return w
+end
+local function wellFedAt(w) return w.fed and not w.teaches and w.need <= (UnitLevel and UnitLevel("player") or 1) end
+function Errands.IsWellFedFood(itemID, tip)
+  if notFood(itemID) == false then return false end
+  return wellFedAt(foodWords(tip))
 end
 
--- food in your bags that gives Well Fed; scanned when your bags change
+-- food in your bags that gives Well Fed; scanned when your bags change. A bag item's tooltip is dear to build (every
+-- loot looked through the whole bags this way: a hitch on each corpse looted while not Well Fed): only food is asked
+-- for its tooltip - the rest is told by its class - and each food's once: its words don't change (kept once whole;
+-- your level is held against its "Requires Level" each scan). A kill step at 12 with four breads in the bags read four
+-- tooltips on every loot (perf gate)
 local foodCache
+local wordsOf = {}
 function Errands.Food()
   if foodCache ~= nil then return foodCache or nil end
   foodCache = false
@@ -94,10 +127,16 @@ function Errands.Food()
     local okN, n = pcall(C_Container.GetContainerNumSlots, bag)
     for slot = 1, (okN and n or 0) do
       local okI, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
-      if okI and info and info.itemID then
-        local okT, tip = pcall(C_TooltipInfo.GetBagItem, bag, slot)
-        if okT and tip and Errands.IsWellFedFood(info.itemID, tip) then   -- else keep looking: real food may be further on
-          foodCache = { name = (tip.lines[1] and tip.lines[1].leftText) or info.itemName or "food", id = info.itemID }
+      local id = okI and info and info.itemID
+      if id and notFood(id) == nil then
+        local w = wordsOf[id]
+        if not w then
+          local okT, tip = pcall(C_TooltipInfo.GetBagItem, bag, slot)
+          w = okT and tip and foodWords(tip)
+          if w and w.whole then wordsOf[id] = w end
+        end
+        if w and wellFedAt(w) then   -- else keep looking: real food may be further on
+          foodCache = { name = w.name or info.itemName or "food", id = id }
           return foodCache
         end
       end

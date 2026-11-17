@@ -87,16 +87,76 @@ function Stitch.ZoneMaps(d)
   return maps
 end
 
+-- the quests in your log your plan does on a zone route's maps (Stitch.ZoneMaps), its objectives or hand-in, that the
+-- zone's route doesn't have itself: -> { q, ... } in plan order, the maps. What a pick of the zone takes along (Splice),
+-- and which hand-ins Where to? counts for the zone (ns.ZoneChoices): the same rule, so a row offered for a hand-in has it
+-- on the card once picked.
+-- (a quest a pick takes along: in your log, not handed in, not one you said no to, and not one whose work is red to you -
+-- t, a step of it: it waits for your level, Engine.TooHigh. Spliced, it read "wait" on the card - code review)
+local function carries(q, t)
+  local S, E = ns.State, ns.Engine
+  if not (S.OnQuest(q) and not S.IsCompleted(q) and not ns.Nope(q)) then return false end
+  return not (t and E and E.TooHigh and not S.QuestReady(q) and E.TooHigh(t))
+end
+function Stitch.Carried(steps, mainSteps)
+  local maps = Stitch.ZoneMaps({ steps = steps })
+  local here = {}; for _, t in ipairs(steps or {}) do if t.q then here[t.q] = true end end
+  local carried, seenQ = {}, {}
+  for _, t in ipairs(mainSteps or {}) do
+    local q = t.q
+    if q and not seenQ[q] and not here[q] and (t.k == "obj" or t.k == "turnin") and t.m and maps[t.m] and carries(q, t) then
+      seenQ[q] = true; carried[#carried + 1] = q
+    end
+  end
+  return carried, maps
+end
+-- the same quests as a set, from your log's quests on your plan (ns.LogQuestsOn: order, and maps[q] - the maps of q's
+-- objectives and hand-in there), for Where to?'s rows: no walk over your whole plan per row. memo keeps carries(q) for
+-- the look. -> { [q] = true }
+function Stitch.CarriedFrom(steps, on, memo)
+  local maps, out, here = Stitch.ZoneMaps({ steps = steps }), {}, nil
+  for _, q in ipairs(on.order) do
+    local mm = on.maps[q]
+    local hit = false
+    if mm then for m in pairs(mm) do if maps[m] then hit = true; break end end end
+    if hit then
+      if not here then here = {}; for _, t in ipairs(steps) do if t.q then here[t.q] = true end end end
+      if not here[q] then
+        local c = memo[q]
+        if c == nil then c = carries(q, on.at and on.at[q]) and true or false; memo[q] = c end
+        if c then out[q] = true end
+      end
+    end
+  end
+  return out
+end
+
+-- a stop after a route's last step, as InsertStop puts one there (its stretch, the step numbers, the engine's key cache)
+local function appendStop(list, new)
+  local last = list[#list]
+  if last then new.sec = last.sec end
+  new.added = true
+  list[#list + 1] = new
+  new.id = #list
+  local E = ns.Engine
+  if E and E._keyCache then E._keyCache[list] = nil end
+  if ns.Why then ns.Why("insert", "added " .. (new.k or "") .. " " .. (new.name or new.dest or "") .. " as step " .. #list .. " (nothing else left on this route: the quests you carry here)") end
+  return #list
+end
+
 -- the last splice's outcome, for the simulated player's report and /fr why: { spliced = n, notes = { text } }
 Stitch.last = nil
 
 function Stitch.Splice()
   local d, E, S = ForeverRouteData, ns.Engine, ns.State
-  if not (d and d.zoneRoute and d.steps) or not (E and E.InsertStop and E.current) then return false end
+  if not (d and d.zoneRoute and d.steps) or not (E and E.InsertStop) then return false end
+  -- nothing of the zone's own left for you (E.current nil): no chain starts (they go before a quest here), but the
+  -- quests you carry still come, after its last step (InsertStop needs a current step: a zone whose own quests were all
+  -- done was offered for the hand-in you carried there, and picking it left the card empty - mutate sweep)
+  local empty = not E.current
   -- chain starts once per unpacked route; the quests you carry every time you come to it (back to a zone you had picked
   -- before, its route still unpacked: what you picked up since was left off - the simulated zone-hopper's check)
-  local firstTime = not d.steps._stitched
-  d.steps._stitched = true
+  local firstTime = not empty and not d.steps._stitched
   local P = ns.STITCH
   local main = ns.Util.PlanRoute()
   local mainSteps = main and ns.Steps(main) or {}
@@ -111,6 +171,7 @@ function Stitch.Splice()
   local done = {} -- quests already spliced (two quests here needing the same start)
   local i = firstTime and E.current or (#d.steps + 1)
   while i <= #d.steps do
+    ns.MaybeYield() -- (a route job: a step a pause)
     local s = d.steps[i]
     if s.k == "accept" and s.q and not s.inserted and not isDone(s.q) and not onQuest(s.q) and ns.PrereqsMet and not ns.PrereqsMet(s.q) then
       local ids = Stitch.Closure(s.q, function(q) return isDone(q) or done[q] end, onPlan)
@@ -170,25 +231,34 @@ function Stitch.Splice()
   -- your log, most of them there (Stranglethorn, tester). Their objectives and hand-ins on this zone's maps are cut from
   -- your plan and put where each costs least, objectives before the hand-in. A hand-in elsewhere stays on your plan
   -- (finished, its hand-in is added where it costs least anyway: Engine applyInserts).
-  local maps = Stitch.ZoneMaps(d)
-  local here = {}; for _, t in ipairs(d.steps) do if t.q then here[t.q] = true end end
-  local carried = {}
-  local seenQ = {}
-  for _, t in ipairs(mainSteps) do
-    local q = t.q
-    if q and not seenQ[q] and not here[q] and (t.k == "obj" or t.k == "turnin") and t.m and maps[t.m] and onQuest(q) and not isDone(q) and not (ns.Nope(q)) then
-      seenQ[q] = true; carried[#carried + 1] = q
-    end
-  end
+  local carried, maps = Stitch.Carried(d.steps, mainSteps)
+  local tripAdded = false
   local carriedN, carriedQ = 0, 0
   res.carriedTried = {}
   for _, q in ipairs(carried) do
+    ns.MaybeYield()
     res.carriedTried[q] = true
     local packet = Stitch.Packet(mainSteps, { q }, isDone, onQuest)
     local minI, any = E.current, false
     for _, c in ipairs(packet) do
       if maps[c.m] and c.k ~= "accept" then
-        local at = E.InsertStop(c, px, py, pinst, { minIndex = minI, why = "a quest you carry, done here" })
+        local at
+        if empty and not tripAdded then
+          -- (the way there first, as the zone's own route starts: its flight to the zone, unless you are on its maps)
+          tripAdded = true
+          local here = ns.State.Position and ns.State.Position()
+          if not (here and maps[here]) then
+            for _, t in ipairs(d.steps) do
+              if t.k == "fly" and t.to and (t.dest == d.zoneName or maps[t.to]) then
+                local trip = {}; for k2, v in pairs(t) do trip[k2] = v end
+                trip.id, trip.wp, trip.manual = nil, nil, nil
+                appendStop(d.steps, trip); break
+              end
+            end
+          end
+        end
+        if empty then at = appendStop(d.steps, c)
+        else at = E.InsertStop(c, px, py, pinst, { minIndex = minI, why = "a quest you carry, done here" }) end
         if at then c.note = "In your log: done here."; minI = at + 1; carriedN = carriedN + 1; any = true end
         if not at then res.notes[#res.notes + 1] = (c.name or questName(q)) .. " (in your log) - no place on this route for its " .. c.k .. " (step " .. tostring(E.current) .. " of " .. #d.steps .. ")"; if ns.Why then ns.Why("stitch", "carried: " .. res.notes[#res.notes]) end end
       end
@@ -196,6 +266,8 @@ function Stitch.Splice()
     if any then carriedQ = carriedQ + 1 end
   end
   res.carried, res.carriedQuests = carriedN, carriedQ
+  -- (stitched once it is done: a splice dropped half way runs again)
+  if not empty then d.steps._stitched = true end
   Stitch.last = res
   if carriedQ > 0 then ns.Print(carriedQ .. " quest" .. (carriedQ == 1 and "" or "s") .. " from your log added to this zone's route (" .. carriedN .. " step" .. (carriedN == 1 and "" or "s") .. ").") end
   if res.spliced > 0 then ns.Print(res.spliced .. " step" .. (res.spliced == 1 and "" or "s") .. " added first, the start of a chain this zone needs (" .. table.concat(res.costs or {}, "; ") .. "). \"Skip chain start\" on the card if you'd rather not.") end
@@ -214,4 +286,4 @@ function Stitch.Refuse(q)
   return n
 end
 
-ns.On("FR_ROUTE_CHANGED", function() C_Timer.After(0.7, function() if Stitch.Splice() then ns.Engine.Refresh() end end) end)
+ns.On("FR_ROUTE_CHANGED", function() ns.Engine.After(0.7, "stitch", function() if Stitch.Splice() then ns.Engine.Refresh() end end) end)
