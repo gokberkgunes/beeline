@@ -849,6 +849,35 @@ function Engine.ChainCut(q, depth)
   end
   return false
 end
+-- a quest whose prerequisites are not handed in, one of them (or one of theirs, up the chain) in your log unfinished:
+-- the game offers it after that hand-in (ns.QUEST_PRE). Clerical Quarantine after Doctor's Orderly after Wound
+-- Dressings, at 0/20 in your log: not offered, nor the one between
+-- (counted loops, no table per ask: statusRaw asks it of every pick-up with a prerequisite - perf gate)
+local function pendingPre(p, depth)
+  return not State.IsCompleted(p) and (State.OnQuest(p) or (depth < 6 and Engine.WaitsOnLog(p, depth + 1)))
+end
+function Engine.WaitsOnLog(q, depth)
+  local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
+  if not pre then return false end
+  depth = depth or 0
+  local g, s = pre.g, pre.s
+  if g then for n = 1, #g do if pendingPre(g[n], depth) then return true end end end
+  if s and #s > 0 then
+    for n = 1, #s do if State.IsCompleted(s[n]) then return false end end -- (one of them is in: met)
+    for n = 1, #s do if pendingPre(s[n], depth) then return true end end
+  end
+  return false
+end
+-- a pick-up that reads "wait" (statusRaw) for a quest in your log, not for your level: statusRaw's own order - the level
+-- checks come first, and on a zone you picked the wait is ns.PrereqsMet's, as before. For the live solve, which takes it
+-- as the not-offered pick-up it was before Engine.WaitsOnLog: its window ends there (Next.Pick), and a visit that hands
+-- that quest in takes it after (Next.VisitHere). Skipped as a level wait, the window ran on past every chain's next
+-- pick-up - twice the solve's time over a play, and its order changed (perf gate, 1.6.8). Asked only of a "wait"
+function Engine.WaitsForHandIn(s)
+  if not (s and s.k == "accept") or (ForeverRouteData and ForeverRouteData.zoneRoute) then return false end
+  if s.minLevel and UnitLevel("player") < s.minLevel then return false end
+  return not Engine.TooHigh(s)
+end
 local PVP = ns.PVP_QUESTS -- (PvpQuests.lua loads before this file: one table, read per step)
 local function statusRaw(i)
   local s = steps()[i]
@@ -885,7 +914,16 @@ local function statusRaw(i)
     -- have nothing for you (a zone route is planned from the main route's progress, which a player who hops zones may not
     -- have). Your own plan has its prerequisites earlier in it. A quest the game showed on offer anyway (Availability: a
     -- giver listed it, or the map's "!") is taken as offered
-    if ForeverRouteData and ForeverRouteData.zoneRoute and ns.PrereqsMet and not ns.PrereqsMet(s.q) and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then return "wait" end
+    -- On any plan, one whose prerequisite is in your log, not handed in, waits for that hand-in ("Needs ... handed in
+    -- first"): the plan has the hand-in before it, but a hand-in can wait (its objective in the part of the plan your
+    -- place skips, Engine.Compute) - and the card went on to Doctor's Orderly with Wound Dressings at 0/20, then to
+    -- Clerical Quarantine after it (mutate sweep). Up the chain: Engine.WaitsOnLog
+    local pre = ns.QUEST_PRE and ns.QUEST_PRE[s.q]
+    if pre and ns.PrereqsMet and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then
+      if ForeverRouteData and ForeverRouteData.zoneRoute then
+        if not ns.PrereqsMet(s.q) then return "wait" end
+      elseif Engine.WaitsOnLog(s.q) then return "wait" end
+    end
     if State.LogFull and State.LogFull() then return "full" end
     return "todo"
   elseif k == "turnin" then
@@ -1333,8 +1371,27 @@ function Engine.Compute()
   local taken = ns.Next and ns.Next.taken
   if taken ~= nil and not Engine.BehindYou(taken, true) then taken = nil end
   local function extra(i) return taken ~= nil and (list[i] == taken or Engine.BehindYou(list[i], true)) end
+  -- a step as the plan's look reads it: the part of the plan your place skips (the plan before the stretch you joined
+  -- at) done - and a hand-in whose objective step is there, still to do, waits with it ("later": passed over, like a
+  -- dungeon's). You start in that stretch, and the work you skip is not where you are: joining Riverglades at 39 with
+  -- Wound Dressings in the log, the card showed its hand-in "Not finished" in red, and going back for its objective
+  -- would fly you to the Badlands for cloth. The hand-in comes back once the quest is ready (the cloth drops anywhere);
+  -- the objective is the live solve's to offer, as any step of a quest in your log behind your place (Engine.BelowFloor)
+  local function look(i)
+    if skipFrom and i >= skipFrom and i <= skipTo then return "done" end
+    local st = Engine.Status(i)
+    if st == "notready" and skipFrom then
+      local objs = Engine.ObjStepsOf(list[i].q)
+      for n = 1, #objs do
+        local j = objs[n]
+        if j > skipTo then break end
+        if j >= skipFrom and Engine.Status(j) == "todo" then return "later" end
+      end
+    end
+    return st
+  end
   for i = start, #list do
-    local st = (skipFrom and i >= skipFrom and i <= skipTo) and "done" or Engine.Status(i)
+    local st = look(i)
     if st ~= "done" and extra(i) then st = "extra" end
     if st == "extra" then sawExtra = true
     elseif st ~= "done" then
@@ -1351,18 +1408,27 @@ function Engine.Compute()
   -- the quest at 0/12, "Not finished" in red)
   if found and below(found) then
     local f2
-    local passed = { [list[found].q] = found } -- (quest -> its first step passed below the floor)
     for i = found + 1, #list do
-      local st = (skipFrom and i >= skipFrom and i <= skipTo) and "done" or Engine.Status(i)
+      local st = look(i)
       if st ~= "done" and not extra(i) then
-        if st == "todo" and below(i) then local q = list[i].q; passed[q] = passed[q] or i
+        if st == "todo" and below(i) then -- (passed below the floor)
         elseif st == "wait" or st == "full" or st == "blocked" or st == "later" then held(i, st) else f2 = i; break end
       end
     end
-    -- (only for a hand-in: a later objective of the same quest is work to do as it is, and going back for the passed
-    -- one moved the card - and its pins - on every objective done, twice the time of one; the perf gate, orc @25)
-    if f2 and list[f2].k == "turnin" and list[f2].q and passed[list[f2].q] then f2 = passed[list[f2].q] end
     found = f2
+  end
+  -- A hand-in not ready, with an objective step of its quest still to do before it (passed below the floor, above, or
+  -- however else the look came past it): that objective is the step, not the hand-in "Not finished" in red - the floor
+  -- stood past a kill objective, and the card sent a tester to hand in Preventative Measures at 0/12 (1.6.5)
+  -- (only for a hand-in: a later objective of the same quest is work to do as it is, and going back for the passed one
+  -- moved the card - and its pins - on every objective done, twice the time of one; the perf gate, orc @25)
+  if found and list[found].k == "turnin" and list[found].q and Engine.Status(found) == "notready" then
+    local objs = Engine.ObjStepsOf(list[found].q)
+    for n = 1, #objs do
+      local j = objs[n]
+      if j >= found then break end
+      if Engine.Status(j) == "todo" and not extra(j) then found = j; break end
+    end
   end
   -- (a full log: the plan's pick-ups wait for room, but the plan does not run on without them through the trips and
   -- training meant for levels above you - with 36 other quests in the log, a level 35 was flown through a dozen zones to
@@ -1780,8 +1846,12 @@ function Engine.RefreshInner()
   -- moves its number). Landing plans again from where you are
   local aloft = ns.Is and UnitOnTaxi and ns.Is(UnitOnTaxi, "player")
   local holdAt
+  -- (only a step the card chose: logged in or reloaded on a flight, no solve has run yet and the card's step is the
+  -- plan's - on a zone home base its trip out of the zone, "Fly to Badlands" for Pearl Diving with Stranglethorn's
+  -- quests left, held the whole flight (tester). Until a solve has picked, the card picks as on the ground; then it holds)
   if aloft then
-    if not Engine.taxiHold then Engine.taxiHold = (before and steps()[before]) or (Engine.current and steps()[Engine.current]) end
+    if Engine.taxiHold and not planIndex().idx[Engine.taxiHold] then Engine.taxiHold = nil end -- (another route since)
+    if not Engine.taxiHold and before and (Engine.picked == steps() or not (ns.Next and ns.Next.Enabled())) then Engine.taxiHold = steps()[before] end
     holdAt = Engine.taxiHold and planIndex().idx[Engine.taxiHold]
     if holdAt and Engine.Status(holdAt) ~= "done" then Engine.current = holdAt else holdAt = nil end
   else
@@ -1821,11 +1891,13 @@ function Engine.RefreshInner()
           if held then Engine.holdShow = nil end
           if Engine.planned ~= planned or steps() ~= list then if held then ns.Fire("FR_STEP", Engine.Shown()) end return end
           local was = Engine.current
+          if pick then Engine.picked = list end -- (a solve has chosen the card's step on this route: a flight may hold it)
           Engine.ShowPick(pick or planned)
           if held and Engine.current == was then ns.Fire("FR_STEP", Engine.Shown()) end
         end)
       else
         local ok, pick = ns.Call(ns.Next.Pick, Engine.current)
+        if ok and pick then Engine.picked = steps() end
         -- (a pick is shown only while it is still to do - skipped, ticked or not offered: not again; as Engine.ShowPick)
         -- (or the quest from behind you it just took: its status was worked out a moment before it was taken)
         if ok and pick and (Engine.Status(pick) == "todo" or (ns.Next.taken and ns.Next.taken == steps()[pick])) then Engine.current = pick elseif not ok and ns.LogError then ns.LogError("next", pick) end

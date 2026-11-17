@@ -287,3 +287,10 @@ function Stitch.Refuse(q)
 end
 
 ns.On("FR_ROUTE_CHANGED", function() ns.Engine.After(0.7, "stitch", function() if Stitch.Splice() then ns.Engine.Refresh() end end) end)
+-- and at login (a /reload, the next session): the route you were on is selected quietly, with no FR_ROUTE_CHANGED, and a
+-- zone route is unpacked afresh - the quests you carry there were gone from it. A level 40 on Stranglethorn after a
+-- /reload had The Second Rebellion and Some Assembly Required in the log, "off-route", never on the card (tester).
+-- After the other login stages (hand-ins 3 s, side quests 3.2 s, side trips 3.5 s), as after a pick; nothing on a plan.
+Stitch.LOGIN_DELAY = 3.7
+function Stitch.OnLogin() if Stitch.Splice() then ns.Engine.Refresh() end end
+ns.On("FR_LOADED", function() ns.Engine.After(Stitch.LOGIN_DELAY, "stitch", Stitch.OnLogin) end)

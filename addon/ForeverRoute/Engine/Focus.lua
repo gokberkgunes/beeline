@@ -119,9 +119,9 @@ function Engine.NotYet(i)
     -- (training: the lowest level it names - Engine.TrainFrom; no level at all is nil, never "at level 0" on the pin)
     local lv = math.max(s.minLevel or s.until_ or 0, Engine.TooHigh(s) or 0, Engine.TrainFrom(i) or 0)
     if lv > 0 then return "level", nil, lv end
-    -- (a pick-up on a zone you picked, its earlier quest not handed in: the card says which)
-    if s.q and ns.PrereqsMet and not ns.PrereqsMet(s.q) then return "handin" end
-    return "level"
+    -- (a pick-up whose earlier quest is not handed in - on a zone you picked, or in your log on any plan: the card
+    -- says which; below, with that hand-in's step - the pin of a pick-up there is drawn as that one)
+    if not (s.q and ns.PrereqsMet and not ns.PrereqsMet(s.q)) then return "level" end
   end
   if st == "full" then return "full" end
   if st == "later" then
@@ -159,6 +159,7 @@ function Engine.NotYet(i)
   if s.k == "accept" and s.q and s.q > 0 then
     for _, p in ipairs(Engine.PrereqsOf(s.q)) do if not State.IsCompleted(p) then return "handin", opener("turnin", p) end end
   end
+  if st == "wait" then return "handin" end
   return nil
 end
 -- the way to the shown step can change while the step stays the same: a flight that beats the walk from Darkshire

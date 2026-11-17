@@ -482,7 +482,9 @@ function Next.VisitHere(list, planned, from, pm, px, py, pinst)
           -- (a step waiting on your level is not doable now, whatever its kind: the engine's "wait" is the one answer -
           -- training for level 32/34 at 30 waits there, and this visit's own level checks put it in "now", the solve
           -- picked it, the card couldn't show it and fell back to a hand-in 505 yd off with a giver at 189 yd - mutate)
-          if stx == "wait" or (t.minLevel and t.minLevel > Lv) or (E.TooHigh and E.TooHigh(t, Lv)) then can = false
+          -- (a pick-up waiting for a quest in your log to be handed in is not a level wait: preMet below says whether the
+          -- visit hands that quest in first, as before Engine.WaitsOnLog - Engine.WaitsForHandIn)
+          if (stx == "wait" and not E.WaitsForHandIn(t)) or (t.minLevel and t.minLevel > Lv) or (E.TooHigh and E.TooHigh(t, Lv)) then can = false
           elseif t.k == "obj" or t.k == "grind" or t.unknown then can = false -- work, not a stop: the visit is still needed
           elseif t.k == "accept" then
             can = t.q and preMet(t.q, handed) and load < cap
@@ -901,6 +903,11 @@ local function pick(planned)
         if count == 0 then holdPlanned = true; holdAt = holdAt or j end
         break
       end
+    elseif st == "wait" and E.WaitsForHandIn(s) then
+      -- (a pick-up waiting for a quest in your log to be handed in: not offered yet, it ends the window like the one
+      -- above whose chain quest isn't in - it was that pick-up, until Engine.WaitsOnLog made it a "wait")
+      if count == 0 then holdPlanned = true; holdAt = holdAt or j end
+      break
     end
   end
   -- quests the built-in plan passed as behind you (you joined it further on) that are right here and still worth XP at

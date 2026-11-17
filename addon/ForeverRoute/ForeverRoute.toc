@@ -56,6 +56,7 @@ ItemQuests.lua
 Next.lua
 UI\Style.lua
 UI\Window.lua
+UI\Explain.lua
 UI\Card.lua
 UI\Arrow.lua
 UI\Pins.lua

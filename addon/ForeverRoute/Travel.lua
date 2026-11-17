@@ -604,21 +604,24 @@ local function planTrip(from, to, opts)
           local h = a and b and Travel.Through(a, b)
           if h and not seen[h] then seen[h] = true; passes[#passes + 1] = h.name or "a town of the other faction" end
         end
-        if #passes > 0 then text = text .. " - passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)" end
-        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, hostile = #passes > 0 or nil, toId = n.id }
+        local say, warn = text, nil
+        if #passes > 0 then warn = "passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)"; text = text .. " - " .. warn end
+        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id }
       end
     elseif c.how == "hearth" then
       -- nothing to point at: use the hearthstone (sm/sx/sy: where you land, for the flight-path note)
-      legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "hearth", text = "Hearth to " .. (n.town or n.name) .. " (your hearthstone is ready)" }
+      legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "hearth", text = "Hearth to " .. (n.town or n.name) .. " (your hearthstone is ready)", say = "Hearth to " .. (n.town or n.name) }
     elseif c.how == "spell" then
       -- nothing to point at either: cast it (Teleport: Moonglade)
-      legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "spell", text = (n.spellSay or "Cast your teleport") .. " (to " .. (n.zone or mapName(n.m)) .. ")" }
+      local t = (n.spellSay or "Cast your teleport") .. " (to " .. (n.zone or mapName(n.m)) .. ")"
+      legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "spell", text = t, say = t }
     elseif c.how == "fly" then
       -- who you fly from, unless the leg before is the ride to them: "Ride to Gretchen Mayberry > Fly to Stormwind City
       -- (Gretchen Mayberry)" read as if she stood in Stormwind
       local prevLeg = legs[#legs]
       local named = f.name and not (prevLeg and prevLeg.how == "ride" and prevLeg.toId == f.id)
       legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = named and ("Fly from " .. f.name .. " to " .. mapName(n.m)) or ("Fly to " .. mapName(n.m)) }
+      legs[#legs].say = legs[#legs].text
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
       local prevLeg = legs[#legs]
@@ -629,7 +632,8 @@ local function planTrip(from, to, opts)
       -- a dock portal (Forever added them beside the boats and zeppelins): the dock's text may name the boat
       if c.kind == "portal" and not (say and say:lower():find("portal", 1, true)) then say = "Take the portal to " .. (n.town or n.name) .. " (" .. (n.zone or mapName(n.m)) .. ")" end
       local text = say or tram and ("Take the Deeprun Tram to " .. (n.town or n.name)) or ((sameTown and ("In " .. f.town .. ", walk to " .. (f.pier or "the other pier") .. " and take the boat to ") or "Boat to ") .. (n.town or n.name) .. " (" .. (n.zone or mapName(n.m)) .. ")")
-      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "boat", m = f.m, x = f.x, y = f.y, toTown = n.town, text = text, dock = (f.dock and Travel.DOCKS[f.dock] and Travel.DOCKS[f.dock].learned) or f.dock }
+      -- (the card's headline says what you do: "Take the boat to Menethil Harbor (Wetlands)")
+      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "boat", m = f.m, x = f.x, y = f.y, toTown = n.town, text = text, say = (text:gsub("^Boat to ", "Take the boat to ")), dock = (f.dock and Travel.DOCKS[f.dock] and Travel.DOCKS[f.dock].learned) or f.dock }
     end
   end
   -- (where each flight master is in the world: the same every trip)
@@ -646,7 +650,7 @@ local function planTrip(from, to, opts)
             if fw and fw[3] == lw[3] then
               local dd = math.sqrt((fw[1] - lw[1]) ^ 2 + (fw[2] - lw[2]) ^ 2)
               local zn = mapName(m)
-              if dd <= Travel.FP_NEAR and not l.fp then l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd }; l.text = l.text .. Travel.FPNote(f[4] or zn, f[3], li == 1, ns.char and ns.char.taxiSeen) end
+              if dd <= Travel.FP_NEAR and not l.fp then l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd, here = li == 1 or nil }; l.say = l.say or l.text; l.text = l.text .. Travel.FPNote(f[4] or zn, f[3], li == 1, ns.char and ns.char.taxiSeen) end
             end
           end
         end
@@ -790,10 +794,50 @@ function Travel.Shortcut(from, to)
   if playing > walk - margin(walk) or secs > walk * (1 + Travel.SHORTCUT_SLOWER) then return nil end
   -- said on the card and the arrow: why you are sent to a flight master for a step in your own zone
   local saved = math.max(1, math.floor((walk - onFoot) / 60 + 0.5))
-  legs[1].text = legs[1].text .. (secs <= walk - margin(walk) and (" - about " .. math.max(1, math.floor((walk - secs) / 60 + 0.5)) .. " min quicker than walking there")
-    or (" - about as quick as walking, and " .. saved .. " min less on foot"))
+  legs[1].say = legs[1].say or legs[1].text
+  legs[1].gain = secs <= walk - margin(walk) and ("about " .. math.max(1, math.floor((walk - secs) / 60 + 0.5)) .. " min quicker than walking there")
+    or ("about as quick as walking, and " .. saved .. " min less on foot")
+  legs[1].text = legs[1].text .. " - " .. legs[1].gain
   memo.legs, memo.secs, memo.walk = legs, secs, walk
   return legs, secs, walk
+end
+
+-- A leg in a few words, for the card's headline: what you do now ("Fly to Westfall", "Run to Thorgrum Borrelson", "Take
+-- the boat to Menethil Harbor (Wetlands)"), without the notes the leg's full text carries (a flight path to pick up, the
+-- other faction's town on the way, the minutes a shortcut saves: Travel.LegExtra, and the card's own lines). A leg built
+-- elsewhere (Engine.TravelFor's "On the boat to Auberdine - sit tight", "Fly to X - flight master Y") has no say: its
+-- text up to the first " - " outside brackets ("(through the Darkshore - Ashenvale border)" is part of the leg)
+local function dash(t)
+  local depth = 0
+  for k = 1, #t - 2 do
+    local ch = t:sub(k, k)
+    if ch == "(" then depth = depth + 1 elseif ch == ")" then depth = math.max(0, depth - 1)
+    elseif depth == 0 and ch == " " and t:sub(k, k + 2) == " - " then return k end
+  end
+end
+function Travel.LegSay(l)
+  if type(l) ~= "table" then return "" end
+  if l.say then return l.say end
+  local t = l.text or ""
+  local a = dash(t)
+  return a and t:sub(1, a - 1) or t
+end
+-- what the leg's full text says past its headline, apart from a flight path to pick up (the card gives that its own
+-- line: l.fp): the other faction's town on the way, the minutes a shortcut saves, "sit tight". nil: nothing
+function Travel.LegExtra(l)
+  if type(l) ~= "table" then return nil end
+  if l.say then
+    local parts = {}
+    if l.warn then parts[#parts + 1] = l.warn end
+    if l.gain then parts[#parts + 1] = l.gain end
+    return #parts > 0 and table.concat(parts, "; ") or nil
+  end
+  local t = l.text or ""
+  local a = dash(t)
+  local rest = a and t:sub(a + 3) or nil
+  -- ("Ride to Duskwood - 300 yd": the card's distance already says it)
+  if not rest or rest == "" or rest:find("^%d[%d.]*k? yd$") then return nil end
+  return rest
 end
 
 -- one line for the card: "Fly to Wetlands -> Boat from Menethil Harbor to Theramore -> Ride to The Barrens"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.8 - 2026-11-17
+- A home base you picked keeps the quests you carry for it after a /reload or login. They used to drop off the route, so green quests in your log for that zone got no stops (Stranglethorn: The Second Rebellion, Some Assembly Required).
+- Logging in or reloading while on a flight, the card works out your step before it holds it for the flight. It used to grab the plan's next step and keep it the whole way (a trip to the Badlands on a Stranglethorn home base).
+- Starting partway through your plan, the card no longer sends you to hand in a quest whose objective isn't done yet (Buy 10 Heavy Leather, Collect 4 Fresh Manure): the hand-in waits, and a follow-up the game won't offer until it's handed in says "Needs ... handed in first".
+- A trip on the card now says what to do now: the leg you're on is the title ("Fly to Westfall", "Run to Thorgrum Borrelson", "Take the boat to Menethil Harbor"), with where the trip ends under it ("then on to Stranglethorn Vale"). It used to say "Travel to Stranglethorn Vale" over a numbered list of every leg. On a long trip the next leg shows dimmed; all of them are under the new "?" button.
+- A flight path to pick up where you stand is its own short line on the card ("Get the flight path from Lanie Reed first"), not a clause at the end of the leg.
+- A trip that leaves your zone says what it's for in one line ("For Pearl Diving and 6 more quests at your level").
+- New "?" button on the card's header: click it to see why the card sends you there, for example "Looks odd, but it's the fastest way: doing it now saves a trip back later (~8 min)" or "Short hop worth it: 2 hand-ins in Stormwind for ~3k XP, back in about 4 min". It uses the minutes or XP the route worked out when it has them, and the trip's legs in full.
+
 ## 1.6.7 - 2026-11-16
 - The card no longer sends you for battleground quests: Darkspear Islands Clash, Conflict at Darkspear Islands, Fight for Warsong Gulch, Concerted Efforts and the other quests whose Marks of Honor come only from PvP matches. The built-in plans still list them, and the card now passes over their pick-up, objective and hand-in. A level 38 on the gnome warlock plan was sent across Stormwind to the Brigadier General for one. If you already have one in your log, the quest log check says it's a battleground quest, and the card takes you to its hand-in once it's finished.
 - The last leg of a trip now names who you're going to ("Walk to Angus Stern"), not the city you just flew into ("Ride to Stormwind" right after landing in Stormwind).

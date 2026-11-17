@@ -96,7 +96,13 @@ local function build()
 
   -- header
   f.title = Style.Text(f, 11, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -11); f.title:SetWordWrap(false)
-  f.count = Style.Text(f, 10, C.dim); f.count:SetPoint("TOPRIGHT", -PAD, -12); f.count:SetJustifyH("RIGHT")
+  -- "?": why the card sends you here, in a line or two (UI/Explain.lua, worked out on the click). Always on the header,
+  -- not in the hover bar: the moment you wonder is the moment you look at the card
+  f.help = Style.Button(f, "?", 16, 16, function(self) if ns.Explain then ns.Explain.Show(self, ns.Engine.Shown and ns.Engine.Shown()) end end, "Why this step? Click to see.")
+  f.help:SetPoint("TOPRIGHT", -PAD + 4, -8)
+  f.help.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
+  f.help:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]); GameTooltip:Hide() end)
+  f.count = Style.Text(f, 10, C.dim); f.count:SetPoint("RIGHT", f.help, "LEFT", -6, 0); f.count:SetJustifyH("RIGHT")
   f.title:SetPoint("RIGHT", f.count, "LEFT", -8, 0)
   f.prog = CreateFrame("Frame", nil, f); f.prog:SetPoint("TOPLEFT", PAD, -28); f.prog:SetPoint("TOPRIGHT", -PAD, -28); f.prog:SetHeight(2)
   local pbg = f.prog:CreateTexture(nil, "BACKGROUND"); pbg:SetTexture(Style.WHITE); pbg:SetAllPoints(); pbg:SetVertexColor(1, 1, 1, 0.06)
@@ -531,22 +537,61 @@ function Card.OwnNote(s)
   return n ~= "" and n or nil
 end
 
--- the kind (verb + icon) of a fly step's live trip: one kind of leg -> that kind ("Ride to"), a mix -> "Travel to".
--- nil when there is no live trip (the step's own kind stands) or it is just a flight.
+-- The trip the card leads with, when reaching step s means more than a walk: a travel step's live trip, any trip of
+-- several legs, one that starts with a flight, a boat, a portal or the hearthstone, and "sit tight" on a flight or a boat.
+-- The card's title is then the leg you're on ("Fly to Westfall", not "Travel to Stranglethorn Vale" over a numbered list
+-- of every leg: "no one is going to read all of this" - the player), its detail where it ends ("then on to Stranglethorn
+-- Vale"), and the other legs are in the "?" (UI/Explain.lua). A ride straight to the step keeps the step's own title.
+-- -> trip, legs; nil
 local LEG_KIND = { fly = "fly", via = "fly", onflight = "fly", ride = "ride", boat = "boat", aboard = "boat", hearth = "hearth" }
-function Card.TripKind(s)
-  if not (s and s.k == "fly" and not s.boat and ns.Engine.TravelFor) then return nil end
+local TRIP_LONG = { fly = true, boat = true, hearth = true, spell = true, via = true }
+function Card.TripHead(s)
+  if not (s and s.k ~= "hearth" and ns.Engine.TravelFor) then return nil end
+  if ns.Engine.view and s.k ~= "fly" then return nil end
   local trip = ns.Engine.TravelFor(s)
-  if not trip then return nil end
-  local k
-  for _, l in ipairs(trip.legs or { trip }) do
-    local lk = LEG_KIND[l.how] or "travel"
-    if k and lk ~= k then k = "travel"; break end
-    k = lk
+  local legs = trip and (trip.legs or { trip })
+  if not (legs and legs[1]) then return nil end
+  if s.k == "fly" or #legs > 1 or trip.how == "aboard" or TRIP_LONG[legs[1].how] then return trip, legs end
+  return nil
+end
+-- the headline: the leg you're on, its verb in the leg's colour -> kind, title, plain headline
+function Card.TripTitle(legs)
+  local l1 = legs[1]
+  local kind = Style.KIND[LEG_KIND[l1.how] or "travel"] or Style.KIND.travel
+  local head = (ns.Travel and ns.Travel.LegSay(l1)) or l1.text or ""
+  local verb, rest = head:match("^(%S+)%s+(.+)$")
+  return kind, verb and (Style.Hex(kind.color) .. verb .. "|r " .. rest) or (Style.Hex(kind.color) .. head .. "|r"), head
+end
+-- the line under it: where the trip ends. A travel step: "then on to Stranglethorn Vale" (nothing when the headline
+-- already goes there); a quest step: "then Accept Hearts of the Lost in Wetlands"
+function Card.TripGoal(s, legs, head)
+  if s.k == "fly" then
+    local place = s.boat and ((s.text or ""):match("^Boat to (.+)$") or s.dest) or s.dest or s.text
+    if not place or (#legs == 1 and (head or ""):find(place, 1, true)) then return nil end
+    return "then on to " .. place
   end
-  if not k or k == "fly" then return nil end
-  if k == "ride" and ns.RideWord then ns.RideWord() end -- "Run to" until you can ride
-  return Style.KIND[k]
+  local what = plain((Card.Describe(s)))
+  local pm = ns.State.Position()
+  local zone = (s.zone and s.m and pm ~= s.m and not what:find(s.zone, 1, true)) and (" in " .. Style.ShortZone(s.zone)) or ""
+  return "then " .. what .. zone
+end
+-- the card's lines for the trip under its headline, one short line each: a flight path to pick up first, what the leg
+-- you're on warns of, why you go (Explain.CardLine) and, on a long trip, the leg after it, dimmed. headed = the title is
+-- the leg (Card.TripHead); not headed (a ride straight to the step), the leg leads the lines.
+function Card.TripLines(i, trip, headed)
+  local legs = trip.legs or { trip }
+  local l1 = legs[1]
+  local lines = {}
+  if not headed then lines[#lines + 1] = ns.Travel.LegSay(l1) .. "." end
+  if l1.fp and l1.fp.npc then
+    lines[#lines + 1] = "|cffffd25aGet the flight path from " .. l1.fp.npc .. " first" .. ((l1.fp.here and l1.fp.yd) and (" (" .. Style.Distance(l1.fp.yd) .. ")") or " (on the way)") .. "|r"
+  end
+  local extra = ns.Travel.LegExtra(l1)
+  if extra then lines[#lines + 1] = (l1.hostile and Style.Hex(C.warn) or "|cff8e99ad") .. extra:sub(1, 1):upper() .. extra:sub(2) .. ".|r" end
+  local why = ns.Explain and ns.Explain.CardLine(i)
+  if why then lines[#lines + 1] = "|cffffd25a" .. why .. "|r" end
+  if headed and legs[3] then lines[#lines + 1] = "|cff8a93a6Next: " .. ns.Travel.LegSay(legs[2]) .. "|r" end
+  return lines
 end
 
 local function objectiveBar(bar, s, o, kind, idx)
@@ -756,19 +801,14 @@ function Card.Fill()
   local s = steps()[i]
   local kind = Style.Kind(s)
   local title, detail = Card.Describe(s)
-  -- a travel step says how you will really get there (the live trip below it), not the planner's "Fly to"
-  local tk = Card.TripKind(s)
-  if tk then
-    kind = tk
-    title = Style.Hex(kind.color) .. kind.verb .. "|r " .. (s.dest or s.text or "")
-  end
-  -- a step in another zone that takes a flight, a boat or your hearthstone to reach: the trip is the step you're on
-  -- ("Travel to Wetlands", then the quest step under it) - "Accept Hearts of the Lost" standing at the Stormwind
-  -- flight master read as "why pick up quests?" (tester)
-  if not tk and Card.TripFirst(s) then
-    kind = Style.Kind({ k = "fly" })
-    detail = "then " .. Card.Plain(title)
-    title = Style.Hex(C.gold) .. "Travel to " .. (s.zone or "the next zone") .. "|r"
+  -- a trip: the leg you are on is the step you're on ("Fly to Westfall", then where it ends under it) - "Accept Hearts
+  -- of the Lost" standing at the Stormwind flight master read as "why pick up quests?" (tester), and "Travel to
+  -- Stranglethorn Vale" over three numbered legs didn't say what to do now (the player)
+  local headTrip, headLegs = Card.TripHead(s)
+  if headTrip then
+    local head
+    kind, title, head = Card.TripTitle(headLegs)
+    detail = Card.TripGoal(s, headLegs, head)
   end
   look(kind.color, kind.icon)
   local status = ns.Engine.Status(i)
@@ -779,9 +819,10 @@ function Card.Fill()
   local bits = {}
   if detail and not multi then bits[#bits + 1] = detail end
   -- (the zone only when the header names another: "Redridge Mountains" under "OUT IN REDRIDGE" wrapped the coordinates)
-  do local sc = section(i); if s.zone and not (sc and sc.zone == s.zone) then bits[#bits + 1] = Style.ShortZone(s.zone) end end
+  -- (a trip: not the far step's zone and coordinates - the detail says where it ends)
+  do local sc = section(i); if s.zone and not headTrip and not (sc and sc.zone == s.zone) then bits[#bits + 1] = Style.ShortZone(s.zone) end end
   -- (an unknown step's spot is only its place in the order: no coordinates, no map button)
-  if s.x and s.y and not s.unknown then bits[#bits + 1] = string.format("|cff8e99ad%.0f, %.0f|r", s.x * 100, s.y * 100) end
+  if s.x and s.y and not s.unknown and not headTrip then bits[#bits + 1] = string.format("|cff8e99ad%.0f, %.0f|r", s.x * 100, s.y * 100) end
   -- the walking path knows the floor heights: say when the stop is upstairs (a tower top) or below (a cellar, a cave)
   -- (only indoors - outdoors a height difference is a hill, the same rule as the arrow)
   if s.z and s.z0 and math.abs(s.z - s.z0) >= 6 and ns.Arrow and ns.Arrow.Indoors and ns.Arrow.Indoors() then
@@ -866,16 +907,10 @@ function Card.Fill()
       own = own and ((s.warn and Style.Hex(C.warn) or "|cff8e99ad") .. own .. "|r")
       -- why go: what there is to do there, and where the route goes after (a zone change said only "accept this
       -- quest" with the trip folded in - tester)
-      local why = Card.WhyGo(i)
-      if why then own = own and (why .. "\n" .. own) or why end
-      if trip.legs and #trip.legs > 1 then
-        -- a planned trip: numbered steps, the one you are on highlighted (it is re-planned from where you are)
-        local lines = {}
-        for n, l in ipairs(trip.legs) do lines[#lines + 1] = (n == 1 and "|cffffd25a" or "|cff8a93a6") .. n .. ". " .. l.text .. "|r" end
-        if own then lines[#lines + 1] = own end
-        return table.concat(lines, "\n"), C.sub
-      end
-      return trip.text .. "." .. (own and (" " .. own) or ""), C.sub
+      -- what to do now and why go, a short line each (Card.TripLines); every leg in full is in the "?"
+      local lines = Card.TripLines(i, trip, headTrip ~= nil)
+      if own then lines[#lines + 1] = own end
+      return table.concat(lines, "\n"), C.sub
     elseif s.k == "fly" and s.to and not s.boat and ns.Engine.TravelPlan then
       -- from the flight paths you actually have, not the planner's guess
       local plan = ns.Engine.TravelPlan(s)
@@ -1487,16 +1522,6 @@ function Card.AlsoNote(s)
   local zone, n = s.also:match("^(.-):(%d+)$")
   if not zone or zone == s.zone then return nil end
   return string.format("|cff8e99adA few in %s too (%s there) - the plan farms the bigger group%s|r", zone, n, s.zone and (" in " .. s.zone) or " here")
-end
-
--- does reaching step s start with a flight, a boat, a portal or the hearthstone (not a walk or a ride)?
-local LONG = { fly = true, boat = true, hearth = true, spell = true, via = true }
-function Card.TripFirst(s)
-  if ns.Engine.view or not (s and s.k ~= "fly" and s.k ~= "hearth" and ns.Engine.TravelFor) then return false end
-  local trip = ns.Engine.TravelFor(s)
-  local l1 = trip and trip.legs and trip.legs[1]
-  local how = (l1 and l1.how) or (trip and trip.how)
-  return (how and LONG[how]) and true or false
 end
 
 function Card.Header()
