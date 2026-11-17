@@ -585,7 +585,12 @@ local function planTrip(from, to, opts)
             prevSides = sides
           end
         end
-        local text = ns.RideWord() .. " " .. ((f.town and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. placeName(n) .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
+        -- the last leg inside the place you go to names who you go to (to.stop: the step's NPC), a walk when it is a
+        -- town walk: after "Fly to Stormwind City" it read "Ride to Stormwind" (a player at the Brigadier General)
+        local inDest = n.id == "target" and to.stop and f.m == to.m
+        local text
+        if inDest then text = ((#c.via == 0 and d(f, n) <= Travel.TOWN_WALK) and "Walk" or ns.RideWord()) .. " to " .. to.stop .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
+        else text = ns.RideWord() .. " " .. ((f.town and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. placeName(n) .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "") end
         local tgt = first or n
         local tm, tx, ty = tgt.m, tgt.x, tgt.y
         if first and first.m2 == f.m then tm, tx, ty = first.m2, first.x2, first.y2 end
@@ -600,7 +605,7 @@ local function planTrip(from, to, opts)
           if h and not seen[h] then seen[h] = true; passes[#passes + 1] = h.name or "a town of the other faction" end
         end
         if #passes > 0 then text = text .. " - passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)" end
-        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, hostile = #passes > 0 or nil }
+        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, hostile = #passes > 0 or nil, toId = n.id }
       end
     elseif c.how == "hearth" then
       -- nothing to point at: use the hearthstone (sm/sx/sy: where you land, for the flight-path note)
@@ -608,7 +613,12 @@ local function planTrip(from, to, opts)
     elseif c.how == "spell" then
       -- nothing to point at either: cast it (Teleport: Moonglade)
       legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "spell", text = (n.spellSay or "Cast your teleport") .. " (to " .. (n.zone or mapName(n.m)) .. ")" }
-    elseif c.how == "fly" then legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = "Fly to " .. mapName(n.m) .. (f.name and (" (" .. f.name .. ")") or "") }
+    elseif c.how == "fly" then
+      -- who you fly from, unless the leg before is the ride to them: "Ride to Gretchen Mayberry > Fly to Stormwind City
+      -- (Gretchen Mayberry)" read as if she stood in Stormwind
+      local prevLeg = legs[#legs]
+      local named = f.name and not (prevLeg and prevLeg.how == "ride" and prevLeg.toId == f.id)
+      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = named and ("Fly from " .. f.name .. " to " .. mapName(n.m)) or ("Fly to " .. mapName(n.m)) }
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
       local prevLeg = legs[#legs]
@@ -699,7 +709,7 @@ function Travel.Plan(from, to, opts)
     end
     inn = frameInn
   end
-  local key = table.concat({ tostring(from.m), tostring(from.x), tostring(from.y), tostring(to.m), tostring(to.x), tostring(to.y), tostring(to.name),
+  local key = table.concat({ tostring(from.m), tostring(from.x), tostring(from.y), tostring(to.m), tostring(to.x), tostring(to.y), tostring(to.name), tostring(to.stop),
     tostring(ground), tostring(noHearth), tostring(G), inn, tostring(UnitLevel and UnitLevel("player")), tostring(Travel.SPELLS), tostring(ns.VENDORS),
     tostring(Travel.HEARTH_CAST), tostring(Travel.HEARTH_VALUE), tostring(Travel.AFK_WEIGHT), tostring(Travel.OFFNET) }, "|")
   local hit = frameMemo[key]

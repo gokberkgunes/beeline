@@ -108,6 +108,10 @@ function LogCheck.Classify()
     local gray, via = grayRule(e, myLevel)
     if ns.Nope(e.id) then
       verdict, why = "drop", "You said you're not doing this one"
+    elseif not done and ns.Avail and ns.Avail.Pvp(e.id) then
+      -- (a battleground quest: its marks come from PvP matches, so the route leaves it - not "drop": it is yours if you
+      -- play them, and the card does its hand-in once it is finished)
+      verdict, why = "offroute", "A battleground quest (" .. ns.Avail.Pvp(e.id) .. "): its marks come from PvP matches, so your route leaves it out. Yours to finish or drop"
     elseif keep then
       verdict, why = "keep", "Worth keeping: " .. keep
     elseif gray == "drop" then

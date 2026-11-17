@@ -21,6 +21,7 @@ Why.lua
 Storage.lua
 State.lua
 Util.lua
+PvpQuests.lua
 Route.lua
 FlightMasters.lua
 Vendors.lua

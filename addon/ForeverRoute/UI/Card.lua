@@ -273,13 +273,19 @@ local function build()
     -- the controls when you hovered the card (1.6.5)
     home = Style.IconButton(f.ctl, "btn-home", 20, function(self)
       local d = ForeverRouteData
-      if d and d.dungeon then ns.LeaveDungeonRoute()
+      if ns.Engine.Finishing() then ns.Engine.SetFinishing(false) -- (finishing your quests at 60: back to the level 60 card)
+      elseif d and d.dungeon then ns.LeaveDungeonRoute()
       elseif self.carryOn and ns.Paths and ns.Paths.Pick then ns.Paths.Pick(self.carryOn)
       elseif ns.Paths and ns.Paths.Show then ns.Paths.Show() end
     end, { "Change home base", "Pick another home base, or go back to your plan. Progress here is kept." }),
   }
   for _, b in pairs(f.btn) do b:HookScript("OnLeave", function() Card.Hover(false) end) end
   f.ret = Style.Button(f, "Back to current step", 140, 18, function() ns.Engine.view = nil; ns.Fire("FR_STEP", ns.Engine.Shown()) end)
+  -- level 60: the route is done (Engine.Capped). This finishes the quests you hold - their objectives and hand-ins, nothing
+  -- new - and a second click (or the house) goes back to the level 60 card (Engine.SetFinishing)
+  f.finish = Style.Button(f, "Finish my quests", 130, 18, function() ns.Engine.SetFinishing(not ns.Engine.Finishing()) end,
+    "Finish the quests in your log: their objectives and hand-ins, nothing new picked up. Click again to stop.")
+  f.finish:Hide()
   f.home = f.btn.home
   f.home.label = f.home:CreateFontString(nil, "ARTWORK"); f.home.label:SetFontObject(Style.Font(10)); f.home.label:Hide() -- (its name: the tooltip's first line)
   f.home:Hide()
@@ -634,6 +640,7 @@ function Card.Fill()
   cur.headAt = {}
   local wasDungeon = cur.dungeon
   cur.dungeon = nil
+  cur.doneData, cur.doneLvl, cur.celebrate = nil, nil, nil -- (set again below while the plan stays finished: Card.UpdateInner)
   cur.nbars = 0
   cur.choice = nil; for _, r in ipairs(cur.optRows or {}) do r:Hide() end
   cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide(); cur.fq:Hide(); cur.why:Hide(); cur.noChain:Hide()
@@ -678,6 +685,10 @@ function Card.Fill()
     end
     return opts
   end
+  -- (at level 60 the plan is done, whatever steps are left - Engine.Capped: no more questing, no next home base to level
+  -- in. "to 60.0" zone rows, "opens at level 60" were the plan-finished card at the cap; the replay oracle read NO-STEP)
+  local maxed = ((UnitLevel and UnitLevel("player")) or 1) >= ns.Engine.MAX_LEVEL
+  local POINTER = " Dungeons and quests you skipped are on the route window."
   if planForNow then
     look(C.good, "icon-check")
     -- (the step waiting stays the plan's: it comes back as the card's step once it opens)
@@ -721,6 +732,22 @@ function Card.Fill()
       -- (clickable: the names alone could not be picked - persona review)
       if #opts > 0 then cur.choice = { rows = opts }; fillChoice() end
       if C_Timer and not Card.zoneDoneTick then Card.zoneDoneTick = true; C_Timer.After(3.5, function() Card.zoneDoneTick = nil; if ns.Card.Layout then ns.Card.Layout() end end) end
+    elseif not i and ns.Engine.planDone and not (data.special or data.branch) then
+      -- the plan finished: at 60, done (no rows - nothing left to level); below it, your next home bases
+      -- (Card.UpdateInner fills it once: refreshes standing here change nothing on it)
+      cur.doneData, cur.doneLvl, cur.doneFin = data, (UnitLevel and UnitLevel("player")) or 1, ns.Engine.Finishing()
+      if maxed then
+        -- (level 60: celebrate - the route is done. "Finish my quests" below, Card.Layout)
+        cur.celebrate = true
+        cur.titleText:SetText(Style.Hex(C.gold) .. "Level 60 - you made it!|r")
+        cur.detail:SetText(cur.doneFin and "Congratulations! The quests you held are done too." or "Congratulations! Your leveling route is done." .. POINTER)
+      else
+        local opts = {}
+        for _, r in ipairs(nextBases(true)) do if r.route and (r.questsLeft or 0) > 0 then opts[#opts + 1] = r end end
+        cur.titleText:SetText("Route complete")
+        cur.detail:SetText("You've finished your plan. " .. (#opts > 0 and "Pick your next home base:" or "Other zones: Where to? on the route window."))
+        if #opts > 0 then cur.choice = { rows = opts }; fillChoice() end
+      end
     else cur.titleText:SetText("Route complete"); cur.detail:SetText("That's the end of the plan.") end
     setNote("")
     Card.SetButtons(nil); return
@@ -1260,6 +1287,14 @@ function Card.Layout()
   local viewing = ns.Engine.view ~= nil
   f.ret:SetShown(viewing)
   if viewing then f.ret:ClearAllPoints(); f.ret:SetPoint("TOPLEFT", PAD, -top); top = top + 24 end
+  -- level 60: "Finish my quests" on the celebration, "Stop finishing quests" while you finish them (Engine.SetFinishing)
+  local fin = ns.Engine.Finishing()
+  local showFin = not viewing and (cur.celebrate or fin) and true or false
+  f.finish:SetShown(showFin)
+  if showFin then
+    f.finish.label:SetText(fin and "Back to level 60" or "Finish my quests")
+    f.finish:ClearAllPoints(); f.finish:SetPoint("TOPLEFT", PAD, -top); top = top + 24
+  end
   f.dropY = -top - 2
   f.eta:Show(); f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", PAD, -top - 4); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
   local d = ForeverRouteData
@@ -1269,14 +1304,15 @@ function Card.Layout()
   f.home:SetShown(onDungeon and true or false)
   f.home.carryOn = nil
   if onDungeon then
-    local label = d.dungeon and "Back to plan" or "Change home base"
+    local label = ns.Engine.Finishing() and "Back to level 60" or d.dungeon and "Back to plan" or "Change home base"
     -- a zone you picked, done for a few seconds (Card.Fill): carry on where your planned route picks up
     if d.zoneRoute and Card.zoneDoneSince and ns.ZoneChoices then -- (at once: a label changing under your cursor after 3 s - review)
       local best = ns.ZoneChoices().best
       if best then f.home.carryOn = best; label = "Back to plan: " .. Style.ShortZone(best.zone) end
     end
     f.home.label:SetText(label)
-    f.home.tip = { label, d.dungeon and "Leave this side trip and carry on with your plan. Progress here is kept."
+    f.home.tip = { label, ns.Engine.Finishing() and "Stop finishing the quests you hold: back to the level 60 card."
+      or d.dungeon and "Leave this side trip and carry on with your plan. Progress here is kept."
       or f.home.carryOn and "Your planned route picks up there. Progress here is kept."
       or "Pick another home base, or go back to your plan. Progress here is kept." }
   end
@@ -1553,7 +1589,13 @@ function Card.UpdateInner(animate)
     cur.animOut:Stop(); cur.animIn:Stop(); cur.pop:Stop()
     cur.pop:Play(); cur.animOut:Play()
   elseif not cur.animOut:IsPlaying() then
-    Card.Fill(); Card.Layout()
+    -- (the plan finished and still is - same plan, same level, no step looked at, not in a dungeon or the demo: the card
+    -- already says so. Every refresh fired FR_STEP and redid it)
+    local data = ForeverRouteData
+    local same = not i and cur.doneData and cur.doneData == data and ns.Engine.planDone and not ns.Engine.view
+      and not (ns.Demo and ns.Demo.active) and cur.doneLvl == ((UnitLevel and UnitLevel("player")) or 1)
+      and not (ns.Dungeon and select(2, ns.Dungeon.Inside())) and cur.doneFin == ns.Engine.Finishing()
+    if not same then Card.Fill(); Card.Layout() end
   end
 end
 

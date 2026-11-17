@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.7 - 2026-11-16
+- The card no longer sends you for battleground quests: Darkspear Islands Clash, Conflict at Darkspear Islands, Fight for Warsong Gulch, Concerted Efforts and the other quests whose Marks of Honor come only from PvP matches. The built-in plans still list them, and the card now passes over their pick-up, objective and hand-in. A level 38 on the gnome warlock plan was sent across Stormwind to the Brigadier General for one. If you already have one in your log, the quest log check says it's a battleground quest, and the card takes you to its hand-in once it's finished.
+- The last leg of a trip now names who you're going to ("Walk to Angus Stern"), not the city you just flew into ("Ride to Stormwind" right after landing in Stormwind).
+- A flight leg reads "Fly to Stormwind City" when the leg before it takes you to the flight master, and "Fly from Gretchen Mayberry to Stormwind City" otherwise. It used to read "Fly to Stormwind City (Gretchen Mayberry)", as if she stood in Stormwind.
+- Level 60: the card celebrates ("Level 60 - you made it!") and your route is done, whatever quests the plan had left. It no longer works out the route for a 60. "Finish my quests" on the card routes the quests you still hold - their objectives and hand-ins, nothing new picked up - and clicking it again, or the house button, goes back. Zone and dungeon routes you pick at 60 still run. Finishing your plan below 60 offers your next home bases instead of a bare "Route complete".
+
 ## 1.6.6 - 2026-11-16
 - "Change home base" is now a house button with the card's other controls (shown when you hover the card). As a text button on the card's bottom line it sat under those controls.
 

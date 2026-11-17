@@ -96,10 +96,17 @@ function Avail.Needs(q)
   return why
 end
 
+-- a battleground quest (ns.PVP_QUESTS, PvpQuests.lua from the quest data): its work is a PvP match - Marks of Honor
+-- from a battleground, or the match itself - so no route does it: the battleground's name, or nil. Plans made before the
+-- planner knew this carry them (Darkspear Islands Clash sent a level 38 across Stormwind to the Brigadier General, its
+-- objective a step nobody could do). One already in your log is yours: the card does its hand-in once it is finished
+function Avail.Pvp(q) local P = ns.PVP_QUESTS; return P and q and P[q] or nil end
+
 -- left off the route: the game didn't offer it (and hasn't since), and nothing that could change that has happened -
 -- a level, where a level could be the reason, or a quest before it handed in, or it needs a profession you don't have.
 -- A quest you have or did is never this.
 function Avail.Unavailable(q)
+  if Avail.Pvp(q) then return true end -- (a battleground quest: never offered to a leveling route)
   if Avail.Needs(q) then return true end
   local n = q and ForeverRouteChar and ForeverRouteChar.avail and ForeverRouteChar.avail.no and ForeverRouteChar.avail.no[q]
   if not n then return false end
