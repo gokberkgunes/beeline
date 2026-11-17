@@ -134,12 +134,26 @@ function ns.Guard(where, fn)
 end
 -- (a listener runs under pcall, so it may never pause a job: the job's slice is off while listeners run - inside a
 -- route pass, FR_STEP_DONE's listeners run in the pass's coroutine, and a pause in one would be lost with its work)
-function ns.Fire(event, ...)
-  local co = ns.sliceCo
-  ns.sliceCo = nil
+local function dispatch(event, ...)
   for _, fn in ipairs(listeners[event] or {}) do
     local ok, err = pcall(fn, ...)
     if not ok then ns.LogError(event, err) end
+  end
+end
+-- an event whose listeners are one change: ns.Around(event, wrap), and wrap(dispatch, event, ...) runs them (Engine.lua
+-- holds the route's refreshes over FR_STATE's listeners - the plan's own, a hand-in added, a side quest's stop - and
+-- runs one after them)
+local around = {}
+function ns.Around(event, wrap) around[event] = wrap end
+function ns.Fire(event, ...)
+  local co = ns.sliceCo
+  ns.sliceCo = nil
+  local wrap = around[event]
+  if wrap then
+    local ok, err = pcall(wrap, dispatch, event, ...)
+    if not ok then ns.LogError(event, err) end
+  else
+    dispatch(event, ...)
   end
   ns.sliceCo = co
 end

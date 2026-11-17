@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.10 - 2026-11-17
+- Logging in or reloading is lighter. The addon now works out your route twice at login instead of four or more times. On a level 51 paladin that cut the work from about 0.5 s to 0.2 s, and the biggest single hitch from 0.4 s to 0.06 s.
+- With a full quest log, the card no longer sends you across the map to pick up a flight path on its own. A level 27 in Thousand Needles was sent to Thunder Bluff only for its flight path, while every quest there waited on room in the log. An added flight path now shows only when the step after it can be done.
+
 ## 1.6.9 - 2026-11-17
 - Rebuilt built-in plans.
 - Hints of a New Plague? now sends you to the Forsaken Courier in Arathi Highlands for the Sealed Folder. It used to send you to the yeti cave in Hillsbrad.

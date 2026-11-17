@@ -210,9 +210,7 @@ function Engine.MergeSideTrips()
   d.steps._merged = true
   return added > 0
 end
--- (a route change's stage: a route job at its time, spread over frames - Engine.After)
-ns.On("FR_ROUTE_CHANGED", function() Engine.After(0.6, "merge", function() if Engine.MergeSideTrips() then Engine.Refresh() end end) end)
-ns.On("FR_LOADED", function() C_Timer.After(3.5, function() if Engine.MergeSideTrips() then Engine.Refresh() end end) end)
+-- (after a login or a route change: Engine.PASSES)
 
 -- the hand-in spots (ForeverRouteEnders) of the quests in your log: the list covers every quest you could take
 -- (~1000), so walk your log (at most 40) and look each one up instead of asking the game about all of them
@@ -299,5 +297,4 @@ local function applyInserts()
 end
 Engine.ApplyInserts = applyInserts
 ns.On("FR_STATE", function() if applyInserts() then Engine.Refresh() end end)
-ns.On("FR_LOADED", function() C_Timer.After(3, function() if applyInserts() then Engine.Refresh() end end) end)
-ns.On("FR_ROUTE_CHANGED", function() Engine.After(0.5, "inserts", function() if Engine.ApplyInserts() then Engine.Refresh() end end) end)
+-- (and after a login or a route change: Engine.PASSES)

@@ -1390,12 +1390,25 @@ function Engine.Compute()
     end
     return st
   end
+  -- (a flight path the addon put in close to a trip is the card's step only when the plan's own next step after it can be
+  -- done: it rides along with that trip. With every step there waiting - a full log, hand-ins of quests not in it - the
+  -- card sent a level 27 from Thousand Needles to Thunder Bluff for Tal's flight path alone, 4,900 yd (mutate seed 4))
+  local function waits(st) return st == "wait" or st == "full" or st == "blocked" or st == "later" end
+  local function ridesAlong(i)
+    for j = i + 1, #list do
+      local s = look(j)
+      if s ~= "done" and not extra(j) and not list[j].added then return not waits(s) end
+    end
+    return false
+  end
   for i = start, #list do
     local st = look(i)
     if st ~= "done" and extra(i) then st = "extra" end
     if st == "extra" then sawExtra = true
     elseif st ~= "done" then
-      if st == "wait" or st == "full" or st == "blocked" or st == "later" then held(i, st) else found = i; break end
+      if waits(st) then held(i, st)
+      elseif list[i].added and list[i].k == "fp" and not ridesAlong(i) then -- (left for its trip: see above)
+      else found = i; break end
     elseif run == i - 1 then run = i end
   end
   -- (not below your place in the plan: the floor. Only a step of a quest in your log is kept out down there - one you took
@@ -1738,17 +1751,24 @@ end)
 
 -- One refresh for one change: while the addon takes in a change (Engine.Coalesce: the log's full look, FR_STATE), the
 -- refreshes its parts ask for - the plan's own, a hand-in added, a side trip's stop, a focus - are one, run when
--- they are all done. An objective finished ran three back to back (15 ms each at level 50: the perf battery)
+-- they are all done. An objective finished ran three back to back (15 ms each at level 50: the perf battery).
+-- Its solve runs in the background (a change the game told of), or with fg in that refresh (as an Engine.Refresh would);
+-- a change taken in inside another is part of it, and its refresh is the outer one's
 local held -- nil, or true while a change is taken in; "due" once a refresh was asked for
-function Engine.Coalesce(fn)
-  if held then return fn() end
+function Engine.Coalesce(fn, fg, ...)
+  if held then return fn(...) end
   held = true
-  local ok, err = pcall(fn)
+  local ok, err = pcall(fn, ...)
   local due = held == "due"
   held = nil
-  if due then Engine.bgSolve = true; local ok2, e2 = pcall(Engine.Refresh); Engine.bgSolve = nil; if not ok2 then error(e2, 0) end end
+  if due then Engine.bgSolve = not fg or nil; local ok2, e2 = pcall(Engine.Refresh); Engine.bgSolve = nil; if not ok2 then error(e2, 0) end end
   if not ok then error(err, 0) end
 end
+-- FR_STATE (the full look) is one change whoever fires it: its listeners - the plan's refresh, a hand-in added
+-- (Inserts.lua), a side quest's stop (Side.lua), a count that moved (Focus.lua), a quest back from "not doing" - ask for
+-- one refresh, run after them all. A flight path found or a bonus item in your bags (State.Announce without the
+-- log's coalescing) ran the plan's refresh first and then one per stop added, the first on the route about to change
+ns.Around("FR_STATE", function(dispatch, ...) Engine.Coalesce(dispatch, true, ...) end)
 for _, e in ipairs({ "QUEST_REMOVED", "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
   ns.On(e, function() Engine.ForgetDone() end)
 end
@@ -2039,10 +2059,40 @@ local function nearCurrent(kind, within)
 end
 
 ns.On("FR_STATE", function() Engine.Refresh() end)
+-- The passes that fit stops into the route after a login or a route change, in this order: the hand-ins of quests you
+-- finished (Inserts.lua), your side quests' objectives (Side.lua), side trips and flight paths on the way (Inserts.lua).
+-- Each says whether it added a stop; the route is refreshed once after them all - a refresh after each was the same work
+-- again, on a route the next pass was about to change
+Engine.PASSES = { { "inserts", "ApplyInserts" }, { "side", "SideStops" }, { "merge", "MergeSideTrips" } }
+local function pass(p) local fn = Engine[p[2]]; return fn and fn() end
+-- A login's (or a /reload's) catch-up: a look 1 s after the world is there, and at 3 s the flight paths you know
+-- (State.ScanTaxi) and the passes, with one refresh. They were timers of their own at 3, 3.2 and 3.5 s next to this
+-- one, each with its refresh: up to five in a row at login. A loading screen later (an instance, a boat) has the looks only
+local loginDue
+function Engine.LoginDue() loginDue = true end -- (FR_LOADED: the next PLAYER_ENTERING_WORLD is a login)
+ns.On("FR_LOADED", Engine.LoginDue)
 ns.On("PLAYER_ENTERING_WORLD", function()
   quiet = true
+  local login = loginDue
+  loginDue = nil
   C_Timer.After(1, function() Engine.RefreshBg() end)
-  C_Timer.After(3, function() Engine.RefreshBg(); quiet = false end)
+  C_Timer.After(3, function()
+    Engine.Coalesce(function()
+      if login then
+        local ok, e = pcall(ns.State.ScanTaxi); if not ok then ns.LogError("taxi", e) end
+        for _, p in ipairs(Engine.PASSES) do local ok2, e2 = pcall(pass, p); if not ok2 then ns.LogError(p[1], e2) end end
+      end
+      Engine.Refresh()
+    end)
+    quiet = false
+  end)
+end)
+-- a route change's passes: each a route job of its own at its time (one that fails doesn't stop the rest), and the
+-- refresh after the last when any added
+ns.On("FR_ROUTE_CHANGED", function()
+  local added = false
+  for k, p in ipairs(Engine.PASSES) do Engine.After(0.45 + 0.05 * k, p[1], function() if pass(p) then added = true end end) end
+  Engine.After(0.65, "refresh", function() if added then Engine.Refresh() end end)
 end)
 ns.On("PLAYER_XP_UPDATE", function() local _, s = currentStep(); if s and s.k == "grind" then Engine.Refresh() end end)
 -- fly steps carry no coordinates, so the arrow and pins point at the nearest flight master in your zone (FlightMasters.lua)

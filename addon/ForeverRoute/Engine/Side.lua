@@ -260,5 +260,4 @@ ns.On("QUEST_ACCEPTED", function(a, b)
   if q and sideData(q) and ns.char then ns.char.side = ns.char.side or {}; ns.char.side[q] = true end
 end)
 ns.On("FR_STATE", function() if sideStops() then Engine.Refresh() end end)
-ns.On("FR_LOADED", function() C_Timer.After(3.2, function() if sideStops() then Engine.Refresh() end end) end)
-ns.On("FR_ROUTE_CHANGED", function() Engine.After(0.55, "side", function() if Engine.SideStops() then Engine.Refresh() end end) end)
+-- (and after a login or a route change: Engine.PASSES)

@@ -548,7 +548,8 @@ local function logSoon() schedule() end
 State.Invalidate = refreshSoon
 State._notDone, State._settle = notDone, settle -- (tests)
 
-ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {}; C_Timer.After(3, ns.Guard("taxi", State.ScanTaxi)) end)
+-- (looked again 3 s into a login, with the route's other catch-up: Engine.lua)
+ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {} end)
 ns.On("TAXI_NODE_STATUS_CHANGED", function() C_Timer.After(0.5, ns.Guard("taxi", State.ScanTaxi)) end)
 ns.On("PLAYER_LOGIN", function() State.RefreshCompleted(); wipe(notDone); refreshSoon(); C_Timer.After(8, function() State.Snapshot("login") end); ns.NewTicker(300, function() State.Snapshot("periodic") end) end)
 ns.On("QUEST_LOG_UPDATE", logSoon)
