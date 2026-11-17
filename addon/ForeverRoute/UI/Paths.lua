@@ -322,6 +322,25 @@ end
 
 -- ---------------------------------------------------------------- layout
 
+-- a zone route's kept trip out of its zone (tools/zone-confine.js marks it: Stranglethorn's flight to the Badlands for
+-- Pearl Diving), said on its row in a few words - "+ Badlands pick-up" - so the trip isn't a surprise. Read once per
+-- route table (the route's steps don't change while it is loaded)
+local detourMemo = setmetatable({}, { __mode = "k" })
+function Paths.DetourHint(route)
+  if not (route and route.zoneRoute and type(route.steps) == "table") then return nil end
+  local m = detourMemo[route]
+  if m ~= nil then return m or nil end
+  local v
+  for _, s in ipairs(route.steps) do
+    if s.detour and s.detourZone and s.k ~= "fly" then
+      v = "+ " .. Style.ShortZone(s.detourZone) .. (s.detour == "giver" and " pick-up" or s.detour == "hand-in" and " hand-in" or " trip")
+      break
+    end
+  end
+  detourMemo[route] = v or false
+  return v
+end
+
 local function layoutZones(st)
   local y = 0
   local onZone = ForeverRouteData and ForeverRouteData.zoneRoute
@@ -357,6 +376,9 @@ local function layoutZones(st)
     elseif z.continues then why[#why + 1] = "continues " .. z.continues
     elseif z.needs then why[#why + 1] = "starts with " .. z.needs.name .. (z.needs.zone and (" (" .. Style.ShortZone(z.needs.zone) .. ")") or "") end
     if not z.route and not z.planned then why[#why + 1] = "no route yet" end
+    -- (the route's trip out, last: it gives way when the row has two reasons already)
+    local hint = #why < 2 and Paths.DetourHint(z.route)
+    if hint then why[#why + 1] = hint end
     b.why:ClearAllPoints()
     if pill then b.why:SetPoint("LEFT", b.pill, "RIGHT", 8, 0) else b.why:SetPoint("TOPLEFT", 12, -23) end
     b.why:SetPoint("RIGHT", b, "RIGHT", -10, 0)

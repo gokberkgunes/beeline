@@ -191,6 +191,9 @@ end
 function ns.ResolvePath(title)
   if not title then return nil end
   for _, r in ipairs(ns.Routes()) do if r.id == title or r.title == title then return r, true end end
+  -- a zone route renamed for the zone its work is in keeps its old id as aka ("zone:Westfall:40" is Stranglethorn's):
+  -- a player on it stays on it
+  for _, r in ipairs(ns.Routes()) do if r.aka and r.aka == title then return r, true end end
   if not ns.char.routeLegs then return nil end
   local old = zoneOrder(ns.char.routeLegs)
   local best, bestScore = nil, 0

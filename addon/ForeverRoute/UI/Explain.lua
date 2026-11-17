@@ -65,6 +65,47 @@ local function leaves(i)
   return (s.m and s.m ~= pm) or false
 end
 
+-- A trip out of the zone you picked that the planner kept because it pays (tools/zone-confine.js marks it: detour = giver,
+-- hand-in or work, with the quest, the zone, the work that stays here and a quest of this zone it goes alongside). The
+-- user: "this seems weird but it actually is the most efficient" - so the "?" leads with that and the reason, and the
+-- card's one line says what the trip is for. -> the marked step (this one, or the step the flight goes to), or nil
+local function detourOf(i)
+  local list = steps()
+  local s = list[i]
+  if s and s.detour then return s end
+  if s and s.k == "fly" then
+    for j = i + 1, math.min(#list, i + 4) do
+      local t = list[j]
+      if t and t.detour then return t end
+      if t and t.k ~= "fly" and t.k ~= "hearth" then break end
+    end
+  end
+end
+Explain.DetourOf = detourOf
+-- "Badlands" reads "the Badlands" in a sentence
+local THE = { ["Badlands"] = true, ["Hinterlands"] = true, ["Barrens"] = true, ["Western Plaguelands"] = true, ["Eastern Plaguelands"] = true }
+local function inZone(z) local n = ns.Style.ShortZone(z or "") return (THE[n] and "the " or "") .. n end
+-- -> why, fact for a marked trip
+function Explain.Detour(d)
+  local name, there, home = d.detourName or "this quest", inZone(d.detourZone), inZone(d.detourHome)
+  local why, fact
+  if d.detour == "giver" then
+    why = string.format("Looks odd, but it's the quickest way: %s's giver is in %s, and %s here in %s.", name, there,
+      d.detourWork and ("the " .. d.detourWork .. " are") or "its work is", home)
+    fact = d.detourWith and string.format("One flight picks it up, then you do it alongside %s.", d.detourWith) or "One flight picks it up, then you're back here for it."
+  elseif d.detour == "hand-in" then
+    why = string.format("Looks odd, but it's the quickest way: %s is handed in in %s, and its work is done here in %s.", name, there, home)
+    fact = "One flight hands it in, then you're back here."
+  else
+    why = string.format("Looks odd, but it's the quickest way: %s's work is in %s, close to your quests in %s.", name, there, home)
+    fact = "One trip there for it, then back here."
+  end
+  if tonumber(d.detourXp) and tonumber(d.detourMin) then
+    fact = fact .. string.format(" Worth ~%s XP for about %d min of travel.", Explain.Xp(d.detourXp), d.detourMin)
+  end
+  return why, fact
+end
+
 -- The card's line under a trip that leaves your zone: "For Pearl Diving and 6 more quests at your level". Facts, not
 -- a why (the "?" has the why). Memoized per step and what it depends on, so a card refresh pays for it once.
 local cardMemo = setmetatable({}, { __mode = "k" })
@@ -78,7 +119,10 @@ function Explain.CardLine(i)
   if m and m.key == key then return m.v end
   local st = Explain.Stretch(i)
   local v
-  if st then
+  local d = detourOf(i)
+  if d then
+    v = (d.detour == "giver" and "Pick up " or d.detour == "hand-in" and "Hand in " or "For ") .. (d.detourName or "a quest") .. ", then back"
+  elseif st then
     local n = st.n or st.quests or 0
     if st.name and n >= 2 then v = string.format("For %s and %s at your level", st.name, plural(n - 1, "more quest"))
     elseif st.name and n == 1 then v = "For " .. st.name
@@ -143,7 +187,10 @@ function Explain.Lines(i)
     why = pickWhy(i)
     if why then fact = "Your plan's next step after it: " .. ns.Card.Plain((ns.Card.Describe(list[planned]))) .. "." end
   end
-  -- 2. a trip out of the zone you're in
+  -- 2. a trip out of the zone you picked that the planner kept because it pays: reassurance and the reason first
+  local d = not why and leaves(i) and detourOf(i)
+  if d then why, fact = Explain.Detour(d) end
+  -- 3. a trip out of the zone you're in
   if not why and trip and leaves(i) then
     local st = Explain.Stretch(i)
     local secs

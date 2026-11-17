@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.9 - 2026-11-17
+- Rebuilt built-in plans.
+- Hints of a New Plague? now sends you to the Forsaken Courier in Arathi Highlands for the Sealed Folder. It used to send you to the yeti cave in Hillsbrad.
+- No battleground quests in the plans at all (Marks of Honor quests, The Sovereign Imperative and the rest). 1.6.7 only had the card skip them.
+- Zone routes in Where to? are named for where their quests are. "Westfall" at 40 did its quests in Stranglethorn and is now called Stranglethorn Vale. Shen'dralar routes are now Desolace, some Tanaris routes Un'Goro, some Felwood routes Winterspring. A zone you picked under its old name keeps working.
+- Zone routes stay in their zone. They no longer fly out to pick up a flight path or set your hearthstone, and they drop trips out that aren't worth the travel.
+- A short trip out that is worth it stays, and the card's "?" says why. For example, a Stranglethorn route flies to the Badlands for Pearl Diving: "Looks odd, but it's the quickest way: Pearl Diving's giver is in the Badlands, and the Blue Pearls are here in Stranglethorn." The card says "Fly to Badlands" with "Pick up Pearl Diving, then back" under it. Where to? shows "+ Badlands pick-up" on that row when there's room.
+
 ## 1.6.8 - 2026-11-17
 - A home base you picked keeps the quests you carry for it after a /reload or login. They used to drop off the route, so green quests in your log for that zone got no stops (Stranglethorn: The Second Rebellion, Some Assembly Required).
 - Logging in or reloading while on a flight, the card works out your step before it holds it for the flight. It used to grab the plan's next step and keep it the whole way (a trip to the Badlands on a Stranglethorn home base).

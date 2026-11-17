@@ -5149,6 +5149,7 @@ ns.SIDE_QUESTS = {
   [81924] = { n = "Wisdom of the Guardians", l = 50, r = 40, xp = 5900, cl = "DRUID", g = { "Tyrisius", 1444, 0.5716, 0.6892 }, e = { "Tyrisius", 1444, 0.5716, 0.6892 }, u = true },
   [83934] = { n = "Show Me the Money!", l = 60, r = 55, xp = 8300, g = { "Pix Xizzix", 1434, 0.2852, 0.7586 }, e = { "Pix Xizzix", 1434, 0.2852, 0.7586 }, u = true },
   [84157] = { n = "An Earnest Proposition", l = 60, r = 58, xp = 6600, f = "H", g = { "Mokvar", 1454, 0.3491, 0.3802 }, e = { "Mokvar", 1454, 0.3491, 0.3802 }, u = true },
+  [92328] = { n = "Siegecraft", l = 56, r = 1, xp = 1450, g = { "Kaylaena Springwhisper", 2482, 0.601, 0.6118 }, e = { "Kaylaena Springwhisper", 2482, 0.601, 0.6118 }, any = { 92011 }, ex = { 92329 }, u = true },
   [92329] = { n = "Drum Up Trouble", l = 60, r = 1, xp = 8300, g = { "Kaylaena Springwhisper", 2482, 0.601, 0.6118 }, e = { "Kaylaena Springwhisper", 2482, 0.601, 0.6118 }, any = { 92328 }, u = true },
   [92750] = { n = "Detonation at a Distance", l = 16, r = 9, xp = 115, f = "A", g = { "Sprite Jumpsprocket", 1453, 0.6188, 0.3056 }, e = { "Jasper Fel", 1453, 0.8028, 0.7007 }, any = { 92748 }, ex = { 92751 } },
   [92751] = { n = "Detonation at a Distance", l = 16, r = 9, xp = 115, f = "A", g = { "Jasper Fel", 1453, 0.8028, 0.7007 }, e = { "Sprite Jumpsprocket", 1453, 0.6188, 0.3056 }, any = { 92750 } },
@@ -5189,6 +5190,7 @@ ns.SIDE_QUESTS = {
   [96622] = { n = "A Rest Without Pain", l = 57, r = 54, xp = 600, f = "H", g = { "Ortak Lomgok", 2482, 0.1293, 0.5285 }, e = { "Ortak Lomgok", 2482, 0.1293, 0.5285 }, any = { 96616 }, u = true },
   [96666] = { n = "Burrow Bonding", l = 57, r = 1, xp = 3000, g = { "Elder Pinespeaker", 2482, 0.2177, 0.7937 }, e = { "Elder Pinespeaker", 2482, 0.2177, 0.7937 }, u = true },
   [96779] = { n = "Syndicate Sabotage", l = 24, r = 24, xp = 1950, cl = "ROGUE", g = { "Myrokos Silentform", 1416, 0.8493, 0.8038 }, e = { "Myrokos Silentform", 1416, 0.8493, 0.8038 }, any = { 6681 }, o = { { "Kill", "Lord Tomas", { 1424, 0.7948, 0.4519 }, { 1424, 0.751, 0.4265 }, { 1424, 0.8042, 0.4781 } } } },
+  [96959] = { n = "Blademaster's Bonfires", l = 59, r = 1, xp = 3200, g = { "Yashiro", 2482, 0.4933, 0.3263 }, e = { "Yashiro", 2482, 0.4933, 0.3263 }, ex = { 96983 }, u = true },
   [96983] = { n = "Yashiro's Windwalk", l = 60, r = 1, xp = 8300, g = { "Yashiro", 2482, 0.4933, 0.3263 }, e = { "Yashiro", 2482, 0.4933, 0.3263 }, any = { 96959 }, u = true },
   [97010] = { n = "Blind Vengeance", l = 59, r = 1, xp = 3200, g = { "Maerion Thaelemaches", 2482, 0.6328, 0.2585 }, e = { "Maerion Thaelemaches", 2482, 0.6328, 0.2585 }, any = { 97009 }, u = true },
   [97220] = { n = "Philmor's Favor", l = 15, r = 9, xp = 540, f = "A", g = { "Manifest Clerk Philmor", 1453, 0.3049, 0.2875 }, e = { "Elaine Trias", 1453, 0.6656, 0.7337 }, ex = { 97222 } },
@@ -5213,8 +5215,6 @@ ns.SIDE_QUESTS = {
   [98095] = { n = "Valuable Vantages", l = 25, r = 19, xp = 2000, f = "H", g = { "Deathstalker Masoj", 1424, 0.6358, 0.5311 }, e = { "Deathstalker Masoj", 1424, 0.6358, 0.5311 }, any = { 98094 }, u = true },
   [98155] = { n = "Pristine Pesterhide Pelts", l = 29, r = 24, xp = 2350, f = "A", g = { "Kristy Grant", 1444, 0.8942, 0.4599 }, e = { "Kristy Grant", 1444, 0.8942, 0.4599 }, ex = { 98156 }, o = { { "Collect", "Pristine Pesterhide Pelt", { 1441, 0.5316, 0.4669 }, { 1441, 0.0962, 0.0929 }, { 1441, 0.2172, 0.3421 } } } },
   [98191] = { n = "A Friend of the Family", l = 25, r = 20, xp = 2000, f = "A", g = { "Highlord Bolvar Fordragon", 1453, 0.8021, 0.3835 }, e = { "Lord Grayson Shadowbreaker", 1453, 0.4843, 0.5022 }, any = { 98190 } },
-  [98903] = { n = "The Battle for Darkspear Islands!", l = 39, r = 30, xp = 3000, f = "A", g = { "Brelinda McFarry", 1413, 0.6336, 0.5877 }, e = { "Brelinda McFarry", 1413, 0.6336, 0.5877 }, u = true },
-  [98906] = { n = "The Battle for Darkspear Islands!", l = 39, r = 30, xp = 3000, f = "H", g = { "Nizook Boof", 1413, 0.6504, 0.3491 }, e = { "Nizook Boof", 1413, 0.6504, 0.3491 }, u = true },
 }
 -- quests an item starts (a drop no plan can count on), for ItemQuests.lua: the side quest fields without a giver,
 -- it = the items that start it { [item] = name }; e and o only where they have a place outdoors, u: some work has none
