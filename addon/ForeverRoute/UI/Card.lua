@@ -253,7 +253,7 @@ local function build()
 
   -- footer: the next zone on the left (Card.FooterText), controls on the right (shown on hover)
   f.eta = Style.Text(f, 10, C.dim); f.eta:SetWordWrap(false)
-  f.ctl = CreateFrame("Frame", nil, f); f.ctl:SetSize(240, 20); f.ctl:SetAlpha(0)
+  f.ctl = CreateFrame("Frame", nil, f); f.ctl:SetSize(264, 20); f.ctl:SetAlpha(0)
   f.ctl.OnChildEnter = function() Card.Hover(true) end
   f.btn = {
     back = Style.IconButton(f.ctl, "btn-back", 20, function() ns.Engine.Back() end, "Look at the previous step"),
@@ -267,21 +267,21 @@ local function build()
     opt = Style.IconButton(f.ctl, "btn-gear", 20, function() ns.Fire("FR_OPEN_OPTIONS") end, "Options"),
     -- "this looks wrong": the moment kept for a bug report (Moments.lua), the flag turning green a moment to say so
     flag = Style.IconButton(f.ctl, "btn-flag", 20, function(self) Card.FlagMoment(self) end, Card.FLAG_TIP),
+    -- home base: a dungeon or side trip: back to your leveling path; a zone you picked or your plan: the zone picker
+    -- (another zone, or your planned route where it picks up); a zone you picked that is done: your planned route's
+    -- next zone (Card.Fill sets carryOn). A house in the hover bar: as a text button on the footer line it sat under
+    -- the controls when you hovered the card (1.6.5)
+    home = Style.IconButton(f.ctl, "btn-home", 20, function(self)
+      local d = ForeverRouteData
+      if d and d.dungeon then ns.LeaveDungeonRoute()
+      elseif self.carryOn and ns.Paths and ns.Paths.Pick then ns.Paths.Pick(self.carryOn)
+      elseif ns.Paths and ns.Paths.Show then ns.Paths.Show() end
+    end, { "Change home base", "Pick another home base, or go back to your plan. Progress here is kept." }),
   }
   for _, b in pairs(f.btn) do b:HookScript("OnLeave", function() Card.Hover(false) end) end
   f.ret = Style.Button(f, "Back to current step", 140, 18, function() ns.Engine.view = nil; ns.Fire("FR_STEP", ns.Engine.Shown()) end)
-  -- on a dungeon route: always-visible way back to the leveling path
-  -- a dungeon or side trip: back to your leveling path; a zone you picked: the zone picker (another zone, or your
-  -- planned route where it picks up)
-  -- (a zone you picked that is done: "Carry on: <zone>", your planned route's next zone - Card.Fill)
-  f.home = Style.Button(f, "Back to plan", 116, 18, function(self)
-    local d = ForeverRouteData
-    if d and d.dungeon then ns.LeaveDungeonRoute()
-    elseif self.carryOn and ns.Paths and ns.Paths.Pick then ns.Paths.Pick(self.carryOn)
-    elseif ns.Paths and ns.Paths.Show then ns.Paths.Show() end
-  end, "Pick another home base, or go back to your plan. Progress here is kept.")
-  f.home.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-  f.home:SetScript("OnLeave", function(self) self.label:SetTextColor(C.gold[1], C.gold[2], C.gold[3]); GameTooltip:Hide() end)
+  f.home = f.btn.home
+  f.home.label = f.home:CreateFontString(nil, "ARTWORK"); f.home.label:SetFontObject(Style.Font(10)); f.home.label:Hide() -- (its name: the tooltip's first line)
   f.home:Hide()
   -- quests in your log you won't do (not on the route, or gray by then): a nudge that opens the log check
   f.drop = Style.Button(f, "", 90, 14, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Quests in your log no route of yours uses. Click to look them over.")
@@ -388,20 +388,19 @@ function Card.PlaceDrop(hover)
   local full, short = f.dropText or "", f.dropCount and tostring(f.dropCount) or ""
   f.drop.label:SetText(full); f.drop:SetWidth(f.drop.label:GetStringWidth() + 12)
   local show = f.dropWanted and true or false
-  if hover and f.home and f.home:IsShown() then
-    f.drop:SetPoint("LEFT", f.home, "RIGHT", 6, 0)
-    -- the room between that button and the controls: "13 won't do" ran under them (beside "Change zone" - tester).
-    -- Too narrow: the count alone (its tooltip says what it is), against the controls' left edge - always there to
-    -- click (hidden for want of room, it vanished as the mouse went to it - tester)
+  if hover then
+    f.drop:SetPoint("LEFT", f.eta, "LEFT", -6, 0)
+    -- the room before the controls: "13 won't do" ran under them (beside "Change zone" - tester). Too narrow: the
+    -- count alone (its tooltip says what it is), against the controls' left edge - always there to click (hidden for
+    -- want of room, it vanished as the mouse went to it - tester)
     local ctlLeft, ctlBtn
     for _, b in pairs(f.btn) do if b:IsShown() and b:GetLeft() and (not ctlLeft or b:GetLeft() < ctlLeft) then ctlLeft, ctlBtn = b:GetLeft(), b end end
-    local homeRight = f.home:GetRight()
-    if ctlLeft and homeRight and f.drop:GetWidth() > ctlLeft - homeRight - 10 then
+    local etaLeft = f.eta:GetLeft()
+    if ctlLeft and etaLeft and f.drop:GetWidth() > ctlLeft - (etaLeft - 6) - 4 then
       f.drop.label:SetText(short); f.drop:SetWidth(f.drop.label:GetStringWidth() + 12)
       f.drop:ClearAllPoints(); f.drop:SetPoint("RIGHT", ctlBtn, "LEFT", -4, 0)
-      f.drop:SetFrameLevel(math.max(f.drop:GetFrameLevel(), f.home:GetFrameLevel() + 2))
+      f.drop:SetFrameLevel(math.max(f.drop:GetFrameLevel(), f.ctl:GetFrameLevel() + 2))
     end
-  elseif hover then f.drop:SetPoint("LEFT", f.eta, "LEFT", -6, 0)
   else f.drop:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 6, f.dropY or 0) end
   f.drop:SetShown(show)
 end
@@ -1277,16 +1276,17 @@ function Card.Layout()
       if best then f.home.carryOn = best; label = "Back to plan: " .. Style.ShortZone(best.zone) end
     end
     f.home.label:SetText(label)
-    f.home:SetWidth(math.max(116, f.home.label:GetStringWidth() + 18))
-    f.home:ClearAllPoints(); f.home:SetPoint("TOPLEFT", PAD - 2, -top + 1)
-    f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", f.home, "TOPRIGHT", 6, -5); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
+    f.home.tip = { label, d.dungeon and "Leave this side trip and carry on with your plan. Progress here is kept."
+      or f.home.carryOn and "Your planned route picks up there. Progress here is kept."
+      or "Pick another home base, or go back to your plan. Progress here is kept." }
   end
   Card.PlaceDrop(Card.hovering or f.ctl:GetAlpha() > 0.5) -- (hovering: at the left, the controls have the right; after the home button is set)
   f.ctl:ClearAllPoints(); f.ctl:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 4, -top + 1)
   local x = 0
-  for _, name in ipairs({ "opt", "min", "dungeon", "list", "undo", "skip", "done", "fwd", "back", "flag" }) do
+  for _, name in ipairs({ "opt", "min", "dungeon", "list", "undo", "skip", "done", "fwd", "back", "flag", "home" }) do
     local b = f.btn[name]
     local show = true
+    if name == "home" then show = onDungeon and true or false end
     if name == "undo" then show = #ns.char.history > 0 end
     if name == "fwd" then show = viewing end
     if name == "flag" then show = not viewing end -- (the card looked at, not the route's answer: nothing to flag)

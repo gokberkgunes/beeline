@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.6.6 - 2026-11-16
+- "Change home base" is now a house button with the card's other controls (shown when you hover the card). As a text button on the card's bottom line it sat under those controls.
+
 ## 1.6.5 - 2026-11-16
 - Trying the addon partway through levelling now starts you where you stand. A character levelling in the Barrens was sent through Orgrimmar, the zeppelin and the Undercity to Silverpine while the Barrens still had quests for them.
 - The flight paths you already have are now guessed from the quests you've handed in near them, until you open a flight master's map (Forever's world map doesn't say which ones you know). The card used to send you to pick up a flight path you already had. Opening any flight master's map corrects the guesses.
