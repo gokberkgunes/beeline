@@ -964,6 +964,11 @@ local function statusRaw(i)
   if s.side and s.away and s.k == "accept" then return "done" end -- a side quest offered at its giver, and you walked on (Engine.SideOffer)
   -- the game did not offer it to you (Availability.lua): off the route until you level up or it is offered
   if s.q and ns.Avail and ns.Avail.Unavailable(s.q) and not State.OnQuest(s.q) and not State.IsCompleted(s.q) then return "done" end
+  -- (one in your log that needs a profession you don't have - its ore is mined, its herb picked: its work and its hand-in
+  -- are off your route until it's finished (bought the ore). Favor for Krazek, taken in Booty Bay without Mining, sent a
+  -- gnome warlock all the way to Arathi for Lesser Bloodstone Ore - user)
+  if s.q and (s.k == "obj" or s.k == "turnin") and ns.Avail and ns.Avail.Needs and State.OnQuest(s.q) and not State.QuestReady(s.q)
+    and ns.Avail.Needs(s.q) then return "done" end
   -- a battleground quest (Avail.Pvp: its marks come from PvP matches): not its pick-up, its objectives or a trip to its
   -- hand-in - only that hand-in, once the quest is finished in your log (you played the matches)
   if s.q and PVP and PVP[s.q] and not (s.k == "turnin" and State.OnQuest(s.q) and (State.Quest(s.q) or {}).complete) then return "done" end
@@ -1426,7 +1431,10 @@ function Engine.Compute()
   local start = 1
   local use = not Engine.noPlace and doneRun.list == list and doneRun.key == key and doneRun.k > 0 and list[doneRun.k] == doneRun.step
   if use then start = doneRun.k + 1 end
-  if use and Engine.CHECK_RUN_NOW then
+  -- (Engine.CHECK_RUN_EVERY: every n-th use only - the simulated player's whole-plan runs: checking ~2,000 done steps on
+  -- every refresh was a third of a persona's time, and a run that stays wrong is still caught)
+  Engine.checkRunN = (Engine.checkRunN or 0) + 1
+  if use and Engine.CHECK_RUN_NOW and Engine.checkRunN % (Engine.CHECK_RUN_EVERY or 1) == 0 then
     for j = 1, doneRun.k do
       local st = (skipFrom and j >= skipFrom and j <= skipTo) and "done" or Engine.Status(j)
       if st ~= "done" then
@@ -2274,7 +2282,8 @@ local function tripKey(s)
   local n = State.KnownTaxiCount()
   local okB, b = pcall(GetBindLocation)
   return table.concat({ tostring(pm), px and math.floor(px * 400) or "-", py and math.floor(py * 400) or "-", UnitLevel("player") or 0, n,
-    tostring(ns.Is(UnitOnTaxi, "player")), tostring(ns.Arrow and ns.Arrow.aboard), tostring(okB and b), tostring(Engine.lastTripStep == s), (ns.char and ns.char.boundAt and ns.char.boundAt.m) or "-" }, "|")
+    tostring(ns.Is(UnitOnTaxi, "player")), tostring(ns.Arrow and ns.Arrow.aboard), tostring(okB and b), tostring(Engine.lastTripStep == s), (ns.char and ns.char.boundAt and ns.char.boundAt.m) or "-",
+    tostring(ns.Next and ns.Next.rejoin and ns.Next.rejoin.trip ~= nil) }, "|")
 end
 function Engine.TravelFor(s)
   if not s then return nil end
@@ -2341,6 +2350,12 @@ function Engine.TravelForUncached(s)
         if not shortcut then legs = ns.Travel.Plan({ m = pm, x = px, y = py }, { m = tm, x = tx, y = ty, name = tname, stop = tstop })
         elseif s.k ~= "fly" and ns.Travel.Shortcut then
           legs = ns.Travel.Shortcut({ m = pm, x = px, y = py }, { m = tm, x = tx, y = ty, name = s.npc or tname })
+          -- (not out of the zone while its quests come before the plan's trip - Next.rejoin: they come first only while you
+          -- are in it. Sent from Booty Bay to fly to Westfall and ride back in, the player landed in Westfall and the card
+          -- dropped Stranglethorn for the plan's trip to Arathi - user. The ride inside the zone keeps it)
+          if legs and ns.Next and ns.Next.rejoin and ns.Next.rejoin.trip then
+            for _, l in ipairs(legs) do if l.m and l.m ~= tm then legs = nil; break end end
+          end
         end
         if legs and legs[1] then
           -- already on the boat of the first leg: that leg is done, sit tight

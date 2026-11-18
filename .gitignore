@@ -41,3 +41,4 @@ report-upload-seen.json
 report-outbox/
 tools/report-server/.store/
 tools/report-server/wrangler.toml
+sim-fast-bin.txt

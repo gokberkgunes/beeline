@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.12 - 2026-11-18
+- Rebuilt built-in plans on the latest Forever quest data (QuestieDB 1.1.2). In about 5,800 test characters logging in at random levels and places, 908 got a better card and over 460 kinds of problem went away, most of them a card offering a quest you couldn't actually take.
+- About 120 quests are back in the plans. Their item comes from an object the quest data had no place for, such as Robbie's Hat for Hats Off, in a clam shell by the river near its giver in Riverglades (2,150 XP). The objects' places now come from Wowhead.
+- Quest chains whose first quest only sends you on are planned again. Rog'mar Supplies, The Rog'mar Situation, Brewer's Trade and Something's in the Water had been left out.
+- The card never sends you to the other faction's flight master. In Booty Bay, an Alliance gnome was told to fly from Gringer, and a Horde troll landed at Gyll.
+- When your next step is quests far away, the card's headline is the way there. At the Booty Bay flight master it read "Do these here" under a flight icon and never said where to fly.
+- A flight's time saved says "N min less riding" once you have a mount, not "on foot".
+- While the card has you finish your zone's quests before the plan's next trip, the way to them stays in the zone. A player in Stranglethorn was flown to Westfall to ride back through Duskwood. On landing in Westfall, the card dropped Stranglethorn for the plan's trip to Arathi.
+- A quest whose item can only be gathered needs that gathering skill. Without Mining 75 you're no longer sent to Arathi for Favor for Krazek's Lesser Bloodstone Ore. If such a quest is already in your log, its work and hand-in stay off your route until it's finished.
+- Caught in a zone far above your level, the card finds the short way out. A level 41 who flew into Morgan's Vigil in the Burning Steppes was routed out through Redridge, past the step that was right at the Riverglades border. A ride of up to 400 yards inside the dangerous zone now counts as a way out.
+- The Stepping Stones chain works again for both factions. It starts with "...and that note you found", Horde in the Barrens and Alliance in Westfall.
+
 ## 1.6.11 - 2026-11-17
 - The game's own 3D navigation marker now shows where to go: a marker in the world with the yards to it, at the screen's edge when it's behind you. On a quest you're doing, the addon focuses that quest, as clicking it in the quest tracker does, and the game draws its marker when it has one. Everything else gets a map pin where the arrow points: a pick-up, a flight master, a boat, a quest the game doesn't mark. The game's setting for the marker is hidden on Forever; the addon turns it on for you. A map pin of your own is left alone. Turn it off in Options, Map: "Game's navigation marker".
 - Clearer card note when the card does quests here before the plan's next trip: "before the trip" instead of "you're here already".

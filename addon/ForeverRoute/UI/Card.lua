@@ -813,7 +813,9 @@ function Card.Fill()
   look(kind.color, kind.icon)
   local status = ns.Engine.Status(i)
   local group = ns.Engine.Group(i)
-  local multi = s.k == "obj" and #group > 0
+  -- ("Do these here" only once you're there: on the way, the headline is the leg - it read "Do these here" under a
+  -- flight icon at the Booty Bay flight master, the objectives 3,000 yd north, and never said where to fly: user)
+  local multi = s.k == "obj" and #group > 0 and not headTrip
   if multi then title = Style.Hex(kind.color) .. "Do these here|r" end
   cur.titleText:SetText(title)
   local bits = {}

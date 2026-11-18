@@ -70,6 +70,7 @@ end
 -- card walked them to Lilliam Sparkspindle, who had nothing. Your skills are read at most every 10 s.
 local skillsAt, skills = -100, {}
 local told = {}
+function Avail.ForgetSkills() skillsAt = -100 end -- (read again on the next ask: tests; a profession just learned)
 function Avail.Needs(q)
   local need = q and ns.QUEST_NEEDS and ns.QUEST_NEEDS[q]
   if not need then return nil end

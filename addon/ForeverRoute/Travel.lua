@@ -19,6 +19,10 @@ function Travel.Speed()
   return (M and L >= M.level) and M.speed or Travel.RIDE
 end
 Travel.DANGER_ABOVE, Travel.TOWN_WALK = TD.DANGER_ABOVE, TD.TOWN_WALK
+-- the dangerous zone you stand in (Travel.DangerHere): a ride in it of up to DANGER_HERE_YD yards is a way out, counted
+-- DANGER_HERE times its time - Morgan's Vigil to the Riverglades border at 41 (~300 yd); a longer one is kept out of as
+-- in any such zone - riding out of Theramore through Dustwallow at 21, not the flight
+Travel.DANGER_HERE, Travel.DANGER_HERE_YD = 3, 400
 -- a ride leg points at the first waypoint at least this far ahead (yards): nearer ones are under your feet
 Travel.AHEAD_YD = 40
 Travel.DOCKS, Travel.ZONE_MIN, Travel.BOATS, Travel.GATES = TD.DOCKS, TD.ZONE_MIN, TD.BOATS, TD.GATES
@@ -43,12 +47,15 @@ local function d(a, b) return math.sqrt((a.w[1] - b.w[1]) ^ 2 + (a.w[2] - b.w[2]
 -- the other faction's towns and camps (TravelData HOSTILE, from tools/hostile-towns.json): a ride through one costs
 -- HOSTILE_SEC more - guards, players, a detour. Possible (fine for PvP), just trouble.
 Travel.HOSTILE, Travel.HOSTILE_SEC = TD.HOSTILE or {}, TD.HOSTILE_SEC or 0
-local hostileW, hostileFor
+local hostileW, hostileFor, hostileConv
 function Travel.HostileTowns()
   local okF, f = pcall(UnitFactionGroup, "player")
   local side = (okF and f == "Horde") and "horde" or "alliance"
-  if hostileFor ~= side or not hostileW then
-    hostileW, hostileFor = {}, side
+  -- (made again when the map positions come from elsewhere: tests swap the coordinates in, and a list made under the
+  -- simulator's own - which has no map data - was empty for every test after it, tools/unit.js's shards)
+  local conv = HBD.GetWorldCoordinatesFromZone
+  if hostileFor ~= side or not hostileW or hostileConv ~= conv then
+    hostileW, hostileFor, hostileConv = {}, side, conv
     for _, h in ipairs(Travel.HOSTILE[side] or {}) do local w = world(h.m, h.x, h.y); if w then hostileW[#hostileW + 1] = { w = w, r = h.r, name = h.name } end end
   end
   return hostileW
@@ -82,10 +89,11 @@ function Travel.Through(a, b)
   return nil
 end
 -- roads of the network never move: whether one passes a hostile town is worked out once per road (and faction)
-local roadHostile, roadFor = {}, nil
+local roadHostile, roadFor, roadConv = {}, nil, nil
 local function throughCached(u, v)
   local side = hostileFor
-  if roadFor ~= side then roadHostile, roadFor = {}, side end
+  -- (and the map positions they were worked out with: tests swap them in - see Travel.HostileTowns)
+  if roadFor ~= side or roadConv ~= HBD.GetWorldCoordinatesFromZone then roadHostile, roadFor, roadConv = {}, side, HBD.GetWorldCoordinatesFromZone end
   if not (u.id and v.id) or u.id == "you" or u.id == "target" or v.id == "you" or v.id == "target" then return Travel.Through(u.w, v.w) end
   -- (by the two ids, the lower first: a string made of them for each of the network's 9,000 roads was much of building
   -- the trip planner's graph)
@@ -122,6 +130,15 @@ Travel.HasNetwork = function(m) net(); return netMaps[m] == true end
 -- where a trip can leave the walk on map m: your side's flight masters (known or not) and the piers - the places a
 -- trip between two far stops starts or lands at (Next indexes the plan's far gaps by the walks to them before it
 -- knows which one the trip takes) -> { world positions }
+-- a flight master of your side (ns.FLIGHT, your faction's list): the network's nodes carry no faction, and where both
+-- sides have one under the same name (Booty Bay: Gyll and Gringer) the name alone doesn't tell them apart
+local function ourFP(m, npc)
+  local list = ns.FLIGHT and ns.FLIGHT[m]
+  if not list then return false end
+  for _, f in ipairs(list) do if f[3] == npc then return true end end
+  return false
+end
+Travel.OurFlightMaster = ourFP
 local portsOf, portsKey = {}, nil
 function Travel.Ports(m)
   net()
@@ -132,7 +149,7 @@ function Travel.Ports(m)
   if out then return out end
   out = {}
   for _, n in ipairs(netNodes or {}) do
-    if (n.m == m or n.m2 == m) and ((n.kind == "fp" and (not n.side or n.side:find(letter, 1, true))) or n.kind == "dock") then out[#out + 1] = n.w end
+    if (n.m == m or n.m2 == m) and ((n.kind == "fp" and (not n.side or n.side:find(letter, 1, true)) and ourFP(n.m, n.name)) or n.kind == "dock") then out[#out + 1] = n.w end
   end
   if #out == 0 then
     -- (no network here: the flight masters of your side alone)
@@ -176,6 +193,9 @@ local function taxiNames()
 end
 local function knowsFP(m, npc)
   local known = (ns.State and ns.State.knownTaxi) or {}
+  -- the other faction's flight master is never yours, even where both sides' share a name: Booty Bay's Gringer (Horde)
+  -- is "Booty Bay, Stranglethorn" as Gyll is, and an Alliance gnome at 41 was sent to fly from Gringer - user
+  if npc and not ourFP(m, npc) then return false end
   local mine = npc and taxiNames()[m .. ":" .. npc]
   if mine then
     if known[mine] then return true end
@@ -239,12 +259,19 @@ local function knowsFPKept(m, npc)
   return v
 end
 -- a Horde player's own lands are not the 60 that keeps the Alliance out (ZONE_MIN_HORDE)
+-- (the zone you stand in gets a short way out: Travel.DANGER_HERE_YD. A level 41 who had flown to Morgan's Vigil had
+-- every road of the Burning Steppes (50) taken away, the Riverglades border beside the step with them: the trip went out
+-- through Redridge, and the marker on its crossing led the player past the step - user)
 local function riskyFor(side, lvl)
   return function(m)
     local z = Travel.ZONE_MIN[m]
     if side == "horde" and Travel.ZONE_MIN_HORDE[m] ~= nil then z = Travel.ZONE_MIN_HORDE[m] end
     return z and z > lvl + Travel.DANGER_ABOVE
   end
+end
+-- the zone of a trip's start when it is one the danger rule would keep you out of (nil otherwise: the usual graph)
+function Travel.DangerHere(m, side, lvl)
+  return (m and riskyFor(side, lvl)(m)) and m or nil
 end
 local function gatesFor(side)
   local gates = {}
@@ -268,8 +295,8 @@ local function myRaceClass()
   return myRace, myClass
 end
 local campMemo = setmetatable({}, { __mode = "k" })
-local function buildGraph(ground, lvl, side, myRace, myClass, learned)
-  local risky, gates = riskyFor(side, lvl), gatesFor(side)
+local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
+  local risky, gates = riskyFor(side, lvl, here), gatesFor(side)
   local gated = gatedBy(gates)
   local myLetter = side == "horde" and "H" or "A"
   local N = { false, false } -- (you and the target: each trip's own)
@@ -314,7 +341,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned)
   end
   for _, e in ipairs((Travel.NET and Travel.NET.edges) or {}) do
     local u, v = idx[e[1]], idx[e[2]]
-    if u and v and not (risky(e[3]) and e[4] > Travel.TOWN_WALK) then edge(u, v, e[4] / Travel.Speed(), "ride") end
+    if u and v and not (risky(e[3]) and e[4] > Travel.TOWN_WALK and not (here == e[3] and e[4] <= Travel.DANGER_HERE_YD)) then edge(u, v, e[4] / Travel.Speed() * ((here and e[3] == here) and Travel.DANGER_HERE or 1), "ride") end
   end
   if not Travel.NET then
     -- no network: flight paths you know and the docks as plain nodes, straight rides
@@ -352,7 +379,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned)
   if not Travel.NET then
     for u = 3, #N do for v = u + 1, #N do
       local a, b = N[u], N[v]
-      if a.w[3] == b.w[3] and not gated(a, b) and (d(a, b) <= Travel.TOWN_WALK or not (risky(a.m) or risky(b.m))) then edge(u, v, d(a, b) / Travel.Speed(), "ride") end
+      if a.w[3] == b.w[3] and not gated(a, b) and (d(a, b) <= Travel.TOWN_WALK or not ((risky(a.m) and a.m ~= here) or (risky(b.m) and b.m ~= here)) and ((a.m ~= here and b.m ~= here) or d(a, b) <= Travel.DANGER_HERE_YD)) then edge(u, v, d(a, b) / Travel.Speed() * ((here and (a.m == here or b.m == here)) and Travel.DANGER_HERE or 1), "ride") end
     end end
   else
     -- with the network, a gate joins the key points of its own map
@@ -382,16 +409,16 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned)
       else edge(u, v, c, "boat"); adj[u][#adj[u]][4] = bt[4]; adj[v][#adj[v]][4] = bt[4] end
     end
   end
-  return { N = N, adj = adj, idx = idx, risky = risky, gated = gated }
+  return { N = N, adj = adj, idx = idx, risky = risky, gated = gated, here = here }
 end
-local function graphFor(ground, lvl, side, myRace, myClass)
+local function graphFor(ground, lvl, side, myRace, myClass, here)
   local learned = (ForeverRouteDB and ForeverRouteDB.docks) or {}
   local nodes = net()
   -- (everything the graph is made of; all but the flight paths you know and the piers you learned change almost never)
   local key = table.concat({ ground and "g" or "-", lvl, side, tostring(myRace), tostring(myClass), Travel.Speed(), taxiSig(), docksSig(learned),
-    tostring(nodes), tostring(Travel.NET), tostring(ns.FLIGHT), tostring(ns.FLIGHT_BY), tostring(C_Map and C_Map.GetMapInfo), tostring(ns.Engine and ns.Engine.KnowsFlightIn),
+    tostring(nodes), tostring(Travel.NET), tostring(ns.FLIGHT), tostring(ns.FLIGHT_BY), tostring(C_Map and C_Map.GetMapInfo), tostring(ns.Engine and ns.Engine.KnowsFlightIn), tostring(HBD.GetWorldCoordinatesFromZone),
     tostring(Travel.DOCKS), tostring(Travel.GATES), tostring(Travel.BOATS), tostring(Travel.ZONE_MIN), tostring(Travel.ZONE_MIN_HORDE), tostring(Travel.HOSTILE),
-    Travel.DANGER_ABOVE, Travel.TOWN_WALK, Travel.OFFNET, Travel.FLY, Travel.FLY_EXTRA, tostring(Travel.BOAT), tostring(TD.TRANSFER), Travel.HOSTILE_SEC, Travel.CROSS_CLEAR }, "|")
+    Travel.DANGER_ABOVE, Travel.TOWN_WALK, Travel.OFFNET, Travel.FLY, Travel.FLY_EXTRA, tostring(Travel.BOAT), tostring(TD.TRANSFER), Travel.HOSTILE_SEC, Travel.CROSS_CLEAR, tostring(here) }, "|")
   -- (the flight-path answers hold while the same things do, whichever kind of trip asks)
   local fk = key:sub(3)
   if fpKey ~= fk then fpKnown, fpKey = {}, fk end
@@ -399,7 +426,7 @@ local function graphFor(ground, lvl, side, myRace, myClass)
   if G then return G end
   -- (a few kept: the card's shortcut check asks with and without flights in turn)
   if graphCount >= 4 then graphs, graphCount = {}, 0 end
-  G = buildGraph(ground, lvl, side, myRace, myClass, learned)
+  G = buildGraph(ground, lvl, side, myRace, myClass, learned, here)
   graphs[key], graphCount = G, graphCount + 1
   return G
 end
@@ -421,7 +448,7 @@ local function planTrip(from, to, opts)
   local lvl = UnitLevel and UnitLevel("player") or 60
   local side = Travel.Side()
   local myRace, myClass = myRaceClass()
-  local G = graphFor(ground, lvl, side, myRace, myClass)
+  local G = graphFor(ground, lvl, side, myRace, myClass, Travel.DangerHere(from.m, side, lvl))
   local risky, gated, idx = G.risky, G.gated, G.idx
   -- this trip's nodes: you, the target, the kept graph's, and your inn; the roads that join them are this trip's own
   -- (ext), searched along with the graph's
@@ -446,8 +473,9 @@ local function planTrip(from, to, opts)
         local ok
         if onNet then ok = n.m == p.m or n.m2 == p.m else ok = not gated(p, n) end
         -- the danger rule holds where you join and leave the network too (a town walk is fine anywhere)
-        if ok and d(p, n) > Travel.TOWN_WALK and (risky(n.m) or risky(p.m)) then ok = false end
-        if ok then edge(e, v, d(p, n) * Travel.OFFNET / Travel.Speed(), "ride") end
+        local H = G.here
+        if ok and d(p, n) > Travel.TOWN_WALK and ((risky(n.m) and n.m ~= H) or (risky(p.m) and p.m ~= H) or ((n.m == H or p.m == H) and d(p, n) > Travel.DANGER_HERE_YD)) then ok = false end
+        if ok then edge(e, v, d(p, n) * Travel.OFFNET / Travel.Speed() * ((G.here and (n.m == G.here or p.m == G.here)) and Travel.DANGER_HERE or 1), "ride") end
       end
     end
   end
@@ -702,7 +730,9 @@ function Travel.Plan(from, to, opts)
   if now ~= frameAt and not pinned then frameMemo, frameAt, frameInn = {}, now, nil end
   local ground = opts and opts.ground
   local noHearth = opts and opts.hearth == false
-  local G = graphFor(ground, UnitLevel and UnitLevel("player") or 60, Travel.Side(), myRaceClass())
+  local lvlNow, sideNow = UnitLevel and UnitLevel("player") or 60, Travel.Side()
+  local rNow, cNow = myRaceClass()
+  local G = graphFor(ground, lvlNow, sideNow, rNow, cNow, Travel.DangerHere(from.m, sideNow, lvlNow))
   local inn = "-"
   if not ground and not noHearth then
     -- (the hearthstone's state, once a frame)
@@ -795,8 +825,10 @@ function Travel.Shortcut(from, to)
   -- said on the card and the arrow: why you are sent to a flight master for a step in your own zone
   local saved = math.max(1, math.floor((walk - onFoot) / 60 + 0.5))
   legs[1].say = legs[1].say or legs[1].text
-  legs[1].gain = secs <= walk - margin(walk) and ("about " .. math.max(1, math.floor((walk - secs) / 60 + 0.5)) .. " min quicker than walking there")
-    or ("about as quick as walking, and " .. saved .. " min less on foot")
+  -- (riding from level 40: "walking" and "on foot" read wrong to a mounted player - user)
+  local going = Travel.Speed() > (Travel.RIDE or 0) and "riding" or "walking"
+  legs[1].gain = secs <= walk - margin(walk) and ("about " .. math.max(1, math.floor((walk - secs) / 60 + 0.5)) .. " min quicker than " .. going .. " there")
+    or ("about as quick as " .. going .. " there, with " .. saved .. " min less " .. going)
   legs[1].text = legs[1].text .. " - " .. legs[1].gain
   memo.legs, memo.secs, memo.walk = legs, secs, walk
   return legs, secs, walk

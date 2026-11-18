@@ -513,9 +513,8 @@ ns.DUNGEON_QUESTS = {
     },
   },
   [2998] = { -- Excavation Site: Wetlands
-    ids = "95646 95664 95697 95810 98815",
+    ids = "95664 95697 95810 98815",
     open = {
-      { 95646, "Horrors in the Highland", 24, "A", nil, "Rethiel the Greenwarden, Wetlands", any = { 275 } },
       { 95664, "Elder Knowledge", 24, "H", nil, "a drop inside", true },
       { 95697, "Changing Tastes", 24, "H", nil, "Borstan, Orgrimmar" },
       { 95810, "Lost Relic Carry", 24, "A", nil, "a drop inside", true },
@@ -537,7 +536,7 @@ ns.DUNGEON_QUESTS = {
     open = {
       { 96393, "Old Ironforge Incursion", 9, "A", nil, "Earthseer Farsen, Dun Morogh", any = { 96391 } },
       { 96394, "The Restless Dead", 10, "A", nil, "Afadra Dunwall, Ironforge" },
-      { 96395, "An Ancient Grudge", 1, nil, nil, "Ghostly Attendant", true },
+      { 96395, "An Ancient Grudge", 10, nil, nil, "Ghostly Attendant", true },
       { 96403, "Important Heirlooms", 10, "A", nil, "Thom Filch, Ironforge" },
     },
   },
