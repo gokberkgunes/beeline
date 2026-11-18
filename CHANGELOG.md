@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0 - 2026-11-18
+- Class quests send you to the nearest NPC. Horde shamans hand in Call of Earth in their own starting zone instead of flying to Dun Morogh. Horde warlocks bind the Succubus and Incubus in Orgrimmar instead of Undercity. The dwarf shaman's Call of Air and the undead paladin's Trevan Rol are fixed the same way.
+- A class quest's work is planned where its mobs are thickest. Essence of the Exile's charms are all at Drywhisker Gorge.
+- The card is quieter. A step picked out of your plan's order no longer has a tag under it ("nearby · +700 XP", "while you're here · saves ~3 min"). The ? button still says why.
+- Joining near the end of your plan with finished quests from earlier in it, the card sends you to hand them in instead of saying "Route complete". A level 59 in Azshara had four ready in the log.
+- Skipping your faction's copy of a starting quest also drops its follow-ups. After Welcome to Shen'dar Village, the card no longer offered six follow-ups the game would never give you.
+- On a zone you picked, when what's left waits on quests you skipped, the card says "done for now". It no longer shows a hand-in as "Not finished": a level 51 on the Tanaris route was shown Super Sticky's hand-in with the tar in Un'Goro passed over.
+- Built-in plans rebuilt with these class-quest fixes. All 56 were played from 1 to 60 by simulated players: none broke, none had to grind.
+
 ## 1.6.12 - 2026-11-18
 - Rebuilt built-in plans on the latest Forever quest data (QuestieDB 1.1.2). In about 5,800 test characters logging in at random levels and places, 908 got a better card and over 460 kinds of problem went away, most of them a card offering a quest you couldn't actually take.
 - About 120 quests are back in the plans. Their item comes from an object the quest data had no place for, such as Robbie's Hat for Hats Off, in a clam shell by the river near its giver in Riverglades (2,150 XP). The objects' places now come from Wowhead.

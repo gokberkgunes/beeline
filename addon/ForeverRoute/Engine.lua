@@ -895,6 +895,11 @@ function Engine.Excluded(s) return shutBy(ns.QUEST_EX, s) end
 -- (deep: Call of Water is eight quests long - a cut at its third part cut the last one only at depth 5)
 local function cutQuest(q, depth)
   if State.IsCompleted(q) then return false end
+  -- (the other faction's copy of a quest - ns.QUEST_SIDE - is never yours: one of several prerequisites only it was kept
+  -- the follow-ups of a pick-up you skipped offered. Welcome to Shen'dar Village skipped, The Criminal Element and five
+  -- more were dead ends on the card, 93461 the Alliance Skyborne's copy - mutate --play 7)
+  local side = ns.QUEST_SIDE and ns.QUEST_SIDE[q]
+  if side and side ~= (ns.Travel.Side() == "horde" and "H" or "A") then return true end
   -- (a gray quest the gray rule drops, in your log or not, cuts what needs it: the chain goes as a whole. Its follow-ups
   -- keep it only when one is yellow to you, Engine.LeadsTo - so a green one after it goes too, rather than being the
   -- step you can never take: Harmony in Balance, level 1, dropped at 8 with its level 4 follow-ups on the card - mutate)
@@ -1512,7 +1517,11 @@ function Engine.Compute()
         elseif st == "wait" or st == "full" or st == "blocked" or st == "later" then held(i, st) else f2 = i; break end
       end
     end
-    found = f2
+    -- (nothing left to do above the floor: the quests you hold below it are the plan's work now, not a finished plan.
+    -- A level 59 that had joined past the Burning Steppes did the plan's last hand-in in Azshara with four of its quests
+    -- finished in the log - FIFTY! YEP!, The Good Stuff, Mayara Brightwing, A Donation of Mageweave - and the card said
+    -- "Route complete": the live solve offers those only near you - mutate --play 7/8)
+    found = f2 or found
   end
   -- A hand-in not ready, with an objective step of its quest still to do before it (passed below the floor, above, or
   -- however else the look came past it): that objective is the step, not the hand-in "Not finished" in red - the floor

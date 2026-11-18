@@ -158,15 +158,6 @@ local function build()
   cur.noChain:SetScript("OnLeave", function(self) self.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); GameTooltip:Hide() end)
   cur.noChain:SetWidth(cur.noChain.label:GetStringWidth() + 10)
   cur.noChain:Hide()
-  -- a step picked out of plan order: its short reason and what it saves; the whole reason and the plan's step on hover
-  cur.why = Style.Button(cur, "", 60, 14, function() end, nil)
-  cur.why.label:SetFontObject(Style.Font(10)); cur.why.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  cur.why:SetScript("OnEnter", function(self)
-    self.label:SetTextColor(1, 0.86, 0.5)
-    if self.tip then GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText(self.tip, 1, 1, 1, 1, true); if self.tip2 then GameTooltip:AddLine(self.tip2, 0.75, 0.8, 0.88, true) end; GameTooltip:Show() end
-  end)
-  cur.why:SetScript("OnLeave", function(self) self.label:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); GameTooltip:Hide() end)
-  cur.why:Hide()
   cur.bars = {}
   cur.heads = {} -- the dungeon state's quest names, one above each quest's bars
   cur.note = Style.Text(cur, 11, C.sub)
@@ -688,7 +679,7 @@ function Card.Fill()
   cur.doneData, cur.doneLvl, cur.celebrate = nil, nil, nil -- (set again below while the plan stays finished: Card.UpdateInner)
   cur.nbars = 0
   cur.choice = nil; for _, r in ipairs(cur.optRows or {}) do r:Hide() end
-  cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide(); cur.fq:Hide(); cur.why:Hide(); cur.noChain:Hide()
+  cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide(); cur.fq:Hide(); cur.noChain:Hide()
   local function bar() cur.nbars = cur.nbars + 1; local b = cur.bars[cur.nbars]; if not b then b = Style.Bar(cur); cur.bars[cur.nbars] = b end; return b end
   local function look(color, glyph)
     cur.disc:SetVertexColor(color[1], color[2], color[3]); cur.halo:SetVertexColor(color[1], color[2], color[3], 0.35)
@@ -708,11 +699,16 @@ function Card.Fill()
   -- a zone you picked with only quests left that wait (a level, an earlier quest): done for now - the card sat on a
   -- waiting pick-up instead and never said so (tester)
   local WAITING = { wait = true, blocked = true, later = true }
-  local forNow = data.zoneRoute and i and not ns.Engine.view and WAITING[ns.Engine.Status(i)] or false
+  -- (waiting as the engine's pick read it: with nothing to do now it falls back on the first step that waits, and a
+  -- hand-in whose objective is in the stretch your place skips waits there ("later") while its own status reads
+  -- "notready". Joining Tanaris's route by hearth at 51, Super Sticky's tar in Un'Goro was in that stretch, and the
+  -- card showed its hand-in "Not finished" instead of "Tanaris done for now" - mutate --play)
+  local function waiting(j) return WAITING[ns.Engine.Status(j)] or (ns.Engine.forNow and j == ns.Engine.planned) end
+  local forNow = data.zoneRoute and i and not ns.Engine.view and waiting(i) or false
   -- (the plan the same, when nothing on it is to do now - Engine.forNow: a level 59 at its last training was shown
   -- "Nothing to learn until level 60" with three zones' quests open - mutate --play)
   local planForNow = not forNow and i and not ns.Engine.view and ns.Engine.forNow and not (data.zoneRoute or data.dungeon or data.special or data.branch)
-    and WAITING[ns.Engine.Status(i)] or false
+    and waiting(i) or false
   -- your best few zones now, to pick the next home base from (here: the zone you stand in too)
   local function nextBases(here)
     local opts = {}
@@ -944,17 +940,6 @@ function Card.Fill()
       local rl = string.format("|cffffd100Hand-in run here: %d quests, about %s XP|r", run.n, BreakUpLargeNumbers and BreakUpLargeNumbers(run.xp) or tostring(run.xp))
       text = (text and text ~= "") and (rl .. "\n" .. text) or rl
     end
-    local planned = ns.Engine.planned
-    if planned and i ~= planned and steps()[planned] then
-      -- a short tag, not a sentence (the whole reason and the plan's step are its tooltip - persona review)
-      local why = ns.Next and ns.Next.Enabled() and ns.Next.Reason(i) or ""
-      local tag = ns.Next and ns.Next.Enabled() and ns.Next.Tag and ns.Next.Tag(i) or nil
-      cur.why.label:SetText(tag or "picked from where you are")
-      cur.why:SetWidth(cur.why.label:GetStringWidth() + 10)
-      cur.why.tip = why ~= "" and (why:sub(1, 1):upper() .. why:sub(2)) or "Picked up from where you are"
-      cur.why.tip2 = "Your plan's next step: " .. Card.Plain((Card.Describe(steps()[planned])))
-      cur.why:Show()
-    end
     -- (the options' "Step notes" off: hints go, warnings stay)
     if ns.db.cardNotes == false and color ~= C.warn and color ~= C.bad then text = "" end
     setNote(text, color)
@@ -1176,7 +1161,7 @@ function Card.Layout()
     y = y + Card.LINK_H
   end
   local prevLink = nn:IsShown() and nn or nil
-  for _, tagBtn in ipairs({ cur.why, cur.fq, cur.noChain }) do
+  for _, tagBtn in ipairs({ cur.fq, cur.noChain }) do
     if tagBtn:IsShown() then
       tagBtn:ClearAllPoints()
       if prevLink then tagBtn:SetPoint("LEFT", prevLink, "RIGHT", 8, 0)
