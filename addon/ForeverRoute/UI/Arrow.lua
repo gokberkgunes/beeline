@@ -423,8 +423,10 @@ function Arrow.SetTarget(i, force)
     f.label:SetText(target.label)
     f.arrow:Show(); f.check:Hide(); f.pulse:Stop(); f.ring:SetAlpha(0)
     f:SetShown(visible(i)); noteHidden(not visible(i) and hiddenReason(i, s) or nil)
+    if ns.GameNav then ns.GameNav.Follow(target) end -- (the game's own marker on the same spot: UI/GameNav.lua)
   else
     target = nil; f:Hide(); ns.Fire("FR_DISTANCE", nil)
+    if ns.GameNav then ns.GameNav.Follow(nil) end
     if ns.Nav then ns.Nav.Want(nil) end
     noteHidden(not step and "no step" or unknown and "no known spot for this step" or inDungeon and ("inside " .. inDungeon .. " (no coordinates in a dungeon)") or ns.Is(UnitOnTaxi, "player") and "on a flight" or (trip and trip.how == "aboard") and "aboard (boat or tram, or somewhere no trip starts from)" or step.k == "hearth" and "hearth step (nowhere to walk)" or ("no position for this step: " .. tostring(step.k) .. " " .. tostring(step.text)))
   end

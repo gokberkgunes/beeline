@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.11 - 2026-11-17
+- The game's own 3D navigation marker now shows where to go: a marker in the world with the yards to it, at the screen's edge when it's behind you. On a quest you're doing, the addon focuses that quest, as clicking it in the quest tracker does, and the game draws its marker when it has one. Everything else gets a map pin where the arrow points: a pick-up, a flight master, a boat, a quest the game doesn't mark. The game's setting for the marker is hidden on Forever; the addon turns it on for you. A map pin of your own is left alone. Turn it off in Options, Map: "Game's navigation marker".
+- Clearer card note when the card does quests here before the plan's next trip: "before the trip" instead of "you're here already".
+- The addon does less work every time it updates your route. Each update used to re-check, step by step, which parts of the plan are behind you, millions of times over a long play. It now remembers the answers until something changes. Logging in or reloading is quicker, and weaker PCs get fewer hitches.
+- No more trips across the world for a single hand-in from a zone you skipped. A level 46 who had left Azshara out, but still carried three quests picked up there, was sent 9,700 yards from Tanaris to Azshara for one hand-in while the plan went on in Searing Gorge. Quests you carry from a part of the plan you've passed no longer pull hand-ins there.
+
 ## 1.6.10 - 2026-11-17
 - Logging in or reloading is lighter. The addon now works out your route twice at login instead of four or more times. On a level 51 paladin that cut the work from about 0.5 s to 0.2 s, and the biggest single hitch from 0.4 s to 0.06 s.
 - With a full quest log, the card no longer sends you across the map to pick up a flight path on its own. A level 27 in Thousand Needles was sent to Thunder Bluff only for its flight path, while every quest there waited on room in the log. An added flight path now shows only when the step after it can be done.

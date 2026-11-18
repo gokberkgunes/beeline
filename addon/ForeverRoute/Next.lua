@@ -1250,11 +1250,12 @@ function Next.Reason(i)
   local L = ForeverRouteData and ForeverRouteData.steps
   if rj and rj.wait and st.step and st.step >= rj.at and L and L[rj.wait] then
     local t = L[rj.wait]
-    return "you're here already - the plan does these next; " .. (t.name or t.text or "its next step") .. " waits"
+    -- (in words a skimmer gets: "you're here already" read as if the trip had been skipped - user)
+    return "the plan's next step, " .. (t.name or t.text or "its next step") .. ", is across the zone; these later ones are right around you, so they come first"
   end
   if rj and st.step and st.step >= rj.at and L and rj.trip and L[rj.trip] then
     local t = L[rj.trip]
-    return "you're here already - the plan quests here next; " .. ((t.dest or t.text) and ("the trip to " .. (t.dest or t.text)) or "the trip") .. " waits"
+    return "the plan's next step is a trip to " .. (t.dest or t.text or "another zone") .. ", then it quests here; these come first, the trip waits"
   end
   if st.pickupFirst then return "pick it up before you head out - its work can be done on the same trip" end
   if st.early and st.chain then return "the chain goes on right here - hand it in and take the next" end
@@ -1276,7 +1277,7 @@ function Next.Tag(i)
     local ep = ns.Engine and ns.Engine.pos
     local near = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2 <= Next.HOLD_NEAR ^ 2
     tag = near and "right here" or "nearby"
-  elseif Next.rejoin and st.step and st.step >= Next.rejoin.at then tag = "you're here already"
+  elseif Next.rejoin and st.step and st.step >= Next.rejoin.at then tag = Next.rejoin.trip and "before the trip" or "close by first"
   elseif st.pickupFirst then tag = "before you head out"
   elseif st.early and st.chain then tag = "chain continues"
   elseif st.early and st.visit then tag = "saves a trip back"

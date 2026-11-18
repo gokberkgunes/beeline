@@ -86,6 +86,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   end
   -- (the passed part by place alone: a completed quest's steps there are done, not behind you - Engine.PassedFn)
   local passed = Engine.PassedFn and Engine.PassedFn()
+  local bm = Engine.BehindMemo and Engine.BehindMemo("gaps")
   for i = from, opts.at and from - 1 or math.min(#list, opts.maxIndex or #list) do
     if (i - from) % 8 == 7 then ns.MaybeYield() end -- (a route job: every 8 gaps a pause - never after the insert below)
     local s = list[i]
@@ -94,7 +95,11 @@ function Engine.InsertStop(new, px, py, pinst, opts)
     -- card and its Base left Riverglades for Wetlands - tester)
     -- (nor between two steps of quests you completed there: the route doesn't pass by them - the hand-in of Zapped Giants
     -- went in among Feralas's done steps behind you, the plan's next step, and the card sent you from Tanaris - mutate)
-    if (Engine.BehindYou and Engine.BehindYou(s)) or (passed and s.q and s.q > 0 and State.IsCompleted(s.q) and passed(i)) then prev = nil
+    -- (nor the pick-up of a quest you carry there: done too. A skyborne warrior 46 who left Azshara out but for three of
+    -- its pick-ups had Saving a Sentinel's hand-in put in between two of them at no cost - and with nothing else of
+    -- Azshara left to do, the card sent him 9,700 yd from Tanaris for it, the plan going on in Searing Gorge - mutate --play)
+    if (Engine.BehindYou and (bm and Engine.BehindYouIn(bm, s) or not bm and Engine.BehindYou(s)))
+      or (passed and s.q and s.q > 0 and passed(i) and (State.IsCompleted(s.q) or (s.k == "accept" and State.OnQuest(s.q)))) then prev = nil
     elseif s.k == "fly" or s.k == "hearth" then prev = nil -- a flight in between: the gap doesn't count
     else
       local w = wpos(s)
@@ -261,7 +266,8 @@ local function applyInserts()
   local have = {}
   -- (a hand-in behind you in the built-in plan is not on the route: Engine.BehindYou)
   local behind = {}
-  for _, s in ipairs(list) do if s.k == "turnin" and s.q then if Engine.BehindYou(s) then behind[s.q] = true else have[s.q] = true end end end
+  local bm = Engine.BehindMemo("hand-ins")
+  for _, s in ipairs(list) do if s.k == "turnin" and s.q then if Engine.BehindYouIn(bm, s) then behind[s.q] = true else have[s.q] = true end end end
   local px, py, pinst = HBD:GetPlayerWorldPosition()
   local added = false
   -- (on a zone you picked: only the hand-ins in that zone - the rest wait for your way back to the plan, as a side quest's

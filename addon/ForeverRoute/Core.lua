@@ -9,6 +9,7 @@ ns.DEFAULTS = {
   showNext = 3,          -- upcoming steps under the current one
   arrow = true,
   arrowScale = 1.0,
+  gameNav = true,        -- the game's own navigation marker (in-game navigation) on where the arrow points (UI/GameNav.lua)
   pins = true,
   pinCount = 4,          -- current + next N-1 on the maps
   pathLine = true,       -- dotted walking path on the world map and minimap

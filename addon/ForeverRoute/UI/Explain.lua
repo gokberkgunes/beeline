@@ -140,7 +140,8 @@ local PICK = {
   ["on the way"] = "Quickest from here: it's on the way",
   ["before you head out"] = "Pick it up before you leave: its work fits on the same trip",
   ["chain continues"] = "Quickest from here: the chain goes on right here",
-  ["you're here already"] = "Quickest from here: you're here already, and these quests are next on your plan",
+  ["before the trip"] = "Quickest from here: your plan quests here right after a short trip, so these come first and the trip waits",
+  ["close by first"] = "Quickest from here: these quests of your plan are right around you, so they come first",
   ["right here"] = "Worth it: right here, and still XP at your level",
   ["nearby"] = "Worth it: close by, and still XP at your level",
 }
@@ -227,7 +228,8 @@ function Explain.Lines(i)
   if not why then
     local kept = recentWhy("next", 180, "^kept the plan's step")
     if ns.Next and ns.Next.rejoin and planned and i >= (ns.Next.rejoin.at or math.huge) then
-      why = "Quickest from here: you're here already, and these quests are next on your plan."
+      why = ns.Next.rejoin.trip and "Quickest from here: your plan quests here right after a short trip, so these come first and the trip waits."
+        or "Quickest from here: these quests of your plan are right around you, so they come first."
     elseif kept and kept.x:find("another continent", 1, true) then
       why = "Next on your plan. The quickest other stop is on another continent, so this comes first."
     elseif kept then

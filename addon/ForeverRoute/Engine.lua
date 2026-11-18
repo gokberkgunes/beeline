@@ -699,8 +699,24 @@ function Engine.HereMap()
 end
 -- The part of the built-in plan behind you, by the place of a step alone: -> before(j), low(j) for this moment, and
 -- the step you joined at
+local passedPartFresh
+-- (memoized on the plan's index: Engine.BehindYou asks for every step of the plan on every refresh, and the answer only
+-- moves with your level, where you joined the plan and the stretch you start in - Place, FirstStretch and a 40-step scan
+-- for each of ~2700 steps was most of a refresh in the simulator. The functions themselves are in the key: a test stubs them)
 local function passedPart(c, list)
   local L = UnitLevel("player") or 1
+  local j = ns.char and ns.char.join
+  local m = c.pp
+  if m and m.L == L and m.place == Engine.Place and m.first == Engine.FirstStretch and m.noPlace == Engine.noPlace
+    and m.key == (ns.planKey and ns.planKey.starter) and m.jl == (j and j.level) and m.jp == (j and j.plan) and m.jf == (j and j.first) then
+    return m.before, m.low, m.at
+  end
+  local before, low, at = passedPartFresh(c, list, L)
+  c.pp = { L = L, place = Engine.Place, first = Engine.FirstStretch, noPlace = Engine.noPlace, key = ns.planKey and ns.planKey.starter,
+    jl = j and j.level, jp = j and j.plan, jf = j and j.first, before = before, low = low, at = at }
+  return before, low, at
+end
+function passedPartFresh(c, list, L)
   local _, at = Engine.Place()
   local f1, f2 = nil, nil
   if at then f1, f2 = Engine.FirstStretch() end
@@ -746,7 +762,67 @@ function Engine.PassedFn()
   return low
 end
 -- planOnly: as the plan sees it, without the live solve's pick-up from behind you (Next.taken) - Engine.Compute
+-- (each answer is kept for the rest of the outermost call: a step asks its pick-up, which asks the hand-in of every
+-- earlier quest of its chain, each of which asks its own pick-up and chain again - 4.1M calls for 350k statuses over a
+-- long play, most of a refresh. Nothing it reads changes during one call)
+-- Inside a refresh (or a route job's pass) the answers are kept as long as its statuses are (Engine.Status's batch:
+-- wiped when something changes) - for the same live pick-up from behind you, zone and place.
+-- (the memos are kept tables, wiped for reuse: a new one for each call left ~100 KB of garbage a refresh - perf gate)
+local behindYouRaw, bmemo
+local batch -- (Engine.Status's, below)
+local CALL = { p = {}, n = {} }
+local BATCH = { p = {}, n = {} }
+local function clear(m) if m.used then wipe(m.p); wipe(m.n); m.used = nil end end
 function Engine.BehindYou(s, planOnly)
+  if s == nil then return false end
+  if batch and not bmemo then
+    local m = BATCH
+    local taken, L = ns.Next and ns.Next.taken, UnitLevel("player")
+    if not (batch.by and m.owner == batch and m.taken == taken and m.L == L and m.here == Engine.here and m.noPlace == Engine.noPlace) then
+      clear(m)
+      m.owner, m.taken, m.L, m.here, m.noPlace = batch, taken, L, Engine.here, Engine.noPlace
+      batch.by = true -- (gone when the batch is wiped: the memo goes with it)
+    end
+    bmemo = m
+    local ok, v = pcall(Engine.BehindYou, s, planOnly)
+    bmemo = nil
+    if not ok then error(v, 0) end
+    return v
+  end
+  if bmemo then
+    local t = planOnly and bmemo.p or bmemo.n
+    local v = t[s]
+    if v == nil then v = behindYouRaw(s, planOnly); t[s] = v; bmemo.used = true end
+    return v
+  end
+  bmemo = CALL
+  local ok, v = pcall(behindYouRaw, s, planOnly)
+  bmemo = nil
+  clear(CALL)
+  if not ok then error(v, 0) end
+  return v
+end
+-- a pass over many steps that changes nothing between them (Engine.InsertStop's gaps, the hand-ins applyInserts looks
+-- at): its own memo, m = Engine.BehindMemo(name), so each chain is walked once for the pass, not once a step. Set only
+-- for each call - a route job's pass pauses between them, and nothing else may read it then (in a route job's pass: a
+-- memo of its own; otherwise the kept one of that name, wiped)
+local PASS = {}
+function Engine.BehindMemo(name)
+  if ns.sliceCo and coroutine.running() == ns.sliceCo then return { p = {}, n = {} } end
+  local m = PASS[name or ""]
+  if not m then m = { p = {}, n = {} }; PASS[name or ""] = m end
+  clear(m)
+  return m
+end
+function Engine.BehindYouIn(m, s, planOnly)
+  if bmemo or batch or s == nil then return Engine.BehindYou(s, planOnly) end
+  bmemo = m
+  local ok, v = pcall(Engine.BehindYou, s, planOnly)
+  bmemo = nil
+  if not ok then error(v, 0) end
+  return v
+end
+function behindYouRaw(s, planOnly)
   if Engine.noPlace or not (s and ns.planKey and ns.planKey.starter) then return false end
   -- (a zone you picked has nothing behind you: you chose to go there - its steps all read "done" when you came back to it)
   if ForeverRouteData and ForeverRouteData.zoneRoute then return false end
@@ -1061,7 +1137,7 @@ local function statusRaw(i)
   return "todo"
 end
 -- during a refresh (and the card / list redraw it triggers) each step's status is worked out once and reused
-local batch = nil
+batch = nil -- (declared above Engine.BehindYou, which keeps its answers with it)
 function Engine.Status(i)
   if batch then local c = batch[i]; if c then return c end end
   local st = statusRaw(i)

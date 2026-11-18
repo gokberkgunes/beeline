@@ -59,6 +59,7 @@ UI\Window.lua
 UI\Explain.lua
 UI\Card.lua
 UI\Arrow.lua
+UI\GameNav.lua
 UI\Pins.lua
 UI\Zones.lua
 UI\List.lua
