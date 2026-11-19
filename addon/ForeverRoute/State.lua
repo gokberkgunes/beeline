@@ -331,17 +331,19 @@ local function taxiWorld()
 end
 -- A flight master's map is the truth for its continent: what it lists as reachable you know, and every guess there
 -- (State.GuessTaxi) goes - a wrong guess costs one trip at most. Guesses on the other continent stay until a flight map
--- is opened there.
+-- is opened there. -> true when what you know changed (a path new to you, a guess gone, the first flight map seen)
 function State.TaxiMapSeen(nodes, inst)
   local W = taxiWorld()
+  local changed = not ns.char.taxiSeen
   for name, v in pairs(State.knownTaxi) do
-    if v == "guess" and (inst == nil or (W[name] and W[name][3] == inst)) then State.knownTaxi[name] = nil end
+    if v == "guess" and (inst == nil or (W[name] and W[name][3] == inst)) then State.knownTaxi[name] = nil; changed = true end
   end
   for _, n in ipairs(nodes) do
-    if n.name and (n.kind == "REACHABLE" or n.kind == "CURRENT") then State.knownTaxi[n.name] = true end
+    if n.name and (n.kind == "REACHABLE" or n.kind == "CURRENT") and State.knownTaxi[n.name] ~= true then State.knownTaxi[n.name] = true; changed = true end
   end
   ns.char.knownTaxi = State.knownTaxi
   ns.char.taxiSeen = true -- (a flight map seen: the flight paths you know are known - Travel.FPNote, no more guessing)
+  return changed
 end
 ns.On("TAXIMAP_OPENED", function()
   if not NumTaxiNodes then return end
@@ -351,9 +353,11 @@ ns.On("TAXIMAP_OPENED", function()
   end
   local HBD = LibStub("HereBeDragons-2.0", true)
   local inst = HBD and select(3, HBD:GetPlayerWorldPosition())
-  State.TaxiMapSeen(nodes, inst)
+  local changed = State.TaxiMapSeen(nodes, inst)
   ns.Fire("FR_TAXI_OPENED")
-  State.Announce("FR_STATE", false)
+  -- (the route again only when what you know changed: opening the map to fly was a 53 ms refresh for nothing in a
+  -- player's game - /fr report perf, a slow moment on TAXIMAP_OPENED)
+  if changed then State.Announce("FR_STATE", false) end
 end)
 
 -- The flight paths you know without opening a flight master's map: the world map's own flight points

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1 - 2026-11-19
+- Handing in a quest is quicker. Each hand-in used to look over your whole plan again from its first step: about 1,500 steps at level 38 and 2,000 at 51. It now looks only around your place in the plan. A hand-in at level 51 went from about 35 ms to 22 ms in our tests.
+- No more small hitch every 5 minutes. The addon's own timing check read the memory of every addon you have loaded, about 76 ms with 30 addons. It now does that only when you log out.
+- Opening a flight master's map no longer recalculates your route unless you learned a new flight path there. It cost about 50 ms each time.
+- Priests: the racial spell quests are two stops, at the level each one opens. Feedback (and Elune's Grace, Shadowguard and the others) was picked up at 18 or 19 and had to wait for 20.
+
 ## 1.7.0 - 2026-11-18
 - Class quests send you to the nearest NPC. Horde shamans hand in Call of Earth in their own starting zone instead of flying to Dun Morogh. Horde warlocks bind the Succubus and Incubus in Orgrimmar instead of Undercity. The dwarf shaman's Call of Air and the undead paladin's Trevan Rol are fixed the same way.
 - A class quest's work is planned where its mobs are thickest. Essence of the Exile's charms are all at Drywhisker Gorge.

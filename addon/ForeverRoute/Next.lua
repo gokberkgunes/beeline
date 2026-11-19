@@ -611,6 +611,8 @@ local function after(idx, j)
 end
 
 local last -- { sig, at, pick, res }
+-- the next pick solves afresh, whatever the last one was (/fr report perf times a solve: the dev tools)
+function Next.Forget() last = nil end
 -- a stop you said "not now" to, while it holds: you are still about where you said it, and not long after
 -- (by the step itself, not its number: a stop inserted before it - a side trip, a flight path, a chain start - moved
 -- the number on, and "not now" on a training stop came straight back as the step after it was put off - tester)

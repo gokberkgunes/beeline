@@ -120,9 +120,19 @@ end
 -- wrap a function so its errors are logged instead of thrown (for OnUpdate scripts and timers)
 ns.stats = {} -- name -> { n, total, max } (ms), since the last perf sample
 local clock = debugprofilestop
+ns.loadedAt = GetTime and GetTime() or 0
+-- the slow moments, with what set them off: a timing of SLOW_MS or more is kept (the last 30, per character) with the
+-- game event being handled (nil: a timer or a frame), the seconds since the UI loaded and your level. The totals above
+-- said a quest log change once cost 73 ms, never which one or when (/fr report perf lists these: the dev tools)
+ns.SLOW_MS = 30
 function ns.Time(name, ms)
   local st = ns.stats[name]; if not st then st = { n = 0, total = 0, max = 0 }; ns.stats[name] = st end
   st.n = st.n + 1; st.total = st.total + ms; if ms > st.max then st.max = ms end
+  if ms >= ns.SLOW_MS and ns.char then
+    local L = ns.char.slow; if not L then L = {}; ns.char.slow = L end
+    L[#L + 1] = { n = name, ms = math.floor(ms * 10 + 0.5) / 10, at = time and time() or 0, up = GetTime and math.floor(GetTime() - ns.loadedAt) or nil, ev = ns.event, lvl = UnitLevel and UnitLevel("player") or nil }
+    while #L > 30 do table.remove(L, 1) end
+  end
 end
 function ns.Guard(where, fn)
   return function(...)
@@ -166,7 +176,8 @@ ns.GetItemIcon = (C_Item and C_Item.GetItemIconByID) or GetItemIcon
 ns.GetItemStats = (C_Item and C_Item.GetItemStats) or GetItemStats
 
 ns.frame = CreateFrame("Frame")
-ns.frame:SetScript("OnEvent", function(_, event, ...) ns.Fire(event, ...) end)
+-- (ns.event: the game event being handled, for the slow moments above)
+ns.frame:SetScript("OnEvent", function(_, event, ...) local was = ns.event; ns.event = event; ns.Fire(event, ...); ns.event = was end)
 ns.frame:RegisterEvent("ADDON_LOADED")
 
 local function copyDefaults(dst, src)
@@ -459,6 +470,8 @@ SlashCmdList.FOREVERROUTE = function(msg)
   elseif msg == "news" then ns.Fire("FR_NEWS")
   elseif msg == "report" then ns.Fire("FR_REPORT", false)
   elseif msg == "report full" then ns.Fire("FR_REPORT", true)
+  -- (the dev tools addon, ForeverRoute_Dev, never in a release: times the hot paths where you stand)
+  elseif msg == "report perf" then if ns.DevReportPerf then ns.DevReportPerf() else ns.Print("/fr report perf needs the Forever Route dev tools (not part of a release)") end
   elseif msg == "logcheck" or msg == "cleanup" then ns.Fire("FR_TOGGLE_LOGCHECK")
   elseif msg == "nope" then ns.Engine.Nope()
   elseif msg == "rejoin" then ns.Engine.Rejoin()
@@ -512,8 +525,10 @@ function ns.Perf(memOnly)
   return p
 end
 
-local function perfSample()
-  if UpdateAddOnMemoryUsage then pcall(UpdateAddOnMemoryUsage) end
+-- (the addon's memory is read only at logout: UpdateAddOnMemoryUsage walks every loaded addon's memory - 76 ms in a
+-- player's game with ~30 addons, a hitch every 5 minutes from this sample alone: /fr report perf, "SEEN perf")
+local function perfSample(atLogout)
+  if atLogout == true and UpdateAddOnMemoryUsage then pcall(UpdateAddOnMemoryUsage) end
   local okm, mem = pcall(GetAddOnMemoryUsage or error, ADDON)
   local e = { at = time and time() or 0, memoryKB = okm and type(mem) == "number" and math.floor(mem) or nil, level = UnitLevel("player"), route = ns.char and ns.char.routeId } -- no map id: Forever may hand it out as a protected value that can't be saved
   for name, st in pairs(ns.stats) do e[name] = string.format("%d calls, avg %.2f ms, max %.2f ms", st.n, st.n > 0 and st.total / st.n or 0, st.max) end
@@ -525,6 +540,6 @@ end
 -- failures go to the error log (they used to be swallowed, which hid a broken logger)
 local guardedSample = ns.Guard("perf", perfSample)
 ns.On("FR_LOADED", function() C_Timer.After(60, guardedSample); ns.NewTicker(300, guardedSample) end)
-ns.On("PLAYER_LOGOUT", guardedSample)
+ns.On("PLAYER_LOGOUT", function() guardedSample(true) end)
 ns._perfSample = perfSample -- for tests
 

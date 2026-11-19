@@ -960,7 +960,11 @@ function Engine.WaitsForHandIn(s)
   return not Engine.TooHigh(s)
 end
 local PVP = ns.PVP_QUESTS -- (PvpQuests.lua loads before this file: one table, read per step)
+-- steps whose status was worked out, ever (the perf battery counts them per moment: a quest change that looks at the
+-- whole plan shows here as thousands - tests/_perf.lua, "status")
+Engine.statusN = 0
 local function statusRaw(i)
+  Engine.statusN = Engine.statusN + 1
   local s = steps()[i]
   if not s then return "done" end
   local id = key(i)
@@ -1292,6 +1296,14 @@ ns.On("PLAYER_ENTERING_WORLD", function() Engine.placeReady = true end)
 local doneRun = { list = nil, k = 0, step = nil, key = nil }
 Engine.doneRunMiss = 0 -- (the simulator: times the check found the run wrong)
 function Engine.ForgetDone() doneRun.list = nil; doneRun.k = 0 end
+-- quests gone from your log since the last look (QUEST_REMOVED, further down): one not handed in forgets the run
+local removed = {}
+local function settleRemoved()
+  for id in pairs(removed) do
+    if not State.IsCompleted(id) then Engine.ForgetDone(); break end
+  end
+  wipe(removed)
+end
 local function doneKey(skipFrom, skipTo)
   local c = ns.char or {}
   local j = c.join
@@ -1401,6 +1413,7 @@ function Engine.SetFinishing(on)
   Engine.Refresh()
 end
 function Engine.Compute()
+  if next(removed) then settleRemoved() end
   Engine.cappedNow = Engine.Capped() -- (Engine.CardAt reads it: no step on the card for a 60)
   Engine.finishNow = not Engine.cappedNow and Engine.Finishing() -- (statusRaw reads it)
   if Engine.cappedNow then Engine.forNow, Engine.planDone, Engine.levelHold = false, true, nil; return nil end
@@ -1862,9 +1875,14 @@ end
 -- one refresh, run after them all. A flight path found or a bonus item in your bags (State.Announce without the
 -- log's coalescing) ran the plan's refresh first and then one per stop added, the first on the route about to change
 ns.Around("FR_STATE", function(dispatch, ...) Engine.Coalesce(dispatch, true, ...) end)
-for _, e in ipairs({ "QUEST_REMOVED", "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
+for _, e in ipairs({ "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
   ns.On(e, function() Engine.ForgetDone() end)
 end
+-- A quest gone from your log: dropped, its steps come back (forget the run) - or handed in, which only makes steps done.
+-- The game fires QUEST_REMOVED for a hand-in too, and forgetting there made every hand-in look at the plan from its
+-- start: 1,546 statuses and ~8 ms at level 38, 1,991 at 51 (the perf battery's "status"; an optimized fork of 1.6.8
+-- pointed at the whole-plan look). Which it was is settled at the next refresh, after both events, whatever their order
+ns.On("QUEST_REMOVED", function(id) if id then removed[id] = true else Engine.ForgetDone() end end)
 -- (a new zone matters only going into or out of a dungeon: a run there is done while you are inside)
 local wasInside
 ns.On("ZONE_CHANGED_NEW_AREA", function() local inside = ns.Is(IsInInstance); if inside ~= wasInside then wasInside = inside; Engine.ForgetDone() end end)
