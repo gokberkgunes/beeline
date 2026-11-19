@@ -10,6 +10,7 @@ play: your plan loads by itself, quests you've already done are skipped, and it 
 
 **The next thing to do, always on screen.** It reads your quest log live, counts kills and loot, ticks steps off as you
 play, and fits in hand-ins you finished early when you pass by. Skip a quest or a dungeon and the route keeps up.
+The **?** on the card says why it picked a step, and the game's 3D navigation marker shows where to go.
 
 ![The card, step by step](docs/img/card.gif)
 

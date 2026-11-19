@@ -8,7 +8,7 @@ A step card, a waypoint arrow and map pins tell you exactly what to do next: wha
 
 ## The card
 
-The next thing to do, always on screen. It reads your quest log live, counts kills and loot, ticks steps off as you play, and fits in hand-ins you finished early when you pass by. Skip a quest or a dungeon and the route keeps up. Inside a dungeon it shows that dungeon's quests with live progress.
+The next thing to do, always on screen. It reads your quest log live, counts kills and loot, ticks steps off as you play, and fits in hand-ins you finished early when you pass by. Skip a quest or a dungeon and the route keeps up. Inside a dungeon it shows that dungeon's quests with live progress. Wondering why it sent you somewhere? The **?** on the card says why, in a line.
 
 ![The card, step by step](https://raw.githubusercontent.com/noopz/ForeverRoute/main/docs/img/card.gif)
 
@@ -23,6 +23,7 @@ Bored of a zone? Pick another. **Where to?** (the route window, or `/fr paths`) 
 - **A plan for every race and class (56 in all)**, 1 to 60, through Forever's new zones (Riverglades, Shen'dralas), with no grinding
 - **Class quests built in**: Redemption and the Warhorse for paladins, warlock pets, druid forms, shaman totems, warrior stances, rogue poisons - as side trips you choose
 - **The waypoint arrow and map pins**, which walk you to every stop, along the roads and around hostile camps
+- **The game's own 3D navigation marker** on every stop, with the yards to it (hidden on Forever; the addon turns it on)
 - **Travel that knows the world**: flight paths, boats, zeppelins, the tram, hearthstone, mage and druid teleports, and the Skyborne skyship; a long walk becomes a flight when that's clearly faster
 - **A target key**: one key targets the step's NPC and marks it with a star (Keybindings > AddOns > Forever Route Targeting)
 - **Optional quest automation**: accept your route's quests and hand in finished ones (never when there's a reward to choose), with best-reward hints
