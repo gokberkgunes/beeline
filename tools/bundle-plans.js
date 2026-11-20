@@ -26,7 +26,9 @@ for (const d of fs.readdirSync(path.join(ROOT, 'addon')).sort()) {
 // copied into 28 plans, took the faction's file from about 30 MB to 53. Each is kept once (BeelinePlanShared) and
 // each plan has a one-line marker where it was; the addon puts the text back into your plan only (Core.lua LoadStarter).
 // A marker whose route is missing is a Lua comment: that plan still loads, without that one zone route.
-const ZR_BLOCK = /\n  \{\n    id = "(zone:[^"\n]+)",[\s\S]*?\n  \},?(?=\n)/g;
+// The dungeon routes (tools/dungeon-routes.js) too: a dungeon's route is the same for most races and classes of a
+// faction (a class quest for it is what makes one differ: that plan keeps its own) - 7 MB a faction, kept once.
+const ZR_BLOCK = /\n  \{\n    id = "((?:zone|dungeon):[^"\n]+)",[\s\S]*?\n  \},?(?=\n)/g;
 // the trunk's visits (paths.js BeelineVisits) are the same in every plan of a faction too: kept once, as "visits"
 const VISITS_BLOCK = /\nBeelineVisits = \{\n[\s\S]*?\n\}(?=\n)/g;
 // every block kept once: [text, id]

@@ -2,6 +2,8 @@
 
 *Formerly ForeverRoute. Same addon, new name: the command is `/bee` (`/fr` still works for now).*
 
+**Updating from ForeverRoute?** Your addon app updates it like any other version. Restart the game once afterwards (a /reload isn't enough). Your settings, key bindings and learned flight paths come over by themselves. Installed by hand? You can delete the old `ForeverRoute_Plans_Alliance` and `ForeverRoute_Plans_Horde` folders.
+
 **Leveling routes for WoW Forever, 1 to 60, for all 56 race and class combinations, Alliance and Horde.**
 
 A step card, a waypoint arrow and map pins tell you exactly what to do next: what to accept, what to kill or collect, where to hand in, when to train, and how to get to the next zone. Install it and play: your plan loads by itself, quests you've already done are skipped, and it works at any level - install it at 30 and it starts you on the best part of the plan for where you are.

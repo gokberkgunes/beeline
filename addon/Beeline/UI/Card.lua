@@ -285,6 +285,11 @@ local function build()
   f.finish = Style.Button(f, "Finish my quests", 130, 18, function() ns.Engine.SetFinishing(not ns.Engine.Finishing()) end,
     "Finish the quests in your log: their objectives and hand-ins, nothing new picked up. Click again to stop.")
   f.finish:Hide()
+  -- on a dungeon route or side trip: the way back to your plan, always on the card (the house in the hover bar was the
+  -- only one, and hard to find - tester)
+  f.leave = Style.Button(f, "Back to plan", 100, 18, function() ns.LeaveDungeonRoute() end,
+    "Leave this dungeon route or side trip and carry on with your plan. Progress here is kept.")
+  f.leave:Hide()
   f.home = f.btn.home
   f.home.label = f.home:CreateFontString(nil, "ARTWORK"); f.home.label:SetFontObject(Style.Font(10)); f.home.label:Hide() -- (its name: the tooltip's first line)
   f.home:Hide()
@@ -1191,7 +1196,7 @@ function Card.Layout()
   f.line:Hide()
   if ns.db.collapsed then
     for _, r in ipairs(f.rows) do r:Hide() end
-    f.eta:Hide(); f.ret:Hide(); f.drop:Hide(); f.dropWanted = nil
+    f.eta:Hide(); f.ret:Hide(); f.leave:Hide(); f.drop:Hide(); f.dropWanted = nil
     for _, b in pairs(f.btn) do b:Hide() end
     -- (and every row under the card: the reminders, offers and Change home base stayed below a collapsed card - tester)
     for _, row in pairs(Card.ExtraRows()) do row:Hide() end
@@ -1319,6 +1324,9 @@ function Card.Layout()
     f.finish.label:SetText(fin and "Back to level 60" or "Finish my quests")
     f.finish:ClearAllPoints(); f.finish:SetPoint("TOPLEFT", PAD, -top); top = top + 24
   end
+  local trip = BeelineData and BeelineData.dungeon and not viewing and not showFin
+  f.leave:SetShown(trip and true or false)
+  if trip then f.leave:ClearAllPoints(); f.leave:SetPoint("TOPLEFT", PAD, -top); top = top + 24 end
   f.dropY = -top - 2
   f.eta:Show(); f.eta:ClearAllPoints(); f.eta:SetPoint("TOPLEFT", PAD, -top - 4); f.eta:SetPoint("RIGHT", f, "RIGHT", -PAD - (f.dropWanted and f.drop:GetWidth() + 4 or 0), 0)
   local d = BeelineData
@@ -1540,8 +1548,32 @@ end
 -- level the plan had you at for this step and the plan's last level ("planned for level 33 · plan goes to level 43"),
 -- which a player can't act on: "meaningless and confusing" (tester). Empty on a travel step (the card's own lines
 -- say where it goes and why) and on a dungeon route; "Last zone on this plan" when nothing comes after.
+-- on a dungeon route: which of its three parts you're in - "Pick up 3/4 > Run > Hand in", the part you're on lit
+function Card.DungeonPhase(i)
+  local list = steps()
+  local run
+  for k, s in ipairs(list) do if ns.Engine.RunDungeon(s) then run = k; break end end
+  if not run then return "" end
+  -- the dungeon's own quests: the ones handed in after the run
+  local main, have = 0, 0
+  for k = run + 1, #list do
+    local s = list[k]
+    if s.k == "turnin" and s.q and s.q > 0 then
+      main = main + 1
+      if ns.State.OnQuest(s.q) or ns.State.IsCompleted(s.q) then have = have + 1 end
+    end
+  end
+  local part = (not i or i < run) and 1 or (i == run and 2) or 3
+  local gold, dim = "|cffffd25a", "|cff8a93a6"
+  local function lit(n, text) return (n == part and gold or dim) .. text .. "|r" end
+  local left = 0
+  if part == 3 then for k = run + 1, #list do local s = list[k]; if s.k == "turnin" and s.q and not ns.State.IsCompleted(s.q) then left = left + 1 end end end
+  return lit(1, string.format("1 Pick up %d/%d", have, main)) .. dim .. "  >  |r" .. lit(2, "2 Run") .. dim .. "  >  |r" .. lit(3, part == 3 and string.format("3 Hand in (%d left)", left) or "3 Hand in")
+end
+
 function Card.FooterText(i)
   local data = BeelineData
+  if data and data.dungeon and not data.special then return Card.DungeonPhase(i) end
   local s = i and steps()[i]
   if not (s and s.zone and data and not data.dungeon and ns.Engine.ZonesAhead) then return "" end
   -- (the card showing a stop pulled forward out of the plan's order: count from the plan's own next step - the footer said
@@ -1597,7 +1629,7 @@ function Card.UpdateInner(animate)
   -- (inside a dungeon the header is the dungeon's: Card.FillDungeon)
   if not (f.cur.dungeon and ns.Dungeon and ns.Dungeon.Inside()) then Card.Header() end
   Card.UpdateProgress()
-  f.eta:SetText(ns.db.cardZones ~= false and Card.FooterText(i) or "")
+  f.eta:SetText((ns.db.cardZones ~= false or (BeelineData and BeelineData.dungeon)) and Card.FooterText(i) or "") -- (a dungeon route's parts show whatever the zones option)
   local cur = f.cur
   if animate then
     cur.animOut:Stop(); cur.animIn:Stop(); cur.pop:Stop()

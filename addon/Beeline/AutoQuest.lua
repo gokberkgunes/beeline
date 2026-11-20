@@ -17,7 +17,9 @@ function Auto.Enabled() return ns.db and ns.db.autoQuest == true and not (IsShif
 local wantCache, wantFor, escortCache
 local function build()
   local routes = {}
-  for _, r in ipairs(ns.Routes and ns.Routes() or {}) do routes[#routes + 1] = r end
+  -- (not the dungeon routes: one per dungeon, unpacked here they stayed unpacked and every later look over your routes'
+  -- steps went through them - the one you picked is BeelineData, below)
+  for _, r in ipairs(ns.Routes and ns.Routes() or {}) do if not (r.dungeon and not r.special) then routes[#routes + 1] = r end end
   if BeelineData then routes[#routes + 1] = BeelineData end -- (the plan you are on)
   if wantFor ~= routes[1] or not wantCache then
     wantCache, escortCache, wantFor = {}, {}, routes[1]

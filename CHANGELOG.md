@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0 - 2026-11-19
+- Dungeons: a group's going? `/bee dungeons` (or the sword button on the card) now lists every dungeon with quests for your race and class, from the Deadmines to Stratholme, and Forever's Krol'dok Stronghold. Pick one and the card gets you every quest for it, including the earlier quests that unlock them, then takes you to the entrance, then hands everything in. Your plan waits; "Back to plan" returns to it.
+- The dungeons for your level come first, each with how many of its quests you still have left. Dungeons whose quests you've all done drop off the list. Class quests and special rewards follow the dungeons.
+
 ## 2.0.0 - 2026-11-19
 - ForeverRoute is now Beeline. Another addon is also called ForeverRoute, and the two were easy to mix up. Same addon, same plans, new name.
 - The command is /bee (or /beeline). /fr still works for now, and so do /bl and /bline when no other addon uses them.

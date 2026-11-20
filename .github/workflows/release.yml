@@ -11,7 +11,7 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Package
         run: bash tools/package.sh "${GITHUB_REF_NAME#v}"
       # a tag without a CHANGELOG.md section fails here, before anything is published
