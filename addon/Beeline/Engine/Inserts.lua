@@ -45,6 +45,7 @@ function Engine.OnFoot(am, ax, ay, bm, bx, by)
   return v
 end
 
+-- opts.rough: priced by straight-line detours alone (never more than the real price: it can only rule a far stop out)
 -- opts.at: at this step, no search (a quest giver you stand next to: now). opts.dry: nothing is added; -> where, cost
 -- opts.maxIndex: only before this step (a side quest's objective: while the quest still gives XP)
 function Engine.InsertStop(new, px, py, pinst, opts)
@@ -55,6 +56,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   -- (from your place in the plan, not the card's step when that is a quest from the part you passed - review)
   local fromPlan = (ns.Next and ns.Next.taken and ns.Next.taken == list[cur] and Engine.planned and Engine.planned > cur) and Engine.planned or cur
   local from = math.max(fromPlan, opts.minIndex or cur)
+  Engine.lastInsertCost = nil -- (a stop that can't go anywhere leaves no price behind: the merge's "left for later" read the last one)
   local X = wpos(new); if not X then return nil end
   -- gaps: (you -> current step) when you're on the same map, then each pair of neighbouring stops after it
   local best, bestCost = opts.at, nil
@@ -67,6 +69,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   -- what the stop costs in the gap a -> s (nil: this gap can't take it)
   local function gapCost(a, s, w)
     if not touches(a, s.m) then return nil end
+    if opts.rough then return wd(a.w, X) + wd(X, w) - wd(a.w, w) end -- straight lines only: a lower bound, no trip searches
     if Engine.OnFoot(a.m, a.x, a.y, s.m, s.x, s.y) then return wd(a.w, X) + wd(X, w) - wd(a.w, w) end
     local c
     if Engine.OnFoot(a.m, a.x, a.y, new.m, new.x, new.y) then c = 2 * wd(a.w, X) end
@@ -176,7 +179,8 @@ function Engine.MergeSideTrips()
   for _, r in ipairs(ns.DungeonRoutes()) do
     if r.special and r.id ~= d.id and (UnitLevel("player") or 1) >= (tonumber(r.needsLevel) or 1) then
       local minI = Engine.current or 1
-      for _, s in ipairs(ns.Steps(r)) do
+      local rsteps = ns.Steps(r)
+      for _, s in ipairs(rsteps) do
         ns.MaybeYield()
         local skip = s.k == "fly" or s.k == "hearth" or s.unknown or not (s.q and s.q > 0 and s.m and s.x)
           or State.IsCompleted(s.q) or (s.k == "accept" and State.OnQuest(s.q)) or onRoute[s.k .. ":" .. s.q]
@@ -187,9 +191,30 @@ function Engine.MergeSideTrips()
           local copy = {}; for k, v in pairs(s) do copy[k] = v end
           copy.inserted, copy.id, copy.wp = true, nil, nil
           copy.note = "On the way: " .. (r.dungeonName or r.title) .. "."
-          local at = Engine.InsertStop(copy, px, py, pinst, { minIndex = minI, maxCost = maxCost, why = "on the way for " .. (r.dungeonName or r.title) })
+          -- a quest is picked up only if its hand-in joins this trip too: the note by Camp Taurajo is on the ride north,
+          -- but its hand-in is in Westfall - the card ran a level 30 2,000 yd for a quest to carry (mutate sweep, 79007)
+          local handIn
+          if s.k == "accept" then
+            for _, t in ipairs(rsteps) do if t.k == "turnin" and t.q == s.q and t.m and t.x then handIn = t; break end end
+            if handIn and onRoute["turnin:" .. s.q] then handIn = nil end -- the route hands it in itself
+          end
+          -- (the pick-up is priced first: most are too far anyway, and pricing the hand-in only for one that fits keeps
+          -- the trip searches at login where they were - perf gate, human paladin at 50: 5 -> 8)
+          local at, why
+          local opts = { minIndex = minI, maxCost = maxCost, why = "on the way for " .. (r.dungeonName or r.title), dry = handIn and true or nil }
+          local fits = Engine.InsertStop(copy, px, py, pinst, opts)
+          if not fits then
+            why = Engine.lastInsertCost and string.format("a %d yd detour, over the %d yd limit", Engine.lastInsertCost, maxCost) or "another continent or nowhere near this trip"
+          elseif not handIn then
+            at = fits
+          elseif not Engine.InsertStop(handIn, px, py, pinst, { minIndex = minI, maxCost = maxCost, dry = true, rough = true }) then
+            why = "its hand-in (" .. (handIn.zone or "?") .. ") is " .. (Engine.lastInsertCost and string.format("a %d yd detour, over the %d yd limit", Engine.lastInsertCost, maxCost) or "on another continent or nowhere near this trip")
+          else
+            -- where the pick-up's pricing put it (no second search; nothing was added in between)
+            at = Engine.InsertStop(copy, px, py, pinst, { at = fits, why = opts.why })
+          end
           if not at then
-            if ns.Why then ns.Why("merge", "left " .. (copy.k or "") .. " " .. (copy.name or "") .. " (" .. (r.dungeonName or r.title) .. ") for later: " .. (Engine.lastInsertCost and string.format("a %d yd detour, over the %d yd limit", Engine.lastInsertCost, Engine.MERGE_MAX_YARDS) or "another continent or nowhere near this trip")) end
+            if ns.Why then ns.Why("merge", "left " .. (copy.k or "") .. " " .. (copy.name or "") .. " (" .. (r.dungeonName or r.title) .. ") for later: " .. why) end
             break -- the rest of that chain waits
           end
           minI = at + 1; added = added + 1; index()

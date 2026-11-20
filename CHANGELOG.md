@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.1 - 2026-11-20
+- Fixed: right after picking a zone, Horde characters around level 20-30 could be sent far south of Camp Taurajo first, to pick up the Cozy Sleeping Bag note, a quest handed in on the other continent. A side-trip quest now joins your path only if its hand-in is on the way too.
+
 ## 2.2.0 - 2026-11-20
 - Every built-in plan rebuilt on the latest quest data (QuestieDB 1.1.3): 60 new quests, among them the new level 53-55 quests around Blackmaw Hold and the Timbermaw, and 345 corrected, with Forever's own XP figures for 31 quests that had none.
 - Horde plans are about 6.5 hours quicker to 60 (92 hours instead of 98), with 8 fewer zone changes.
