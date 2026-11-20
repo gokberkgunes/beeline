@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.0 - 2026-11-20
+- Every built-in plan rebuilt on the latest quest data (QuestieDB 1.1.3): 60 new quests, among them the new level 53-55 quests around Blackmaw Hold and the Timbermaw, and 345 corrected, with Forever's own XP figures for 31 quests that had none.
+- Horde plans are about 6.5 hours quicker to 60 (92 hours instead of 98), with 8 fewer zone changes.
+- Alliance plans change zone 20 times less often (52 zone changes instead of 72), at the same time to 60.
+- Dungeon routes are rebuilt on the new data too.
+- The quest log check's "Bring back" button no longer shows a stray "Go" behind it.
+
 ## 2.1.0 - 2026-11-19
 - Dungeons: a group's going? `/bee dungeons` (or the sword button on the card) now lists every dungeon with quests for your race and class, from the Deadmines to Stratholme, and Forever's Krol'dok Stronghold. Pick one and the card gets you every quest for it, including the earlier quests that unlock them, then takes you to the entrance, then hands everything in. Your plan waits; "Back to plan" returns to it.
 - The dungeons for your level come first, each with how many of its quests you still have left. Dungeons whose quests you've all done drop off the list. Class quests and special rewards follow the dungeons.

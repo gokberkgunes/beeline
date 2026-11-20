@@ -217,7 +217,7 @@ ns.DUNGEON_QUESTS = {
     },
   },
   [229] = { -- Blackrock Spire
-    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016 84162",
+    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016 84153 84154 84161 84162",
     open = {
       { 4701, "Put Her Down", 55, "A", nil, "Helendis Riverhorn, Burning Steppes" },
       { 4724, "The Pack Mistress", 55, "H", nil, "Galamav the Marksman, Badlands" },
@@ -268,6 +268,8 @@ ns.DUNGEON_QUESTS = {
       { 8994, "Final Preparations", 58, nil, nil, "Bodley", any = { 8989, 8990, 8991, 8992 } },
       { 8995, "Mea Culpa, Lord Valthalak", 58, nil, nil, "Bodley", any = { 8994 } },
       { 9016, "Anthion's Parting Words", 58, "H", 1024, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
+      { 84154, "An Earnest Proposition", 58, "A", nil, "Deliana, Dun Morogh" },
+      { 84161, "An Earnest Proposition", 58, "H", nil, "Mokvar, Orgrimmar" },
       { 84162, "An Earnest Proposition", 58, "H", nil, "Mokvar, Orgrimmar" },
     },
   },
@@ -314,7 +316,7 @@ ns.DUNGEON_QUESTS = {
     ids = "7509 7635",
   },
   [289] = { -- Scholomance
-    ids = "4771 5341 5343 5382 5384 5466 5515 5529 7629 7668 8258 8829 8932 8936 8939 8943 8956 8959 8969 8992 8999 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9020 9022",
+    ids = "4771 5341 5343 5382 5384 5466 5515 5529 7629 7668 8258 8829 8932 8936 8939 8943 8956 8959 8969 8992 8999 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9020 9022 97169",
     open = {
       { 4771, "Dawn's Gambit", 57, nil, nil, "Betina Bigglezink, Eastern Plaguelands", any = { 5531 } },
       { 5341, "Barov Family Fortune", 52, "H", nil, "Alexi Barov, Tirisfal Glades" },
@@ -353,13 +355,14 @@ ns.DUNGEON_QUESTS = {
       { 9014, "Saving the Best for Last", 58, "H", 128, "Mokvar, Orgrimmar", any = { 8998 } },
       { 9020, "Anthion's Parting Words", 58, "H", 8, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
       { 9022, "Anthion's Parting Words", 58, "H", 1, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
+      { 97169, "The Darkreaver Menace", 1, "A", nil, "Eldrun Stormbreaker, Ironforge" },
     },
   },
   [309] = { -- Zul'Gurub
     ids = "8042 8043 8044 8046 8047 8048 8050 8051 8052 8053 8054 8055 8056 8057 8058 8059 8060 8061 8062 8063 8064 8065 8066 8067 8068 8069 8070 8071 8072 8073 8074 8075 8076 8077 8078 8079 8102 8103 8104 8107 8108 8109 8111 8112 8113 8117 8118 8119 8142 8143 8144 8146 8147 8148 8184 8185 8186 8187 8188 8189 8190 8191 8192 8195 8196 8201 8227 8238 8239 8243 8246 9023 9208 9209 9210",
   },
   [329] = { -- Stratholme
-    ids = "5063 5067 5068 5122 5125 5212 5213 5214 5243 5251 5263 5282 5305 5307 5463 5848 6163 7642 8869 8909 8916 8933 8937 8944 8945 8952 8953 8954 8955 8958 8968 8991 9017 9018 9019 9021 84330",
+    ids = "5063 5067 5068 5122 5125 5212 5213 5214 5243 5251 5263 5282 5305 5307 5463 5848 6163 7642 8869 8909 8916 8933 8937 8944 8945 8952 8953 8954 8955 8958 8968 8991 9017 9018 9019 9021 84151 84158 84166 84330 97179 97412",
     open = {
       { 5125, "Aurius' Reckoning", 55, nil, nil, "Aurius", true, any = { 5122 } },
       { 5212, "The Flesh Does Not Lie", 55, nil, nil, "Betina Bigglezink, Eastern Plaguelands" },
@@ -390,7 +393,10 @@ ns.DUNGEON_QUESTS = {
       { 9018, "Anthion's Parting Words", 58, "H", 128, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
       { 9019, "Anthion's Parting Words", 58, "H", 16, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
       { 9021, "Anthion's Parting Words", 58, "H", 256, "Anthion Harmon, Eastern Plaguelands", any = { 9015 } },
+      { 84151, "An Earnest Proposition", 1, "A", nil, "Deliana, Dun Morogh" },
+      { 84158, "An Earnest Proposition", 58, "H", nil, "Mokvar, Orgrimmar" },
       { 84330, "A Wee Bit O' Necromancy", 54, "A", 2, "Orthas, Eastern Plaguelands" },
+      { 97179, "Collection of Goods", 60, "H", 2, "Ott, Hillsbrad Foothills" },
     },
   },
   [349] = { -- Maraudon
@@ -434,7 +440,7 @@ ns.DUNGEON_QUESTS = {
       { 7463, "Arcane Refreshment", 60, nil, 128, "Lorekeeper Lydros", true },
       { 7481, "Elven Legends", 54, "H", nil, "Sage Korolusk, Feralas" },
       { 7482, "Elven Legends", 54, "A", nil, "Scholar Runethorn, Feralas" },
-      { 7488, "Lethtendris's Web", 54, "A", nil, "Latronicus Moonspear, Feralas", any = { 7494 } },
+      { 7488, "Lethtendris's Web", 54, "A", nil, "Latronicus Moonspear, Feralas" },
       { 7489, "Lethtendris's Web", 54, "H", nil, "Talo Thornhoof, Feralas" },
       { 7498, "Garona: A Study on Stealth and Treachery", 54, nil, 8, "a drop inside", true },
       { 7499, "Codex of Defense", 54, nil, 1, "a drop inside", true },
@@ -496,10 +502,10 @@ ns.DUNGEON_QUESTS = {
     ids = "92456 92457 92458 92489 96984 96986 96987 96988",
     open = {
       { 92456, "A Green Sample", 24, "A", nil, "Shylamiir, Stormwind City" },
-      { 92457, "Starving Arcane", 30, "A", nil, "Image of Archmage Modera, Alterac Mountains", any = { 92432 } },
-      { 92458, "Heart of Disruption", 30, "A", nil, "Image of Archmage Modera, Alterac Mountains", any = { 92432 } },
+      { 92457, "Starving Arcane", 30, "A", nil, "Image of Archmage Modera, Silverpine Forest", any = { 92432 } },
+      { 92458, "Heart of Disruption", 30, "A", nil, "Image of Archmage Modera, Silverpine Forest", any = { 92432 } },
       { 92489, "Power Overwhelming", 24, "A", nil, "High Sorcerer Andromath, Stormwind City" },
-      { 96984, "Heart of Disruption", 30, "H", nil, "Image of Archmage Modera, Alterac Mountains", any = { 92434 } },
+      { 96984, "Heart of Disruption", 30, "H", nil, "Image of Archmage Modera, Silverpine Forest", any = { 92434 } },
       { 96986, "The Grave Knight", 24, "H", nil, "Melisara, Hillsbrad Foothills" },
       { 96988, "Source of Power", 24, "H", nil, "Doctor Martin Felben, Undercity" },
     },
@@ -535,7 +541,7 @@ ns.DUNGEON_QUESTS = {
     ids = "96393 96394 96395 96403",
     open = {
       { 96393, "Old Ironforge Incursion", 9, "A", nil, "Earthseer Farsen, Dun Morogh", any = { 96391 } },
-      { 96394, "The Restless Dead", 10, "A", nil, "Afadra Dunwall, Ironforge" },
+      { 96394, "The Restless Dead", 10, "A", nil, "Afadra Dunwall, Dun Morogh" },
       { 96395, "An Ancient Grudge", 10, nil, nil, "Ghostly Attendant", true },
       { 96403, "Important Heirlooms", 10, "A", nil, "Thom Filch, Ironforge" },
     },
