@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 - 2026-11-19
+- ForeverRoute is now Beeline. Another addon is also called ForeverRoute, and the two were easy to mix up. Same addon, same plans, new name.
+- The command is /bee (or /beeline). /fr still works for now, and so do /bl and /bline when no other addon uses them.
+- After updating, restart the game once (a /reload isn't enough): the game only finds the new Beeline folder when it starts.
+- Your settings, key bindings and the flight paths and boats the addon learned come over by themselves, the first time each character logs in.
+- An empty ForeverRoute folder stays in your AddOns: it only holds your old settings for Beeline to read. Delete it once each of your characters has logged in.
+
 ## 1.7.1 - 2026-11-19
 - Handing in a quest is quicker. Each hand-in used to look over your whole plan again from its first step: about 1,500 steps at level 38 and 2,000 at 51. It now looks only around your place in the plan. A hand-in at level 51 went from about 35 ms to 22 ms in our tests.
 - No more small hitch every 5 minutes. The addon's own timing check read the memory of every addon you have loaded, about 76 ms with 30 addons. It now does that only when you log out.
@@ -120,7 +127,7 @@
 - A finished quest's hand-in, side quests' too, is weighed by the XP it would lose by waiting; while you farm the card's own pick, it stays on the card.
 - The quest log check uses the same "gray" as the route, and no longer says "on your route" for a quest the route skipped.
 - Fixed: training, hearthing or a flight path could be ticked from the step you were looking at in the route list.
-- A flag on the card: if something looks wrong, click it and send /fr report - your report then shows us exactly what happened.
+- A flag on the card: if something looks wrong, click it and send /bee report - your report then shows us exactly what happened.
 
 ## 1.6.3 - 2026-11-15
 - The Drowned City: inside, the card shows its quests from your log (Shady Saltseers, The Saltseer Captain, Ancient Gurubashi Secrets) instead of your next step outside.
@@ -145,7 +152,7 @@
 - Finishing an objective, taking or handing in a quest, levelling up or entering a zone costs much less again: the addon reads your quest log once per change instead of asking the game about every quest on your route, and remembers how far your plan is done.
 - When the card puts a stop before your plan's next one, it says so in a few words and what it saves ("while you're here · saves ~3 min"); hover it for the whole reason and your plan's next step.
 - Where to? says how far each zone is ("6 min away") and ranks zones by the XP an hour they give you counting the trip there, so a big zone two continents away no longer beats the one next door.
-- No more trips across the world for the one quest you left of a zone: when you did the rest ahead of your plan or dropped them, a far, poorly paying leftover that nothing later needs is skipped (/fr undo brings it back).
+- No more trips across the world for the one quest you left of a zone: when you did the rest ahead of your plan or dropped them, a far, poorly paying leftover that nothing later needs is skipped (/bee undo brings it back).
 - The card no longer flicks to your plan's step and then to a better stop a moment later: it waits for the better stop (a fraction of a second) and changes once.
 - A chain start added to a zone you picked says what it costs and opens ("+4 min, opens ~12k XP"), and "skip chain start" on the card takes it off for good.
 - The travel line is shorter: "Run to Stranglethorn Vale via Duskwood" instead of every border crossed, and "2 quests there: ..." under it.
@@ -283,8 +290,8 @@
 - Hearth steps only when the game says you're bound there and the hearthstone is ready.
 - Good quests nearby that the plan can't hold (giver in a city, objectives elsewhere, or work the quest data doesn't describe, like Brewer's Trade) are offered when you're at the giver.
 - The quest log check lists quest items in your bags that are safe to delete.
-- The Target button floats just above the card; `/fr target reset` puts it back. "Not doing this quest" no longer covers the title.
-- Your path stays put when a new plan arrives, and a switch is announced in chat (`/fr paths`).
+- The Target button floats just above the card; `/bee target reset` puts it back. "Not doing this quest" no longer covers the title.
+- Your path stays put when a new plan arrives, and a switch is announced in chat (`/bee paths`).
 - No more stray path flashing on the map.
 
 ## 1.4.0 - 2026-11-11
@@ -293,7 +300,7 @@
 - The built-in plans are two addons, one per faction, instead of one per race and class (a much shorter addon list).
 - The arrow aims a little ahead along the path, so it no longer swings at every corner.
 - Walking paths follow the roads and keep away from hostile camps (Elwynn Forest, the Wetlands so far).
-- The Forever Route scale slider applies when you let go (it used to jump to its end while dragging); the card can no longer end up off the screen (`/fr card reset` brings it back).
+- The Forever Route scale slider applies when you let go (it used to jump to its end while dragging); the card can no longer end up off the screen (`/bee card reset` brings it back).
 
 ## 1.3.2 - 2026-11-11
 - The Target button stays on the card in combat.
@@ -301,14 +308,14 @@
 - Scrollbars in the route list and the quest log check can be dragged and clicked.
 - Option: accept route quests and hand in finished ones automatically (not when there's a reward to choose; hold Shift to skip). Off by default.
 - The card no longer fades in combat by default (an option if you liked it).
-- One Forever Route scale for the card, arrow, route list and every window (`/fr options` or `/fr scale`); on screens where our text is small (e.g. 4K with ElvUI), a bar offers a bigger size. Clearer grey text.
-- Smaller saved files: without the companion app, walking trails and learning data aren't recorded (only the companion uses them) and old ones are cleared. `/fr storage` shows what's kept.
+- One Forever Route scale for the card, arrow, route list and every window (`/bee options` or `/bee scale`); on screens where our text is small (e.g. 4K with ElvUI), a bar offers a bigger size. Clearer grey text.
+- Smaller saved files: without the companion app, walking trails and learning data aren't recorded (only the companion uses them) and old ones are cleared. `/bee storage` shows what's kept.
 - A long walk inside a zone can become a flight: when a flight path you know lands clearly nearer the spot (Darkshire to Sven's camp by way of Sentinel Hill), the card and the arrow send you to the flight master first.
 - Flight points now come from Forever's own flight tables: Mount Hyjal's Tainted Foothills added, both Hyjal points for the Horde too, the Riverglades flight masters at their real spots. Knowing one flight path of a zone no longer counts as knowing its other one.
 
 ## 1.3.1 - 2026-11-11
 - The Target button sits with the card instead of over every window (the character sheet covers it now).
-- Ctrl+drag the Target button anywhere; `/fr target reset` puts it back.
+- Ctrl+drag the Target button anywhere; `/bee target reset` puts it back.
 - What's new: resizable, and "Older versions" shows earlier notes.
 
 ## 1.3.0 - 2026-11-11
@@ -317,8 +324,8 @@
 - In a dungeon, the card shows your quests for it with live progress, and which ones you could have picked up.
 - Quest log full: the card goes to hand-ins and objectives first; pick-ups wait until there's room.
 - New key: Keybindings > AddOns > "Forever Route Targeting" targets the step's NPC and marks it with a star.
-- `/fr report`: copy an anonymous bug report to paste to us.
-- What's new: after an update, a bar under the card links to these notes (`/fr news` any time).
+- `/bee report`: copy an anonymous bug report to paste to us.
+- What's new: after an update, a bar under the card links to these notes (`/bee news` any time).
 - "Run to" until you can ride. Card scale up to 2.0, arrow up to 2.5.
 - Correction: 1.2.1's flight path pickup doesn't work on Forever's client; the card now asks you to open any flight master's map once.
 

@@ -4,7 +4,7 @@ Bug reports and ideas are welcome as GitHub issues.
 
 This repository holds the addon and its built-in plans; the planner that builds the plans is not public, so a
 pull request can change the addon, not the plans themselves (a plan that looks wrong is best reported as an issue,
-with `/fr report`).
+with `/bee report`).
 
 Pull requests are welcome too, on one condition. By opening a pull request you agree that:
 

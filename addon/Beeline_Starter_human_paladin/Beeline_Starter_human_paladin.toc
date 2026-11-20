@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Beeline - built-in plan: human paladin
+## Notes: Loaded by Beeline only for a human paladin with no plan of its own.
+## Dependencies: Beeline
+## Group: Beeline
+## LoadOnDemand: 1
+## Version: plans 2026-11-12
+## X-Plans: plans 2026-11-12 · QuestieDB 1.0.15 · planner 901b74b
+
+Plan.lua

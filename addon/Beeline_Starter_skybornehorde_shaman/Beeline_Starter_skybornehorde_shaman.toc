@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Beeline - built-in plan: skybornehorde shaman
+## Notes: Loaded by Beeline only for a skybornehorde shaman with no plan of its own.
+## Dependencies: Beeline
+## Group: Beeline
+## LoadOnDemand: 1
+## Version: plans 2026-11-13
+## X-Plans: plans 2026-11-13 · tree horde-v10
+
+Plan.lua

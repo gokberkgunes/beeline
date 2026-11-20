@@ -13,6 +13,6 @@ if (!sec) { console.error(`CHANGELOG.md has no section for ${v}`); process.exit(
 // "### Addon" in the changelog reads as "## Addon" on its own page
 const notes = sec.slice(sec.indexOf('\n') + 1).trim().replace(/^### /gm, '## ') + '\n';
 if (flag === '--curseforge') {
-  process.stdout.write(JSON.stringify({ changelog: notes, changelogType: 'markdown', displayName: 'Forever Route ' + tag,
+  process.stdout.write(JSON.stringify({ changelog: notes, changelogType: 'markdown', displayName: 'Beeline ' + tag,
     gameVersions: String(gameVersions || '').split(',').filter(Boolean).map(Number), releaseType: 'release' }));
 } else process.stdout.write(notes);

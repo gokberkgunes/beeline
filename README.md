@@ -1,4 +1,6 @@
-# Forever Route
+# Beeline
+
+*Formerly ForeverRoute. Same addon, new name: the command is `/bee`.*
 
 Leveling routes for WoW Forever, 1 to 60, for all 56 race and class combinations, Alliance and Horde. A step card, an
 arrow and map pins tell you what to accept, kill, hand in and train, and how to get to the next zone. Install it and
@@ -16,7 +18,7 @@ The **?** on the card says why it picked a step, and the game's 3D navigation ma
 
 ## Pick your own zone
 
-**Bored of a zone? Pick another.** "Where to?" (the route window, or `/fr paths`) lists the zones you could go to
+**Bored of a zone? Pick another.** "Where to?" (the route window, or `/bee paths`) lists the zones you could go to
 now, with the XP each still has for you and the level that gets you to. Pick one and the route takes you there. If a
 zone's quests need an earlier part you haven't done, those steps come first when they're close by, and a chain you
 carry that's about to turn gray is pointed out before you leave. PLANNED NEXT takes you back to your plan, wherever
@@ -48,27 +50,27 @@ Skyborne skyship:
 
 ## Getting started
 
-Install Forever Route from CurseForge or from [Releases](https://github.com/noopz/ForeverRoute/releases) and log in.
+Install Beeline from CurseForge or from [Releases](https://github.com/noopz/Beeline/releases) and log in.
 The plan for your race and class loads by itself and starts you on the best part of it for your level and where you
 are. Open any flight master's map once so the addon knows your flight paths.
 
 | Command | What it does |
 |---|---|
-| `/fr` | Show or hide the card |
-| `/fr list` | The whole route |
-| `/fr paths` | Where to? - the zones you could go to now |
-| `/fr dungeons` | Side trips: class quests, bonus items, dungeons |
-| `/fr skip` · `/fr back` · `/fr undo` | Move through the steps by hand |
-| `/fr logcheck` | Quests in your log the route won't use |
-| `/fr why` | Why the addon did what it just did |
-| `/fr report` | Copy a bug report to paste to us (anonymous) |
-| `/fr news` | What changed in recent versions |
-| `/fr options` | Settings |
+| `/bee` | Show or hide the card |
+| `/bee list` | The whole route |
+| `/bee paths` | Where to? - the zones you could go to now |
+| `/bee dungeons` | Side trips: class quests, bonus items, dungeons |
+| `/bee skip` · `/bee back` · `/bee undo` | Move through the steps by hand |
+| `/bee logcheck` | Quests in your log the route won't use |
+| `/bee why` | Why the addon did what it just did |
+| `/bee report` | Copy a bug report to paste to us (anonymous) |
+| `/bee news` | What changed in recent versions |
+| `/bee options` | Settings |
 
-What changed in each release: [CHANGELOG.md](CHANGELOG.md). Something look wrong? `/fr report` and an issue here.
+What changed in each release: [CHANGELOG.md](CHANGELOG.md). Something look wrong? `/bee report` and an issue here.
 
 This repository holds the addon and its built-in plans. The planner that builds the plans and its simulator are not
 public.
 
-Forever Route by noopz. [CC BY-NC-SA 4.0](LICENSE): share and adapt it with credit, never sell it. The quest data it is
+Beeline by noopz. [CC BY-NC-SA 4.0](LICENSE): share and adapt it with credit, never sell it. The quest data it is
 built from is GPL-3.0 (QuestieDB); see [NOTICE](NOTICE). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).

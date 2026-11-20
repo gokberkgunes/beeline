@@ -1,0 +1,8 @@
+<Bindings>
+  <Binding name="BEELINE_SKIP" header="BEELINE" category="ADDONS">Beeline.Engine.Skip()</Binding>
+  <Binding name="BEELINE_BACK" category="ADDONS">Beeline.Engine.Back()</Binding>
+  <Binding name="BEELINE_UNDO" category="ADDONS">Beeline.Engine.Undo()</Binding>
+  <Binding name="BEELINE_TOGGLE" category="ADDONS">Beeline.Fire("FR_TOGGLE")</Binding>
+  <Binding name="BEELINE_LIST" category="ADDONS">Beeline.Fire("FR_TOGGLE_LIST")</Binding>
+  <Binding name="CLICK BeelineTargetButton:LeftButton" category="ADDONS"/>
+</Bindings>
