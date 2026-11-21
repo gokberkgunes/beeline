@@ -959,11 +959,12 @@ end
 -- The Target button's macro (also its key, Options > Keybindings > AddOns): target the NPC by name, then put a star on
 -- it with the game's own /tm - marking from addon code (/run ... SetRaidTarget) is a protected action on Forever
 -- (ADDON_ACTION_FORBIDDEN, no star). "/tm 0" then "/tm 1": /tm 1 alone toggles a star that's already there off, and
--- the button fires on key down and up.
+-- the button fires on key down and up. Only on a target ([exists]): with the NPC nowhere near, /tm with no target put
+-- "You can't do that right now" on screen at every click (tester); /tm takes macro conditions, and one that fails does nothing.
 Card.MARK = 1 -- the star
 function Card.TargetMacro(who)
   local m = "/cleartarget\n/target " .. who .. "\n/targetexact " .. who
-  if ns.db and ns.db.markTarget ~= false then m = m .. "\n/tm 0\n/tm " .. Card.MARK end
+  if ns.db and ns.db.markTarget ~= false then m = m .. "\n/tm [exists] 0\n/tm [exists] " .. Card.MARK end
   return m
 end
 -- the option changed: the macro follows (out of combat; the card refills the button then)

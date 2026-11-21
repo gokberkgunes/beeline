@@ -36,6 +36,10 @@ Nav.SLACK = 1.02       -- ...and may cost this much more than the squares the se
 Nav.SLACK_ROAD = 1.08  -- the same from a road square: more would cut the road's bends
 Nav.SLACK_OPEN = 1.2   -- ...and from open ground where the ground is rated (mobs)
 Nav.SNAP = 6           -- you (or the target) may be this many squares from the nearest ground the grid knows
+Nav.Z_SNAP = 4         -- with a height: a node within this many yards of it...
+Nav.Z_REACH = 3        -- ...looked for up to this many squares further out, else the nearest in height (a small floor
+                       -- patch is merged into the next square's node: its own square may hold only the level above -
+                       -- Orgrimmar's cliff over Gryshka's inn, Ironforge's mountain over the Commons)
 Nav.KEEP = 2           -- unpacked zones kept in memory
 Nav.ROAD = 0.9         -- a yard of road costs this much of a yard of open ground: about a tenth further to stay on it.
                        -- (0.75, a third further, had the arrow dragging players onto every road; on foot a road is
@@ -308,11 +312,14 @@ function Nav.Inside(D, wx, wy) return wx <= D.left and wx >= D.right and wy <= D
 Nav._squareOf, Nav._centre, Nav._squareAt, Nav._heightOf = squareOf, centre, squareAt, heightOf
 
 -- the nodes at a world point: those of its square, or of the nearest ring of squares that has any (you may stand on
--- a crate the grid left out). With a height: the one node nearest to it. Without: all of them.
+-- a crate the grid left out). With a height: the one node nearest to it (Z_SNAP / Z_REACH). Without: all of them,
+-- and nearby nodes at heights those don't have.
 local function nodesNear(N, wx, wy, z)
   local sq0 = squareAt(N, wx, wy); if not sq0 then return {} end
   local W, H, NC, base, at, atN, solo = N.W, N.H, N.NC, N.base, N.at, N.atN, N.solo
   local r0 = floor(sq0 / W); local c0 = sq0 - r0 * W
+  local best, bd, first
+  local all, zs = {}, {}
   for rad = 0, Nav.SNAP do
     local found = {}
     for dr = -rad, rad do
@@ -330,16 +337,32 @@ local function nodesNear(N, wx, wy, z)
         end
       end
     end
-    if #found > 0 then
-      if not z then return found, rad end
-      local best, bd
+    if not z then
+      -- no height: all of them, and from up to Z_REACH squares further the nodes at heights not among those yet
+      -- (your own square may hold only the level above you: the floor you stand on is the next square's node)
+      for _, n in ipairs(found) do
+        local h, new = heightOf(N, n) or 0, true
+        if first then for i = 1, #zs do if abs(h - zs[i]) <= Nav.Z_SNAP then new = false; break end end end
+        if new then all[#all + 1] = n; zs[#zs + 1] = h end
+      end
+      if #found > 0 and not first then first = rad end
+      if first and rad >= first + Nav.Z_REACH then return all, first end
+    elseif #found > 0 then
+      first = first or rad
+      -- every node that close in height at this distance (one of two by Talvash del Kissel's door in Ironforge is a
+      -- ledge that doesn't join the street), else the nearest in height once Z_REACH squares are looked at
+      local close = {}
       for _, n in ipairs(found) do
         local d = abs((heightOf(N, n) or z) - z)
+        if d <= Nav.Z_SNAP then close[#close + 1] = n end
         if not bd or d < bd then best, bd = n, d end
       end
-      return { best }, rad
+      if #close > 0 then return close, rad end
+      if rad >= first + Nav.Z_REACH then return { best }, rad end
     end
   end
+  if not z then return all, first end
+  if best then return { best }, Nav.SNAP end
   return {}
 end
 Nav._nodesNear = nodesNear

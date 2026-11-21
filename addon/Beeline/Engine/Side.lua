@@ -52,6 +52,17 @@ local function yardsOf(m, x, y, px, py, pinst)
   return math.sqrt((a - px) ^ 2 + (b - py) ^ 2), a, b
 end
 local mapNameOf = ns.Util.MapName
+Engine.SIDE_LEVEL_DIP = 5  -- the most a plan's planned level drops along it, with a margin (a Skyborne start to 22, its trunk from 18)
+-- the quests a step list has steps for, built once per list (SideFits asks "is it on your route?" about once a second)
+local qsOf = { list = nil, n = 0, set = nil }
+local function questsOf(list)
+  if qsOf.list ~= list or qsOf.n ~= #list then
+    local set = {}
+    for _, s in ipairs(list) do if s.q then set[s.q] = true end end
+    qsOf.list, qsOf.n, qsOf.set = list, #list, set
+  end
+  return qsOf.set
+end
 -- Does this quest fit your route? -> true, the zones its objectives are in; or false and why not
 function Engine.SideFits(q)
   local d = ns.SIDE_QUESTS and ns.SIDE_QUESTS[q]
@@ -78,14 +89,21 @@ function Engine.SideFits(q)
   -- the stops still ahead of you, by zone - while the quest is not gray there
   -- (from the plan's own next step: the card may be on a later one you happen to stand at)
   local list, ahead, from = steps(), {}, Engine.planned or Engine.current or 1
-  for j = 1, from - 1 do if list[j].q == q then return false, "on your route" end end
+  if questsOf(list)[q] then return false, "on your route" end
+  -- (the stops that count are at most SIDE_LATE levels above the quest; a plan's planned level never drops by more than
+  -- SIDE_LEVEL_DIP along it, so past that the rest can't count: the walk to level 60 was 3 ms a look on a Horde plan at 50)
+  local cap, top = d.l + Engine.SIDE_LATE, 0
+  -- (and only on the maps asked about below - its objectives' and its hand-in's: a step's status far ahead is dear, 4 ms
+  -- for one at the orc warrior's level 50)
+  local maps = { [d.e[2]] = true }
+  for _, o in ipairs(d.o or {}) do for k = 3, #o do maps[o[k][1]] = true end end
   for j = from, #list do
     local s = list[j]
-    if s.q == q then return false, "on your route" end
-    local L = s.lvl or Engine.PlanLevel(j)
-    if s.m and s.x and not s.side and not s.unknown and (not L or L <= d.l + Engine.SIDE_LATE) and Engine.Status(j) ~= "done" then
-      local a, b, inst = HBD:GetWorldCoordinatesFromZone(s.x, s.y, s.m)
-      if a then ahead[s.m] = ahead[s.m] or {}; table.insert(ahead[s.m], { a, b, inst }) end
+    if s.lvl and s.lvl > top then top = s.lvl; if top > cap + Engine.SIDE_LEVEL_DIP then break end end
+    local L = s.m and maps[s.m] and (s.lvl or Engine.PlanLevel(j))
+    if s.m and maps[s.m] and s.x and not s.side and not s.unknown and (not L or L <= cap) and Engine.Status(j) ~= "done" then
+      local w = wpos(s) -- (each step's world spot, worked out once: Util.WPos)
+      if w then ahead[s.m] = ahead[s.m] or {}; table.insert(ahead[s.m], w) end
     end
   end
   local function near(m, x, y)

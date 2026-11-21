@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.0 - 2026-11-21
+- Built-in plans skip the worst collection quests: the ones where you kill mob after mob for an item that rarely drops. Alliance plans leave out Pirate Hats Ahoy!, Up to Snuff, Fiery Blaze Enchantments, Skullsplitter Tusks and Centaur Bounty. Horde plans leave out Pirate Hats Ahoy!, Bloody Bone Necklaces and Fresh Meat. Time spent collecting rare drops is about a third less on both factions.
+- Plans now use the quest data's real drop rates. Items that drop from nearly every kill used to be planned as a coin flip, so some collection quests were planned as longer than they are.
+- Horde plans are about 2.5 hours quicker to 60 (90 hours instead of 92), Alliance about 2 hours (85.5 instead of 87.5), and Alliance plans change zone a little less often. Horde plans do return to zones you've left more often than in 2.2.0 (about 66 times instead of 50).
+- The map line now finds its way around every capital city. Orgrimmar, Ironforge, Thunder Bluff, Darnassus and Undercity are new, and Stormwind is redone. In Ironforge it often found no way through the city and fell back to a straight line; it now follows the walkways, ramps and stairs.
+- Standing near a quest giver whose quest your plan doesn't hold no longer costs a small hitch every few seconds. The addon checked that quest against every step left in your plan, up to level 60; it now looks only at the levels that matter (about 4 ms down to 0.5 ms or less in our tests).
+- The Target button no longer says "You can't do that right now" when the mob isn't around. It only puts the star on something you actually targeted.
+
 ## 2.2.1 - 2026-11-20
 - Fixed: right after picking a zone, Horde characters around level 20-30 could be sent far south of Camp Taurajo first, to pick up the Cozy Sleeping Bag note, a quest handed in on the other continent. A side-trip quest now joins your path only if its hand-in is on the way too.
 
