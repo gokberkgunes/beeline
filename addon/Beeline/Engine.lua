@@ -908,6 +908,10 @@ local function cutQuest(q, depth)
   if L and Engine.GrayDrop(q, nil, L) == true then return true end
   if State.OnQuest(q) then return false end
   if ns.Nope(q) then return true end
+  -- (an exclusive alternative of it you have or did shuts it, so what needs it goes too: Ends Meet needs the Praise
+  -- that 93551, the other Praise, shuts - shown after 93551 was handed in, a dead end: full sweep, 2.3.1)
+  local ex = ns.QUEST_EX and ns.QUEST_EX[q]
+  if ex then for k = 1, #ex do if State.IsCompleted(ex[k]) or State.OnQuest(ex[k]) then return true end end end
   local a = (planIndex()).accept[q]
   if a and ns.char.skipped[key(a)] then return true end
   return depth < 12 and Engine.ChainCut(q, depth + 1) or false
@@ -936,6 +940,32 @@ end
 -- (counted loops, no table per ask: statusRaw asks it of every pick-up with a prerequisite - perf gate)
 local function pendingPre(p, depth)
   return not State.IsCompleted(p) and (State.OnQuest(p) or (depth < 6 and Engine.WaitsOnLog(p, depth + 1)))
+end
+-- the prerequisites q still needs (ns.QUEST_PRE: all of g, one of s), each one you can still get on this route: in
+-- your log, or with a hand-in on the route
+local function preGettable(p) return State.IsCompleted(p) or State.OnQuest(p) or (planIndex()).turnin[p] ~= nil end
+function Engine.PreReachable(q)
+  local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
+  if not pre then return true end
+  local g, s = pre.g, pre.s
+  if g then for n = 1, #g do if not preGettable(g[n]) then return false end end end
+  if s and #s > 0 then
+    for n = 1, #s do if preGettable(s[n]) then return true end end
+    return false
+  end
+  return true
+end
+-- on a zone you picked, a quest not in your log whose prerequisites are not met and can't be got on this route (none in
+-- your log, none handed in on it): the giver never has it for you here, so none of its steps is left - its pick-up, its
+-- objectives, its hand-in, and the trips to them. The level 36 Dustwallow route has Lieutenant Paval Reethe, its James
+-- Hyal and Smiling Jim on the level 32 one: a player who had done neither saw it as a dead end for the rest of the zone
+-- (full sweep, 2.3.1). Cutting only the pick-up left Gyro... What?'s objective in Stranglethorn Vale on the level 39
+-- Badlands route, Coolant Heads Prevail not on it, and the card flew there for a quest you can't have (sweep, 2.3.2).
+-- (A quest the game showed on offer anyway - Availability - is taken as offered.)
+function Engine.ZoneUnreachable(q)
+  if not (BeelineData and BeelineData.zoneRoute and ns.QUEST_PRE and ns.QUEST_PRE[q] and ns.PrereqsMet) then return false end
+  if ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[q] then return false end
+  return not ns.PrereqsMet(q) and not Engine.PreReachable(q)
 end
 function Engine.WaitsOnLog(q, depth)
   local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
@@ -990,7 +1020,7 @@ local function statusRaw(i)
   elseif Engine.Outlevelled(s) or Engine.GrayHandIn(s) or Engine.Breadcrumbed(s) or Engine.Excluded(s) or (Engine.asTaken ~= s and Engine.BehindYou(s)) then return "done" end
   -- its earlier chain quest you skipped or said you're not doing: the game never offers it, so none of its steps is
   -- left (the ones of a quest you have are yours to do)
-  if s.q and s.q > 0 and not State.OnQuest(s.q) and not State.IsCompleted(s.q) and Engine.ChainCut(s.q) then return "done" end
+  if s.q and s.q > 0 and not State.OnQuest(s.q) and not State.IsCompleted(s.q) and (Engine.ChainCut(s.q) or Engine.ZoneUnreachable(s.q)) then return "done" end
   local k = s.k
   if k == "hearth" then
     local can, why = Engine.HearthUsable(i)
@@ -1011,6 +1041,7 @@ local function statusRaw(i)
     local pre = ns.QUEST_PRE and ns.QUEST_PRE[s.q]
     if pre and ns.PrereqsMet and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then
       if BeelineData and BeelineData.zoneRoute then
+        -- (one whose prerequisites can't be got here at all is cut above, every step of it: Engine.ZoneUnreachable)
         if not ns.PrereqsMet(s.q) then return "wait" end
       elseif Engine.WaitsOnLog(s.q) then return "wait" end
     end

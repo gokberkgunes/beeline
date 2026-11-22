@@ -53,6 +53,9 @@ function Card.Describe(s)
     title = Style.Hex(kind.color) .. (s.text or ((kind.verb or "") .. " " .. (s.dest or ""))) .. "|r"
     detail = s.npc
   elseif s.k == "fly" or s.k == "hearth" then
+    -- (to a zone with no flight master of your side: "Travel to", not "Fly to" - Alliance has none in Thousand Needles,
+    -- the trip flies to Tanaris and rides in, and "Fly to Thousand Needles" read as a flight path that isn't there: user)
+    if s.k == "fly" and s.to and ns.FLIGHT and not ns.FLIGHT[s.to] then verb = Style.Hex(kind.color) .. "Travel to|r" end
     title = verb .. " " .. (s.dest or s.text or "")
     detail = s.npc
   elseif s.k == "fp" then

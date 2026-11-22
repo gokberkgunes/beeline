@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.2 - 2026-11-22
+- Fewer wasted steps where your race's start joins the rest of the plan. Every Alliance plan had you set your hearth at the Auberdine inn and then hearth to Auberdine while standing there. Alliance and Horde plans asked for an objective you had already done a second time (Therylune's Escape, The Warsong Reports, Kill Grundig Darkcloud). Alliance plans also asked for a hearth while the stone was still cooling down from the one before.
+- A travel step into a zone where your side has no flight path now reads "Travel to", not "Fly to". Alliance has no flight path in Thousand Needles: the trip flies to Gadgetzan and rides in, and "Fly to Thousand Needles" read as a flight path that isn't there.
+- Trips no longer ride from Thousand Needles into Dustwallow Marsh. There is no way across, but the card could send you up the cliffs north of the Shimmering Flats. From the Flats it now rides to Gadgetzan and flies to Theramore.
+- Ends Meet no longer shows up after you've handed in the other Praise quest, which shuts it out.
+- On a zone you picked, a quest whose earlier quest you never did, and can't do on that zone's route, is passed over instead of left waiting for the rest of the zone (Lieutenant Paval Reethe on the level 36 Dustwallow Marsh route).
+
 ## 2.3.1 - 2026-11-22
 - Every built-in plan is rebuilt on the latest quest data (QuestieDB 1.1.4): 98 new quests and 638 corrected, many of them quest givers and turn-ins in new places.
 - Shaman-only quests stay with shamans. Challenge of the Desert Wolf (the Odd Totem in Tanaris) was in every class's plan.
