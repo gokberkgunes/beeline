@@ -812,6 +812,9 @@ function Card.Fill()
     local head
     kind, title, head = Card.TripTitle(headLegs)
     detail = Card.TripGoal(s, headLegs, head)
+    -- (to a flight master or flying from one: the headline names the flight path, who stands there goes under it, small)
+    local npc = headLegs[1].npc
+    if npc then detail = "|cff8e99ad" .. npc .. ", flight master|r" .. (detail and ("\n" .. detail) or "") end
   end
   look(kind.color, kind.icon)
   local status = ns.Engine.Status(i)

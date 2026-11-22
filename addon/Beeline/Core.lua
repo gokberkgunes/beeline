@@ -125,12 +125,26 @@ ns.loadedAt = GetTime and GetTime() or 0
 -- game event being handled (nil: a timer or a frame), the seconds since the UI loaded and your level. The totals above
 -- said a quest log change once cost 73 ms, never which one or when (/bee report perf lists these: the dev tools)
 ns.SLOW_MS = 30
-function ns.Time(name, ms)
+-- ns.Mark() at the start of a timed moment, passed to ns.Time: a slow one then also keeps what it did - the trip
+-- searches (Travel.searches) and the step statuses worked out (Engine.statusN) - so a report says why, not only that.
+-- A 485 ms refresh 21 s after login in a player's report said nothing more (2026-11-21)
+function ns.MarkInto(t)
+  local E = ns.Engine
+  t.trips, t.status, t.walks, t.fromStart = ns.Travel and ns.Travel.searches or 0, E and E.statusN or 0, E and E.computeN or 0, E and E.walkN or 0
+  return t
+end
+function ns.Mark() return ns.MarkInto({}) end -- (a slice reuses its own: ns.MarkInto, Jobs.lua)
+function ns.Time(name, ms, mark)
   local st = ns.stats[name]; if not st then st = { n = 0, total = 0, max = 0 }; ns.stats[name] = st end
   st.n = st.n + 1; st.total = st.total + ms; if ms > st.max then st.max = ms end
   if ms >= ns.SLOW_MS and ns.char then
     local L = ns.char.slow; if not L then L = {}; ns.char.slow = L end
-    L[#L + 1] = { n = name, ms = math.floor(ms * 10 + 0.5) / 10, at = time and time() or 0, up = GetTime and math.floor(GetTime() - ns.loadedAt) or nil, ev = ns.event, lvl = UnitLevel and UnitLevel("player") or nil }
+    local e = { n = name, ms = math.floor(ms * 10 + 0.5) / 10, at = time and time() or 0, up = GetTime and math.floor(GetTime() - ns.loadedAt) or nil, ev = ns.event, lvl = UnitLevel and UnitLevel("player") or nil }
+    if mark then local now = ns.Mark(); e.trips, e.status, e.walks, e.fromStart = now.trips - mark.trips, now.status - mark.status, now.walks - mark.walks, now.fromStart - mark.fromStart
+      -- (where: the code lines it was at, short - "Next.lua:870 < Next.lua:1050")
+      if mark.where then local w = {}; for f, l in tostring(mark.where):gmatch("([%w_]+%.lua)\"?%]?:(%d+)") do if f ~= "Core.lua" then w[#w + 1] = f .. ":" .. l end; if #w >= 3 then break end end; e.where = table.concat(w, " < ") end
+    end
+    L[#L + 1] = e
     while #L > 30 do table.remove(L, 1) end
   end
 end

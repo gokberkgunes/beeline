@@ -26,6 +26,33 @@ local function wd(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2) 
 -- one the card's travel line comes from) - rides only. A place whose zone is unknown: no.
 local groundMemo = {}
 Engine._groundMemo = groundMemo -- (tests: the same answers whether the passes run at once or over frames)
+-- The answers kept from one login to the next (per character): a login's catch-up asked the trip planner the same gaps
+-- every time - 12 trip searches of an 80 ms refresh at a level 45's login (the simulator, a player's save). They are
+-- kept for the level they were asked at (it is in every answer's key), the addon's version and its travel data; any
+-- of those changed, they start over. ONFOOT_KEEP of them at most.
+Engine.ONFOOT_KEEP = 2000
+local function memoStamp()
+  local n = 0
+  for _, t in pairs(ns.TravelData or {}) do if type(t) == "table" then for _ in pairs(t) do n = n + 1 end end end
+  return tostring(ns.VERSION) .. ":" .. n
+end
+function Engine.OnFootLoad()
+  local s = ns.char and ns.char.onFoot
+  if not (type(s) == "table" and type(s.memo) == "table" and s.lvl == (UnitLevel and UnitLevel("player")) and s.v == memoStamp()) then return end
+  for k, v in pairs(s.memo) do if groundMemo[k] == nil then groundMemo[k] = v end end
+end
+function Engine.OnFootSave()
+  if not ns.char then return end
+  local lvl = UnitLevel and UnitLevel("player")
+  local keep, n, want = {}, 0, tostring(lvl)
+  for k, v in pairs(groundMemo) do
+    -- (only this level's: the key is am:ax:ay:bm:bx:by:taxis:level:bind)
+    if n < Engine.ONFOOT_KEEP and k:match("^[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:([^:]*)") == want then keep[k] = v; n = n + 1 end
+  end
+  ns.char.onFoot = n > 0 and { v = memoStamp(), lvl = lvl, memo = keep } or nil
+end
+ns.On("FR_LOADED", function() pcall(Engine.OnFootLoad) end)
+ns.On("PLAYER_LOGOUT", function() pcall(Engine.OnFootSave) end)
 function Engine.OnFoot(am, ax, ay, bm, bx, by)
   if not (am and bm) then return false end
   if am == bm then return true end

@@ -45,6 +45,7 @@ local function resume(job, budget)
   if Jobs._stale(job) then abort(job, "stale"); return true end
   local co0, t00, b0, cur0 = ns.sliceCo, ns.sliceT0, ns.sliceBudget, Jobs.current
   if job.enter then job.enter(job) end
+  local mark = job.timeAs and ns.MarkInto and ns.MarkInto(job.mark or {}) or nil; job.mark = mark -- (a slow slice says what it did: ns.Time)
   local t0 = debugprofilestop()
   ns.sliceCo, ns.sliceT0, ns.sliceBudget = job.co, t0, budget or job.budget
   Jobs.current = job
@@ -52,7 +53,13 @@ local function resume(job, budget)
   local ok, r = coroutine.resume(job.co, job.arg)
   Jobs.current = cur0
   ns.sliceCo, ns.sliceT0, ns.sliceBudget = co0, t00, b0
-  if job.timeAs and ns.Time then ns.Time(job.timeAs, debugprofilestop() - t0) end
+  if job.timeAs and ns.Time then
+    local ms = debugprofilestop() - t0
+    -- (a slice over the slow mark: where it was when it paused at last - the end of the stretch that ran on without a
+    -- pause. A 30 ms solve slice in the user's report said nothing more. Only then: a stack is not free)
+    if mark then mark.where = nil; if ms >= (ns.SLOW_MS or 30) and debugstack and coroutine.status(job.co) == "suspended" then local okS, st = pcall(debugstack, job.co, 1, 6, 0); mark.where = okS and st or nil end end
+    ns.Time(job.timeAs, ms, mark)
+  end
   if job.leave then job.leave(job) end
   if job.over then return true end -- (cancelled while it ran)
   if not ok then

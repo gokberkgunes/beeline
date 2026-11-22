@@ -532,8 +532,9 @@ local function settle()
   if ns.Engine and ns.Engine.GrayForget then ns.Engine.GrayForget() end -- (the gray rule's chains: Engine.LeadsTo)
   State.logCountWas = State.LogCount()
   local t0 = debugprofilestop and debugprofilestop()
+  local mark = t0 and ns.Mark and ns.Mark()
   State.Announce("FR_STATE")
-  if t0 and ns.Time then ns.Time("logchange", debugprofilestop() - t0) end
+  if t0 and ns.Time then ns.Time("logchange", debugprofilestop() - t0, mark) end
 end
 local function schedule()
   if pending then return end

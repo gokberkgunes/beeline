@@ -1345,6 +1345,33 @@ local function checkRun(list, k)
   end) }
   if vdriver then vdriver:Show() end
 end
+-- The run is kept from one login to the next (ns.char.doneRun: its last step's key, at the level, plan and addon version
+-- it was found at): a login looked at the whole plan from its start again - ~1,600 statuses at level 45, most of a
+-- 315 ms refresh on the user's PC (/bee report perf). Taken back only where its last step still stands in the plan (a
+-- stop added at login moves it: looked up near where it was), and then checked in the background like any other run
+-- (checkRun): a step not done after all looks at the plan from its start again, as now
+local function runStamp() return tostring(ns.VERSION) .. ":" .. tostring(BeelineData and (BeelineData.id or BeelineData.title)) .. ":" .. #steps() end
+function Engine.DoneRunSave()
+  if not ns.char then return end
+  local list = steps()
+  if doneRun.list ~= list or doneRun.k <= 0 or list[doneRun.k] ~= doneRun.step then ns.char.doneRun = nil; return end
+  ns.char.doneRun = { v = runStamp(), lvl = UnitLevel and UnitLevel("player"), k = doneRun.k, step = key(doneRun.k) }
+end
+local function doneRunLoad(list, runKey)
+  local s = ns.char and ns.char.doneRun
+  if ns.char then ns.char.doneRun = nil end -- (once: the run found from here on is this login's own)
+  if not (type(s) == "table" and type(s.k) == "number" and type(s.step) == "string" and s.v == runStamp() and s.lvl == (UnitLevel and UnitLevel("player"))) then return end
+  for d = 0, 60 do
+    for _, j in ipairs(d == 0 and { s.k } or { s.k - d, s.k + d }) do
+      if list[j] and key(j) == s.step then
+        doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, runKey, j, list[j]
+        doneRun.skipFrom0, doneRun.skipTo0 = 0, -1
+        return true
+      end
+    end
+  end
+end
+ns.On("PLAYER_LOGOUT", function() pcall(Engine.DoneRunSave) end)
 -- (tests and the simulator: the run checked at once, every time it is used)
 Engine.CHECK_RUN_NOW = false
 function Engine.SettleDone() while verify do local v = verify; ns.sliceCo, ns.sliceT0, ns.sliceBudget = v.co, debugprofilestop(), math.huge; local ok, wrong = coroutine.resume(v.co); ns.sliceCo = nil; if verify == v and (not ok or coroutine.status(v.co) == "dead") then verify = nil; if wrong or not ok then Engine.doneRunMiss = Engine.doneRunMiss + 1; Engine.ForgetDone() end end end end
@@ -1412,6 +1439,8 @@ function Engine.SetFinishing(on)
   Engine.ForgetDone()
   Engine.Refresh()
 end
+-- (how many times the plan was worked out, and how many of those from its first step: ns.Mark keeps them for a slow moment)
+Engine.computeN, Engine.walkN = 0, 0
 function Engine.Compute()
   if next(removed) then settleRemoved() end
   Engine.cappedNow = Engine.Capped() -- (Engine.CardAt reads it: no step on the card for a 60)
@@ -1447,6 +1476,7 @@ function Engine.Compute()
   -- where to start: past the remembered run of done steps, when it is still this plan, place and state
   local key = doneKey(skipFrom, skipTo)
   local start = 1
+  if doneRun.list == nil and not Engine.noPlace and ns.char and ns.char.doneRun then doneRunLoad(list, key) end -- (the last login's: checked below like any)
   local use = not Engine.noPlace and doneRun.list == list and doneRun.key == key and doneRun.k > 0 and list[doneRun.k] == doneRun.step
   if use then start = doneRun.k + 1 end
   -- (Engine.CHECK_RUN_EVERY: every n-th use only - the simulated player's whole-plan runs: checking ~2,000 done steps on
@@ -1463,6 +1493,7 @@ function Engine.Compute()
       end
     end
   end
+  Engine.computeN = Engine.computeN + 1; if start == 1 then Engine.walkN = Engine.walkN + 1 end -- (ns.Mark: a slow moment's walks of the plan)
   local run = start - 1
   local found, sawExtra
   -- (the live solve's pick-up from behind you, Next.taken, reads "todo" only while it is the solve's pick: it is an
@@ -1935,9 +1966,10 @@ function Engine.Refresh()
   if outer then batch = {} else wipe(batch) end -- a nested refresh follows a change: start the reuse over
   if Engine.CHECK_RUN_NOW then Engine.GrayForget() end -- (tests change quests without the game's events)
   local t0 = outer and debugprofilestop and debugprofilestop()
+  local mark = t0 and ns.Mark and ns.Mark()
   local ok, err = ns.Call(Engine.RefreshInner) -- (inside a route job: no pcall - a pause can't cross one)
   if outer then batch = nil end
-  if t0 then ns.Time("refresh", debugprofilestop() - t0) end
+  if t0 then ns.Time("refresh", debugprofilestop() - t0, mark) end
   if not ok then error(err, 0) end
 end
 -- the login catch-up stays quiet; tests switch it to see the completion cue

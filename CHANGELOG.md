@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.1 - 2026-11-22
+- Every built-in plan is rebuilt on the latest quest data (QuestieDB 1.1.4): 98 new quests and 638 corrected, many of them quest givers and turn-ins in new places.
+- Shaman-only quests stay with shamans. Challenge of the Desert Wolf (the Odd Totem in Tanaris) was in every class's plan.
+- Trips through Deadwind Pass. The road from Duskwood through Deadwind Pass into the Swamp of Sorrows was treated as too dangerous below level 51, because of the ogres off the road. Heading for Blasted Lands from Duskwood, the card sent you back to fly to Riverglades and ride back up through the Swamp. It now takes the straight ride, about half the time.
+- Feralas: trips no longer count on paths into The Barrens, Mulgore or Dustwallow Marsh that don't exist. When you know both Feralas flight paths, the card names the one to fly to ("Fly to Feathermoon, Feralas"), not just "Fly to Feralas".
+- Trips name the flight path, not the flight master. "Ride to Thyssiana" is now "Ride to Thalanaar, Feralas", the name the flight map uses, with "Thyssiana, flight master" in small text under it. Flights from a flight master read the same way: "Fly from Farholde Keep, Riverglades to Stormwind City".
+- Zone routes no longer send you on two trips in a row with nothing to do in between. Picking Feralas said "Fly to Feralas" twice, and Hillsbrad Foothills at 38 sent you to Stranglethorn Vale, then Hillsbrad, then Arathi.
+- Logging in is lighter. The addon now remembers your place in the plan and the trips it worked out, from one login to the next. A level 45 login that took about 0.3 s now stays under 0.03 s from the second login at the same level.
+- No more hitch a few seconds after logging in while the addon maps out the flight paths and roads for the first time. That work is now spread over several frames (one 55 ms frame before).
+- Plan times read about 2 hours longer than 2.3.0's: Alliance 87.5 hours to 60, Horde 91.5. Part of that is the travel being counted right: 2.3.0's times counted on the Feralas paths that don't exist. Horde plans change zone about 14 times less often.
+
 ## 2.3.0 - 2026-11-21
 - Built-in plans skip the worst collection quests: the ones where you kill mob after mob for an item that rarely drops. Alliance plans leave out Pirate Hats Ahoy!, Up to Snuff, Fiery Blaze Enchantments, Skullsplitter Tusks and Centaur Bounty. Horde plans leave out Pirate Hats Ahoy!, Bloody Bone Necklaces and Fresh Meat. Time spent collecting rare drops is about a third less on both factions.
 - Plans now use the quest data's real drop rates. Items that drop from nearly every kill used to be planned as a coin flip, so some collection quests were planned as longer than they are.

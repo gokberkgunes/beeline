@@ -323,7 +323,12 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     camps.of[n] = v
     return v
   end
+  -- (built inside the solve's slices too - the first trip after a login: 55 ms in one slice on the user's PC, /bee report
+  -- perf. It pauses with them: all it makes is its own until it returns)
+  local tick = 0
+  local function pause() tick = tick + 1; if tick % 64 == 0 then ns.MaybeYield() end end
   for _, n in ipairs(net()) do
+    pause()
     local c = n
     if n.dock then
       -- a pier you learned moves the dock (its walking yards stay)
@@ -340,6 +345,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     if not (n.kind == "cross" and inCamp(n)) then idx[n.id] = add(c) end
   end
   for _, e in ipairs((Travel.NET and Travel.NET.edges) or {}) do
+    pause()
     local u, v = idx[e[1]], idx[e[2]]
     if u and v and not (risky(e[3]) and e[4] > Travel.TOWN_WALK and not (here == e[3] and e[4] <= Travel.DANGER_HERE_YD)) then edge(u, v, e[4] / Travel.Speed() * ((here and e[3] == here) and Travel.DANGER_HERE or 1), "ride") end
   end
@@ -377,13 +383,13 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     if w then add({ id = "gate" .. k, kind = "gate", gate = true, w = w, m = g.via.m, x = g.via.x, y = g.via.y, name = g.via.name }) end
   end
   if not Travel.NET then
-    for u = 3, #N do for v = u + 1, #N do
+    for u = 3, #N do pause(); for v = u + 1, #N do
       local a, b = N[u], N[v]
       if a.w[3] == b.w[3] and not gated(a, b) and (d(a, b) <= Travel.TOWN_WALK or not ((risky(a.m) and a.m ~= here) or (risky(b.m) and b.m ~= here)) and ((a.m ~= here and b.m ~= here) or d(a, b) <= Travel.DANGER_HERE_YD)) then edge(u, v, d(a, b) / Travel.Speed() * ((here and (a.m == here or b.m == here)) and Travel.DANGER_HERE or 1), "ride") end
     end end
   else
     -- with the network, a gate joins the key points of its own map
-    for g = firstGate, #N do for v = 3, firstGate - 1 do
+    for g = firstGate, #N do pause(); for v = 3, firstGate - 1 do
       local n = N[v]
       if n.m == N[g].m or n.m2 == N[g].m then edge(g, v, d(N[g], n) * Travel.OFFNET / Travel.Speed(), "ride") end
     end end
@@ -391,7 +397,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
   -- flights between the flight paths you know (same continent)
   local fps = {}
   for v = 3, #N do if N[v].fp then fps[#fps + 1] = v end end
-  for i = 1, #fps do for j = i + 1, #fps do
+  for i = 1, #fps do pause(); for j = i + 1, #fps do
     local u, v = fps[i], fps[j]
     if N[u].w[3] == N[v].w[3] then edge(u, v, Travel.FLY_EXTRA + d(N[u], N[v]) / Travel.FLY, "fly") end
   end end
@@ -617,8 +623,12 @@ local function planTrip(from, to, opts)
         -- town walk: after "Fly to Stormwind City" it read "Ride to Stormwind" (a player at the Brigadier General)
         local inDest = n.id == "target" and to.stop and f.m == to.m
         local text
+        -- (to a flight master: the flight path's name, as the flight map has it - "Ride to Thyssiana" named someone the player
+        -- never heard of (user); who stands there goes under it on the card, small: leg.npc)
+        local fm = not inDest and nxt and nxt.how == "fly" and n.name and taxiNames()[n.m .. ":" .. n.name] or nil
+        local npc = fm and n.name or nil
         if inDest then text = ((#c.via == 0 and d(f, n) <= Travel.TOWN_WALK) and "Walk" or ns.RideWord()) .. " to " .. to.stop .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
-        else text = ns.RideWord() .. " " .. ((f.town and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. placeName(n) .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "") end
+        else local where = fm or placeName(n); text = ns.RideWord() .. " " .. ((f.town and f.town ~= where and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. where .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "") end
         local tgt = first or n
         local tm, tx, ty = tgt.m, tgt.x, tgt.y
         if first and first.m2 == f.m then tm, tx, ty = first.m2, first.x2, first.y2 end
@@ -634,7 +644,7 @@ local function planTrip(from, to, opts)
         end
         local say, warn = text, nil
         if #passes > 0 then warn = "passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)"; text = text .. " - " .. warn end
-        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id }
+        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id, npc = npc }
       end
     elseif c.how == "hearth" then
       -- nothing to point at: use the hearthstone (sm/sx/sy: where you land, for the flight-path note)
@@ -648,7 +658,17 @@ local function planTrip(from, to, opts)
       -- (Gretchen Mayberry)" read as if she stood in Stormwind
       local prevLeg = legs[#legs]
       local named = f.name and not (prevLeg and prevLeg.how == "ride" and prevLeg.toId == f.id)
-      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil, text = named and ("Fly from " .. f.name .. " to " .. mapName(n.m)) or ("Fly to " .. mapName(n.m)) }
+      -- (where you land: the zone, or the flight path's own name when you know more than one there - "Fly to Feralas"
+      -- left a player with Thalanaar and Feathermoon to guess which, and the wrong one is a long ride: user)
+      local toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil
+      local dest = mapName(n.m)
+      if toTaxi then
+        local mine = 0
+        for _, g in ipairs((ns.FLIGHT and ns.FLIGHT[n.m]) or {}) do if knowsFP(n.m, g[3]) then mine = mine + 1 end end
+        if mine > 1 then dest = toTaxi end
+      end
+      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = toTaxi, npc = named and taxiNames()[f.m .. ":" .. f.name] and f.name or nil,
+        text = named and ("Fly from " .. (taxiNames()[f.m .. ":" .. f.name] or f.name) .. " to " .. dest) or ("Fly to " .. dest) }
       legs[#legs].say = legs[#legs].text
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
