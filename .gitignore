@@ -1,6 +1,9 @@
 # generated or heavy data (rebuilt by the tools)
 qdb/
 terrain/
+terrain-x/
+terrain-full/
+terrain-mesh/
 leg-cache/
 leg-cache-waypoints/
 paths-auto/
@@ -42,3 +45,4 @@ report-outbox/
 tools/report-server/.store/
 tools/report-server/wrangler.toml
 sim-fast-bin.txt
+terrain-old/

@@ -73,7 +73,7 @@ local DARK = { 0.05, 0.05, 0.07 }
 -- looks this way is left as it is (a dozen texture and font calls each, for nothing) - the redraw takes such a pin
 -- from the pool first
 local function lookKey(where, n, s, notYet)
-  return tostring(Style.Kind(s)) .. where .. ((n == 1 or where == "mini") and "" or n) .. (notYet and "n" or "")
+  return tostring(Style.Kind(s)) .. where .. ((n == 1 or where == "mini") and "" or n) .. (notYet and "n" or "") .. (where == "mini" and (ns.db.miniPinScale or 1) or "")
 end
 local function look(p, where, n, s, notYet)
   local kind = Style.Kind(s)
@@ -82,7 +82,8 @@ local function look(p, where, n, s, notYet)
   if p.looks == key then return end
   p.looks = key
   local c = notYet and GREY or kind.color
-  local size = mini and 20 or (first and 22 or (notYet and 14 or 16))
+  -- (the minimap pin's size is a setting: it covered the game's own marker and its above/below arrow - a player)
+  local size = mini and 20 * (ns.db.miniPinScale or 1) or (first and 22 or (notYet and 14 or 16))
   p:SetSize(size, size)
   local round = mini or not first
   local shape = Style.MEDIA .. (round and "disc" or "pin")
@@ -319,7 +320,7 @@ function Pins.Update(force)
     if s and not x and n == 1 then m, x, y = ns.Engine.TravelTarget(s) end
     -- standing at it: no minimap pin (it would sit on your own arrow - "a marker on me"; the arrow says Here)
     local onIt = s and m and x and Pins.Near(m, x, y, math.max(15, (s.r or 8) + 5))
-    if s and m and x then spots[n] = { m = m, x = x, y = y, near = n == 1 and Pins.Near(m, x, y) and not onIt }; near[n] = (onIt and "2" or spots[n].near and "1" or "0") .. (notYet[n] and "n" or "")
+    if s and m and x then spots[n] = { m = m, x = x, y = y, near = n == 1 and ns.db.miniPin ~= false and Pins.Near(m, x, y) and not onIt }; near[n] = (onIt and "2" or spots[n].near and "1" or "0") .. (notYet[n] and "n" or "")
     else near[n] = "-" end
   end
   -- (what the arrow points at is part of it: the step itself or a stop on the way there, and nothing on a flight -

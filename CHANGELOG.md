@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.0 - 2026-11-22
+- Trips only cross between zones where you really can. The ways from one zone into the next are now found from the game's own map of which ground belongs to which zone, and walked both ways: the old ones came from a scan that wandered over neighbouring zones' land and counted dropping off a cliff as a way in. Gone with it: paths from Feralas into The Barrens, Mulgore and Dustwallow Marsh, from Dun Morogh into the Wetlands, from Thousand Needles up into Dustwallow Marsh, from Mulgore into Stonetalon and Desolace, and from Westfall or Alterac along the coast (a swim). The locked gate from Loch Modan into Searing Gorge is not a way in; the Badlands pass is.
+- The Great Lift between The Barrens and Thousand Needles is part of trips, and Orgrimmar's west gate onto The Barrens.
+- North Blasted Lands (Nethergarde Keep, the road from the Swamp of Sorrows) had no walking map, so trips there went over the mountains from Deadwind Pass. They now take the road.
+- Every built-in plan is rebuilt on these trips. Alliance plans are about half an hour shorter to 60, with fewer zone changes; Horde plans take about as long as before.
+- Options, Map: "Minimap marker" turns our pin on the minimap off, and "Minimap marker size" makes it smaller. It sat on top of the game's own minimap marker and hid its above/below arrow.
+- Plans no longer include the War Effort hand-ins ("The Horde Needs Rugged Leather!" and the rest): they want trade goods from a profession, and an orc at 58 was sent to Goldshire for leather.
+
 ## 2.3.2 - 2026-11-22
 - Fewer wasted steps where your race's start joins the rest of the plan. Every Alliance plan had you set your hearth at the Auberdine inn and then hearth to Auberdine while standing there. Alliance and Horde plans asked for an objective you had already done a second time (Therylune's Escape, The Warsong Reports, Kill Grundig Darkcloud). Alliance plans also asked for a hearth while the stone was still cooling down from the one before.
 - A travel step into a zone where your side has no flight path now reads "Travel to", not "Fly to". Alliance has no flight path in Thousand Needles: the trip flies to Gadgetzan and rides in, and "Fly to Thousand Needles" read as a flight path that isn't there.
