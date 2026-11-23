@@ -151,9 +151,25 @@ ns.On("PLAYER_ENTERING_WORLD", function() pcall(recordDungeon) end)
 Engine.OUTLEVEL = 6
 -- the game's gray line: a quest this level or lower gives (next to) no XP at level L - 5 below you early on, 6-12
 -- below later (the client's GetQuestGreenRange table). A fixed 6 kept a level 1 quest on the route of a level 7.
+local grayMemo = {}
 function Engine.GrayAt(L)
-  return L - (L < 6 and L or L < 40 and (math.floor(L / 10) + 5) or (math.floor(L / 5) + 1))
+  -- (your own level: the game's own number, GetQuestGreenRange - the levels below you a quest is still green -
+  -- so the gray line is the one the quest log colours by; the table below for other levels and where it's missing)
+  -- (worked out once a level and kept until you level: GrayAt runs for most steps on every look at the route, and
+  -- asking the game your level and its green range each time made the route window and a refresh from the plan's
+  -- start 3-5x slower - perf gate, 2.4.1)
+  local v = grayMemo[L]
+  if v then return v end
+  v = L - (L < 6 and L or L < 40 and (math.floor(L / 10) + 5) or (math.floor(L / 5) + 1))
+  if GetQuestGreenRange and UnitLevel and L == UnitLevel("player") then
+    local ok, g = pcall(GetQuestGreenRange)
+    if ok and tonumber(g) and g > 0 then v = L - g - 1 end
+  end
+  grayMemo[L] = v
+  return v
 end
+function Engine.GrayForget() wipe(grayMemo) end
+ns.On("PLAYER_LEVEL_UP", Engine.GrayForget)
 -- The game's red line: a quest 5 or more levels above you is red ("impossible"). Its work waits until you are within 4
 -- levels of it - and so do its pick-up and its unfinished hand-in, as the planner's own gate (+2, +3 from 20) keeps it
 -- out of reach until then. A pick-up with nothing to fight (a delivery: no objective on the route) is still taken when
@@ -410,6 +426,11 @@ function Engine.Outlevelled(s)
   if not (s and s.q and tonumber(s.level) and s.level > 0) then return false end
   local lvl = UnitLevel("player") or 1
   if s.level > Engine.GrayAt(lvl) or State.IsCompleted(s.q) then return false end
+  -- a gray quest is never picked up: not for the chain it opens either (a player: "we should NEVER offer to pick up
+  -- grey quests"). One already in your log keeps its objectives and hand-in while its chain is worth it (GrayDrop)
+  -- (and not in your log, none of its steps either: its objectives and hand-in stood on the card with the pick-up gone,
+  -- steps you can never take - On Guard in Stonetalon at 28, full sweep 2.4.1)
+  if not State.OnQuest(s.q) then return true end
   return Engine.GrayDrop(s.q, lvl, s.level) == true
 end
 -- a finished hand-in the gray rule took off (Messenger to Westfall at 26: 250 XP): Outlevelled, said apart in reports
@@ -907,6 +928,9 @@ local function cutQuest(q, depth)
   local L = planLevel(q)
   if L and Engine.GrayDrop(q, nil, L) == true then return true end
   if State.OnQuest(q) then return false end
+  -- (and a gray quest not in your log is never picked up, whatever it leads to - Engine.Outlevelled - so what needs it
+  -- can't be had either: the yellow follow-up of a gray start stood on the card as a step you could never take)
+  if L and L <= Engine.GrayAt((UnitLevel and UnitLevel("player")) or 1) then return true end
   if ns.Nope(q) then return true end
   -- (an exclusive alternative of it you have or did shuts it, so what needs it goes too: Ends Meet needs the Praise
   -- that 93551, the other Praise, shuts - shown after 93551 was handed in, a dead end: full sweep, 2.3.1)
@@ -1305,6 +1329,46 @@ function Engine.FindPlace(force)
   end
   return level
 end
+-- Ahead of the plan on a trip out: the plan's next step is in another zone, and the plan gets there AHEAD_GAP or more
+-- levels below you - you levelled past it (rested XP, a dungeon, a zone you liked). Following it on, the card sent a
+-- gnome warlock 46 who had finished Riverglades by boat and flight to Dustwallow Marsh for Stinky's Escape, a level 37
+-- escort the plan does at 43 (a player: "super bad"); joining there afresh starts in Tanaris. Within JOIN_GAP levels
+-- the plan's place held (Engine.PlaceDue), and the trip out is where that costs: your place is weighed again as joining
+-- weighs it (Engine.FindPlace: the stretches near your level priced by XP an hour from where you stand), once a step.
+-- -> true when your place moved
+Engine.AHEAD_GAP = 2
+Engine.AHEAD_QUEST = 6
+local aheadSeen = setmetatable({}, { __mode = "k" })
+function Engine.AheadCheck(i)
+  local key = ns.planKey and ns.planKey.starter
+  local d = BeelineData
+  if not (key and ns.char and d) or d.branch or d.dungeon or d.zoneRoute or d.special or Engine.noPlace then return false end
+  local s = steps()[i]
+  if not s or aheadSeen[s] then return false end
+  aheadSeen[s] = true
+  local L = UnitLevel("player") or 1
+  local e = Engine.PlanLevel(i)
+  if not (e and e <= L - Engine.AHEAD_GAP) then return false end
+  local here = Engine.HereMap()
+  local to = (s.k == "fly" and s.to) or s.m
+  if not (here and to and to ~= here) then return false end
+  if ns.Dungeon and ns.Dungeon.Inside and ns.Dungeon.Inside() then return false end
+  -- (and what it goes out for is far below you: the first quest of that trip AHEAD_QUEST levels or more under your
+  -- level - Stinky's Escape, 37 at 46. Up to JOIN_GAP levels ahead you follow the plan as before, its quests at about
+  -- your level: only a trip out for low quests is weighed)
+  local list, ql = steps(), nil
+  for j = i, math.min(#list, i + 12) do
+    local t = list[j]
+    if t.q and t.q > 0 and tonumber(t.level) and t.level > 0 then ql = t.level; break end
+  end
+  if not (ql and ql <= L - Engine.AHEAD_QUEST) then return false end
+  local old = ns.char.join
+  local ok = pcall(Engine.FindPlace, true)
+  if not ok then return false end
+  local now = ns.char.join
+  if ns.Why then ns.Why("join", string.format("ahead of the plan: its next step (%s, plan level %d) is out of your zone at level %d - your place weighed again", tostring(s.name or s.text or s.dest or s.k), e, L)) end
+  return not (old and now and old.first == now.first and old.level == now.level)
+end
 function Engine.Rejoin()
   Engine.ForgetDone()
   if not (ns.planKey and ns.planKey.starter) then ns.Print("Only on the built-in plan: a plan of your own is made from your save and starts where you are."); return end
@@ -1498,9 +1562,30 @@ function Engine.Compute()
     local _, at = Engine.Place()
     local f1, f2 = Engine.FirstStretch()
     if at and f1 and f1 > at then
+      -- (a hand-in not ready whose objective step is in the part skipped is no work of the stretch: it waits, as look()
+      -- reads it below - "later". Counted as work, it kept the skip on with nothing else to do in the stretch: a night
+      -- elf rogue 57 placed in Mount Hyjal's last stretch was shown its blocked hand-ins, "Route done for now", while
+      -- Avalanche of Corruption, Rubble Rummage and Cleansing Winds waited 200-900 yd away in the part skipped - their
+      -- giver right there; Windswept Wards' 16 Enchanted Harpy Amulets were the "work" - mutate --play 7)
+      -- (only while the part skipped has work in the zone you stand in: a zone route's last hand-in waiting on tar from
+      -- Un'Goro, the part skipped, is "done for now" - the test - not a trip back for it)
+      local workHere
+      local function skippedWorkHere()
+        if workHere == nil then
+          workHere = false
+          local pm = State.Position and State.Position()
+          if pm then for j = at, f1 - 1 do local t = list[j]; if t.m == pm and t.q and Engine.Status(j) == "todo" then workHere = true; break end end end
+        end
+        return workHere
+      end
+      local function objSkipped(i)
+        local objs = list[i].q and Engine.ObjStepsOf(list[i].q) or {}
+        for n = 1, #objs do local j = objs[n]; if j >= at and j < f1 and Engine.Status(j) == "todo" then return skippedWorkHere() end end
+        return false
+      end
       for i = f1, f2 do
         local st = Engine.Status(i)
-        if st ~= "done" and st ~= "wait" and st ~= "blocked" and st ~= "later" then skipFrom, skipTo = at, f1 - 1; break end
+        if st ~= "done" and st ~= "wait" and st ~= "blocked" and st ~= "later" and not (st == "notready" and objSkipped(i)) then skipFrom, skipTo = at, f1 - 1; break end
       end
     end
   end
@@ -2028,6 +2113,12 @@ function Engine.RefreshInner()
     local s = Engine.current and steps()[Engine.current]
     if not (s and s.k == "fly" and s.to and Engine.InZone and Engine.InZone(s.to)) then break end
     ns.char.manualDone[key(Engine.current)] = true
+    if batch then wipe(batch) end
+    Engine.current = Engine.Compute()
+  end
+  -- ahead of the plan, and it would send you out of your zone for what it does below your level: weigh your place again
+  -- as joining does (Engine.AheadCheck)
+  if Engine.current and Engine.AheadCheck(Engine.current) then
     if batch then wipe(batch) end
     Engine.current = Engine.Compute()
   end

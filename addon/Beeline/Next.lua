@@ -558,9 +558,13 @@ Next._chainsOnHere = chainsOnHere
 -- (Next.Prize). Shared with tools/replay.js's "leaves work" check, so the check and the pick can't disagree.
 -- (Engine.QuestXP: the game's own cut for a quest far below you - 80% at 6 levels down to 10% at 10 or more. A gray
 -- quest still pays that much; it is gray mobs that pay nothing.)
--- is a pick-up the plan passed as behind you a candidate at your level L? Not more than 2 levels above you; how far
--- below is the price's to say (Next.BehindPrize). Shared with tools/replay.js's "behind you" count.
-function Next.BehindLevelOk(level, L) return tonumber(level) ~= nil and level <= L + 2 end
+-- is a pick-up the plan passed as behind you a candidate at your level L? Not more than 2 levels above you, nor
+-- BEHIND_BELOW or more below: a quest that low is not worth picking up because it is near - a gnome warlock 46 at
+-- Nijel's Point was told to accept Carved Centaur Totems (40), Brutal Politics (35) next on the list (a player: "they
+-- are grey"; the price alone let them in: the game still pays a little for them). WANTED: Andre Firebeard at 50 (45,
+-- 121 yd away) stays one. Shared with tools/replay.js's "behind you" count.
+Next.BEHIND_BELOW = 6
+function Next.BehindLevelOk(level, L) return tonumber(level) ~= nil and level <= L + 2 and level > L - Next.BEHIND_BELOW end
 function Next.BehindPrize(list, s, L)
   local E = ns.Engine
   if not (E.QuestXP and s and s.q and tonumber(s.level)) then return 0 end

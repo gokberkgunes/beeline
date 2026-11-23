@@ -49,7 +49,7 @@ Arrow._lookFor = lookFor
 -- wall or off a cliff).
 -- -> the spot { x, y }, yards to walk, how far off the path you are, the path's height where you are
 -- far: open country (a walk map of 8-yd squares, outdoors), where it may aim as far as the line runs nearly straight
-local function follow(P, px, py, look, far) return ns.Nav.Aim(P, px, py, look or 10, far) end
+local function follow(P, px, py, look, far, soft) return ns.Nav.Aim(P, px, py, look or 10, far, soft) end
 -- open country: outdoors, on a walk map of 8-yd squares or on the planner's own path (a zone with no walk map:
 -- Arathi), but not in a capital (buildings). The planner's path in the open was followed 8-12 yd at a time, so a few
 -- yards beside its start the arrow sent you onto it at a slant instead of the way it goes - tester, Arathi
@@ -163,7 +163,9 @@ local function build()
     local live = ns.Nav and target.key and ns.Nav.PathFor(target.key)
     local P = live or target.path
     if P and dist > (target.r or 12) then
-      local aim, walk, off, zHere = follow(P, px, py, lookFor(P, moveSpeed), openCountry(P))
+      -- (the planner's path in the open - no walk map here: a lean toward it, not a pull back onto it, Nav.Aim soft)
+      local open = openCountry(P)
+      local aim, walk, off, zHere = follow(P, px, py, lookFor(P, moveSpeed), open, open and not live and not P.nav)
       -- the planned path runs from the previous stop; you may well have come from somewhere else. Use it only while
       -- you're on it (or still at its start); otherwise point straight at the target and hide the line.
       local St = P.start

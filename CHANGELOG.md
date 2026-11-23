@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.4.1 - 2026-11-22
+- Gray quests are never offered for pick-up: not on the card, not as "right here" extras, not by auto-accept - not even to open a chain. Quests 6 or more levels below you aren't offered as "right here" extras either (a level 46 at Nijel's Point was told to pick up Carved Centaur Totems, 40). Gray quests already in your log can still be finished and handed in. The gray line is the game's own (the quest log's colours).
+- No more trips back for quests far below you. Ahead of the plan, the card could send you across the map for something the plan does at a lower level: a level 46 who had finished Riverglades was sent by boat and flight to Dustwallow Marsh for Stinky's Escape, a level 37 escort. When the plan's next step leaves your zone for quests well below you, the addon now looks for the best place to carry on from your level, as it does when you first join the plan.
+- The arrow no longer pulls you hard back onto the planned path out in the open. Off to the side of it, it leans toward the path and on toward where you're going; in cities, where walls matter, it still follows the walking line closely.
+- In a dungeon with many quests the card is compact: a quest with one thing to get is one bar, without its name on a line above, and at most eight bars (the rest on one line). Zul'Farrak's eight quests filled the screen.
+- A trip's later legs are listed under the card, one per line: when you land, the next one moves up.
+- Flights name the town you land at: "Fly to Aerie Peak", not "Fly to The Hinterlands". The zone and the flight master are in small text under it.
+- Take route flights works at flight masters who talk first (quests, an inn): it picks "Show me where I can fly" for you. Hold Shift to choose yourself. It also no longer skipped the flight when the card's trip came from memory.
+- The boat in Riverglades: the arrow goes to the boat at Powderfuse Port, not the wharfmaster.
+- Near the end of the plan, quests you skipped past in the zone you're in come back on the card, instead of "Route done for now".
+- Reports say "Beeline report" (they said "FR report").
+
 ## 2.4.0 - 2026-11-22
 - Trips only cross between zones where you really can. The ways from one zone into the next are now found from the game's own map of which ground belongs to which zone, and walked both ways: the old ones came from a scan that wandered over neighbouring zones' land and counted dropping off a cliff as a way in. Gone with it: paths from Feralas into The Barrens, Mulgore and Dustwallow Marsh, from Dun Morogh into the Wetlands, from Thousand Needles up into Dustwallow Marsh, from Mulgore into Stonetalon and Desolace, and from Westfall or Alterac along the coast (a swim). The locked gate from Loch Modan into Searing Gorge is not a way in; the Badlands pass is.
 - The Great Lift between The Barrens and Thousand Needles is part of trips, and Orgrimmar's west gate onto The Barrens.

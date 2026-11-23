@@ -247,8 +247,8 @@ local function build()
     r.text = Style.Text(r, 11, C.sub); r.text:SetPoint("LEFT", r.dot, "RIGHT", 16, 0); r.text:SetPoint("RIGHT"); r.text:SetWordWrap(false); r.text:SetJustifyV("MIDDLE")
     local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetAllPoints(); hl:SetVertexColor(1, 1, 1, 0.035)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    r:SetScript("OnClick", function(self, btn) ns.Engine.Look(self.index, btn) end)
-    r:SetScript("OnEnter", function(self) Card.Hover(true); GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetText("Click to look at this step", 1, 1, 1); GameTooltip:AddLine("Right-click: show it on the map", 0.6, 0.65, 0.72); GameTooltip:AddLine("Shift-click to jump here (skips what's before it - Undo brings it back)", 0.6, 0.65, 0.72, true); GameTooltip:Show() end)
+    r:SetScript("OnClick", function(self, btn) if self.index then ns.Engine.Look(self.index, btn) end end) -- (a trip's leg row: no step)
+    r:SetScript("OnEnter", function(self) Card.Hover(true); GameTooltip:SetOwner(self, "ANCHOR_LEFT"); if not self.index then GameTooltip:SetText("Part of the trip on the card", 1, 1, 1); GameTooltip:AddLine("It moves up to the card when you get there.", 0.6, 0.65, 0.72, true); GameTooltip:Show(); return end GameTooltip:SetText("Click to look at this step", 1, 1, 1); GameTooltip:AddLine("Right-click: show it on the map", 0.6, 0.65, 0.72); GameTooltip:AddLine("Shift-click to jump here (skips what's before it - Undo brings it back)", 0.6, 0.65, 0.72, true); GameTooltip:Show() end)
     r:SetScript("OnLeave", function() GameTooltip:Hide(); Card.Hover(false) end)
     f.rows[i] = r
   end
@@ -591,7 +591,9 @@ function Card.TripLines(i, trip, headed)
   if extra then lines[#lines + 1] = (l1.hostile and Style.Hex(C.warn) or "|cff8e99ad") .. extra:sub(1, 1):upper() .. extra:sub(2) .. ".|r" end
   local why = ns.Explain and ns.Explain.CardLine(i)
   if why then lines[#lines + 1] = "|cffffd25a" .. why .. "|r" end
-  if headed and legs[3] then lines[#lines + 1] = "|cff8a93a6Next: " .. ns.Travel.LegSay(legs[2]) .. "|r" end
+  -- (the legs after this one are the timeline's first rows (Card.Layout); with no rows under the card - Minimal - the
+  -- one after it here)
+  if headed and legs[3] and (ns.db.showNext or 3) == 0 then lines[#lines + 1] = "|cff8a93a6Next: " .. ns.Travel.LegSay(legs[2]) .. "|r" end
   return lines
 end
 
@@ -612,6 +614,11 @@ end
 -- finished ones ticked; quests picked up inside; and the ones you could have brought but didn't. The plan's own step
 -- is the first line of the timeline below. Walking out brings the normal card back.
 Card.DUNGEON_BARS = 12 -- bars at most; quests past that are one line each in the note
+-- with more than this many quests to do in there, the card is compact: a quest of one objective is one bar (what to
+-- get, its count) with no name above it, and at most DUNGEON_BARS_COMPACT bars - Zul'Farrak's eight quests filled
+-- the screen, a name and a bar each (a player)
+Card.DUNGEON_COMPACT = 3
+Card.DUNGEON_BARS_COMPACT = 8
 local TICK = "|T" .. Style.MEDIA .. "icon-check:12|t "
 local function namesOf(list, max)
   local t, seen, u = {}, {}, {}
@@ -643,17 +650,19 @@ function Card.FillDungeon(name, id, bar, look)
     if not h then h = Style.Text(cur, 11, C.text); h:SetWordWrap(false); h:SetJustifyH("LEFT"); cur.heads[n] = h end
     h:SetText(text); cur.headAt[n] = h
   end
+  local compact = left > Card.DUNGEON_COMPACT
+  local maxBars = compact and Card.DUNGEON_BARS_COMPACT or Card.DUNGEON_BARS
   for _, q in ipairs(st.quests) do
     local title = Style.Hex(C.gold) .. q.name .. "|r"
     if q.ready then
       lines[#lines + 1] = TICK .. "|cff5cdc7a" .. q.name .. "|r |cff8e99ad- done|r"
-    elseif cur.nbars + math.max(1, #q.objectives) > Card.DUNGEON_BARS then
+    elseif cur.nbars + math.max(1, #q.objectives) > maxBars then
       local n = 0
       for _, o in ipairs(q.objectives) do if not o.finished then n = n + 1 end end
       over[#over + 1] = q.name .. (n > 0 and string.format(" |cff8e99ad(%d left)|r", n) or "")
     else
-      head(title)
-      if #q.objectives == 0 then local b = bar(); b:Set(0, kind.color, "See your quest log", ""); b:Show() end
+      if not (compact and #q.objectives <= 1) then head(title) end
+      if #q.objectives == 0 then local b = bar(); b:Set(0, kind.color, compact and (q.name .. " - see your quest log") or "See your quest log", ""); b:Show() end
       for _, o in ipairs(q.objectives) do
         local b = bar()
         if o.need > 0 then
@@ -816,8 +825,14 @@ function Card.Fill()
     kind, title, head = Card.TripTitle(headLegs)
     detail = Card.TripGoal(s, headLegs, head)
     -- (to a flight master or flying from one: the headline names the flight path, who stands there goes under it, small)
-    local npc = headLegs[1].npc
-    if npc then detail = "|cff8e99ad" .. npc .. ", flight master|r" .. (detail and ("\n" .. detail) or "") end
+    -- the headline is the town ("Fly to Aerie Peak", "Ride to Farholde Keep"); under it, small, its zone and who:
+    -- "The Hinterlands · from Stormwind (Dungar Longdrink)", "Riverglades · Gretchen Mayberry, flight master" (a player:
+    -- people read the town, the flight map's name, not the zone)
+    local l1 = headLegs[1]
+    local sub = {}
+    if l1.zone then sub[#sub + 1] = l1.zone end
+    if l1.npc then sub[#sub + 1] = (l1.how == "fly" and l1.from) and ("from " .. l1.from .. " (" .. l1.npc .. ")") or (l1.npc .. ", flight master") end
+    if #sub > 0 then detail = "|cff8e99ad" .. table.concat(sub, " · ") .. "|r" .. (detail and ("\n" .. detail) or "") end
   end
   look(kind.color, kind.icon)
   local status = ns.Engine.Status(i)
@@ -1222,10 +1237,31 @@ function Card.Layout()
   local grouped = {}; for _, j in ipairs(ns.Engine.Group(ns.Engine.Shown() or 0)) do grouped[j] = true end
   local rows = {}
   if cur.dungeon and ns.Engine.Shown() then rows[1] = ns.Engine.Shown() end -- the plan's step, for when you're out again
-  for _, j in ipairs(up) do if not grouped[j] and #rows < (ns.db.showNext or 3) then rows[#rows + 1] = j end end
+  -- a trip of several legs: the legs after the one on the card come first, one row each - you land, and the next one
+  -- moves up to the card, instead of a new step appearing out of nowhere (a player). Not a numbered list on the card
+  -- itself: the headline stays the leg you're on ("no one is going to read all of this" - the player, 2.x)
+  local nShow = ns.db.showNext or 3
+  if nShow > 0 and not cur.dungeon and shownI then
+    local _, legs = Card.TripHead(steps()[shownI])
+    if legs and legs[2] then
+      for n = 2, math.min(#legs, 4) do rows[#rows + 1] = { leg = legs[n] } end
+    end
+  end
+  local cap = math.min(#f.rows, nShow + #rows)
+  for _, j in ipairs(up) do if not grouped[j] and #rows < cap then rows[#rows + 1] = j end end
   for k, r in ipairs(f.rows) do
     local i = rows[k]
-    if i then
+    if type(i) == "table" then
+      local l = i.leg
+      local kind = Style.KIND[LEG_KIND[l.how] or "travel"] or Style.KIND.travel
+      r.index, r.base, r.cnt = nil, nil, nil
+      r.dot:SetVertexColor(kind.color[1], kind.color[2], kind.color[3], 0.9)
+      local say = (ns.Travel and ns.Travel.LegSay(l)) or l.text or ""
+      local verb, rest = say:match("^(%S+)%s+(.+)$")
+      r.text:SetText(verb and (Style.Hex(kind.color) .. verb .. "|r " .. rest) or say); r.text:SetAlpha(1 - (k - 1) * 0.15)
+      r:ClearAllPoints(); r:SetPoint("TOPLEFT", f, "TOPLEFT", PAD - 4, -top); r:SetPoint("RIGHT", -PAD, 0); r:Show()
+      top = top + 20
+    elseif i then
       local s = steps()[i]; local kind = Style.Kind(s)
       r.index = i
       r.dot:SetVertexColor(kind.color[1], kind.color[2], kind.color[3], 0.9)

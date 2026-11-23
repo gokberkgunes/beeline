@@ -628,7 +628,7 @@ local function planTrip(from, to, opts)
         local fm = not inDest and nxt and nxt.how == "fly" and n.name and taxiNames()[n.m .. ":" .. n.name] or nil
         local npc = fm and n.name or nil
         if inDest then text = ((#c.via == 0 and d(f, n) <= Travel.TOWN_WALK) and "Walk" or ns.RideWord()) .. " to " .. to.stop .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
-        else local where = fm or placeName(n); text = ns.RideWord() .. " " .. ((f.town and f.town ~= where and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. where .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "") end
+        else local where = (fm and (fm:match("^([^,]+)") or fm)) or placeName(n); text = ns.RideWord() .. " " .. ((f.town and f.town ~= where and f.town ~= placeName(n)) and ("from " .. f.town .. " ") or "") .. "to " .. where .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "") end
         local tgt = first or n
         local tm, tx, ty = tgt.m, tgt.x, tgt.y
         if first and first.m2 == f.m then tm, tx, ty = first.m2, first.x2, first.y2 end
@@ -644,7 +644,7 @@ local function planTrip(from, to, opts)
         end
         local say, warn = text, nil
         if #passes > 0 then warn = "passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)"; text = text .. " - " .. warn end
-        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id, npc = npc }
+        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id, npc = npc, zone = fm and fm:match(", (.+)$") or nil }
       end
     elseif c.how == "hearth" then
       -- nothing to point at: use the hearthstone (sm/sx/sy: where you land, for the flight-path note)
@@ -658,18 +658,20 @@ local function planTrip(from, to, opts)
       -- (Gretchen Mayberry)" read as if she stood in Stormwind
       local prevLeg = legs[#legs]
       local named = f.name and not (prevLeg and prevLeg.how == "ride" and prevLeg.toId == f.id)
-      -- (where you land: the zone, or the flight path's own name when you know more than one there - "Fly to Feralas"
-      -- left a player with Thalanaar and Feathermoon to guess which, and the wrong one is a long ride: user)
+      -- (where you land: the flight path's own town, "Fly to Aerie Peak" - not the zone: "Fly to Feralas" left a player
+      -- with Thalanaar and Feathermoon to guess which (user), and "The Hinterlands" is not what the flight map lists -
+      -- players read the town on it (a player). The zone only when the flight path has no name we know)
       local toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil
       local dest = mapName(n.m)
-      if toTaxi then
-        local mine = 0
-        for _, g in ipairs((ns.FLIGHT and ns.FLIGHT[n.m]) or {}) do if knowsFP(n.m, g[3]) then mine = mine + 1 end end
-        if mine > 1 then dest = toTaxi end
-      end
-      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = toTaxi, npc = named and taxiNames()[f.m .. ":" .. f.name] and f.name or nil,
-        text = named and ("Fly from " .. (taxiNames()[f.m .. ":" .. f.name] or f.name) .. " to " .. dest) or ("Fly to " .. dest) }
-      legs[#legs].say = legs[#legs].text
+      if toTaxi then dest = toTaxi:match("^([^,]+)") or toTaxi end
+      local toZone = toTaxi and toTaxi:match(", (.+)$") or nil
+      local fromTaxi = f.name and taxiNames()[f.m .. ":" .. f.name] or nil
+      local fromTown = fromTaxi and (fromTaxi:match("^([^,]+)") or fromTaxi) or f.name
+      legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = toTaxi, npc = named and fromTaxi and f.name or nil,
+        zone = toZone, from = named and fromTown or nil,
+        text = named and ("Fly from " .. fromTown .. " to " .. dest) or ("Fly to " .. dest) }
+      -- (the card's headline: where you land, the town; under it, small, its zone and who you fly from - a player)
+      legs[#legs].say = "Fly to " .. dest
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
       local prevLeg = legs[#legs]

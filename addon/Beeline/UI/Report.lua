@@ -137,7 +137,7 @@ local KINDS = { "accept", "turnin", "obj", "fly", "fp", "hearth", "train", "bind
 local KIND = {}; for i, k in ipairs(KINDS) do KIND[k] = i end
 Report.KINDS = KINDS
 
--- the data as text: "FR report 1.2.2 | built-in gnome-warlock | lvl 30 | Hillsbrad Foothills 50.5,51.8 | step 7 ..."
+-- the data as text: "Beeline report 1.2.2 | built-in gnome-warlock | lvl 30 | Hillsbrad Foothills 50.5,51.8 | step 7 ..."
 -- then "FR1." and the packed data
 function Report.Pack(d)
   local m = d.meta
@@ -204,7 +204,7 @@ function Report.Pack(d)
   end
   local shownMap = (m.map and m.map > 0 and m.map) or (d.where and d.where.map)
   local zone = shownMap and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(shownMap)
-  local head = string.format("FR report %s | %s | %s %s lvl %s | %s %.1f,%.1f | step %s: %s",
+  local head = string.format("Beeline report %s | %s | %s %s lvl %s | %s %.1f,%.1f | step %s: %s",
     tostring(m.version), tostring(m.plan), tostring(m.race), tostring(m.class), tostring(m.level),
     zone and zone.name or tostring(shownMap or "?"), (m.x or 0) * 100, (m.y or 0) * 100, tostring(m.current), tostring(m.step))
   return head .. "\nFR" .. Report.FORMAT .. "." .. b64(out)
@@ -311,7 +311,7 @@ function Report.Text(full)
     end
     return Report.Pack(d)
   end)
-  if not ok then text = "FR report failed: " .. tostring(text); list = {} end
+  if not ok then text = "Beeline report failed: " .. tostring(text); list = {} end
   return text, #list, list
 end
 

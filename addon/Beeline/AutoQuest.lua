@@ -26,7 +26,7 @@ local function build()
     for _, r in ipairs(routes) do
       for _, s in ipairs((ns.Steps and ns.Steps(r)) or r.steps or {}) do
         if s.q then
-          if s.k == "accept" then wantCache[s.q] = true end
+          if s.k == "accept" then wantCache[s.q] = tonumber(s.level) or true end
           if (s.k == "accept" and type(s.note) == "string" and s.note:find("Escort:", 1, true))
             or (s.k == "obj" and type(s.text) == "string" and s.text:find("^Escort ")) then escortCache[s.q] = true end
         end
@@ -38,7 +38,11 @@ function Auto.Wanted(q)
   q = tonumber(q)
   if not q or (ns.Nope(q)) then return false end
   build()
-  return wantCache[q] == true
+  local w = wantCache[q]
+  if not w then return false end
+  -- (never a gray quest, whatever route has it: a player - "we should NEVER offer to pick up grey quests")
+  if type(w) == "number" and w > 0 and ns.Engine and ns.Engine.GrayAt and w <= ns.Engine.GrayAt((UnitLevel and UnitLevel("player")) or 1) then return false end
+  return true
 end
 -- an escort quest: by the plan's own marks, or the quest's objective text as the game shows it ("Escort ...")
 function Auto.IsEscort(q)
@@ -120,29 +124,69 @@ ns.On("QUEST_GREETING", ns.Guard("auto", Auto.Greeting))
 -- Auto-fly, on its own toggle (ns.db.autoFly, off by default; Options: "Take the flight my route needs"): open a flight
 -- master's map while the card's trip flies from here, and it takes that flight. Only a flight path you have (the map
 -- lists it as reachable), only the trip of the step the card shows, and Shift held opens the map for you to choose.
+-- (the card's step's own trip, Engine.TravelFor - kept, so no search: Engine.lastTrip is the last trip worked out for
+-- any step, and once the solve or the "?" had worked one out for another, the card's came from the memo, lastTrip was
+-- that other step's, and auto-fly did nothing at the flight master - a player)
 function Auto.FlightFor()
   local E = ns.Engine
-  local legs, step = E and E.lastTrip, E and E.lastTripStep
   local shown = E and E.Shown and E.Shown()
   local list = BeelineData and BeelineData.steps
-  if not (legs and step and shown and list and list[shown] == step) then return nil end
+  local step = shown and list and list[shown]
+  if not step then return nil end
+  local trip = E.TravelFor and E.TravelFor(step)
+  local legs = trip and (trip.legs or { trip })
+  if not legs and E.lastTripStep == step then legs = E.lastTrip end
+  if not legs then return nil end
   for _, leg in ipairs(legs) do
     if leg.how == "fly" then return leg.toTaxi end
     if leg.how ~= "ride" then return nil end -- (a boat or a hearth first: this flight is not the one from here)
   end
 end
+-- the flight map's node for a flight path's name: as the map names it, else by its town (the part before the comma) -
+-- our names come from the flight data, the map's from the game, and one word apart the flight was never taken
+local function townOf(n) return (n or ""):match("^%s*([^,]+)") end
+function Auto.TaxiSlot(want)
+  if not (want and NumTaxiNodes and TaxiNodeName) then return nil end
+  local byTown
+  for i = 1, NumTaxiNodes() do
+    local name, typ = TaxiNodeName(i), TaxiNodeGetType and TaxiNodeGetType(i) or "REACHABLE"
+    if typ == "REACHABLE" then
+      if name == want then return i end
+      if not byTown and townOf(name) == townOf(want) then byTown = i end
+    end
+  end
+  return byTown
+end
+local function wantsFlight() return ns.db and ns.db.autoFly == true and not (IsShiftKeyDown and IsShiftKeyDown()) end
 ns.On("TAXIMAP_OPENED", function()
-  if not (ns.db and ns.db.autoFly == true) or (IsShiftKeyDown and IsShiftKeyDown()) then return end
+  if not wantsFlight() then return end
   C_Timer.After(0.1, ns.Guard("autofly", function()
     local want = Auto.FlightFor()
-    if not (want and NumTaxiNodes and TaxiNodeName and TakeTaxiNode) then return end
-    for i = 1, NumTaxiNodes() do
-      if TaxiNodeName(i) == want and (not TaxiNodeGetType or TaxiNodeGetType(i) == "REACHABLE") then
-        if ns.Why then ns.Why("auto", "flying to " .. want .. " (auto-fly)") end
-        ns.Print("Flying to " .. want .. ". (Auto-fly: hold Shift when you talk to the flight master to choose yourself.)")
-        TakeTaxiNode(i)
-        return
-      end
-    end
+    local i = want and TakeTaxiNode and Auto.TaxiSlot(want)
+    if not i then return end
+    if ns.Why then ns.Why("auto", "flying to " .. want .. " (auto-fly)") end
+    ns.Print("Flying to " .. (townOf(want) or want) .. ". (Auto-fly: hold Shift when you talk to the flight master to choose yourself.)")
+    TakeTaxiNode(i)
   end))
 end)
+-- A flight master with quests or more to say opens a chat first: the flight map waits for "Show me where I can fly",
+-- and auto-fly never ran (a player: it "doesn't work"). With auto-fly on and the card's trip flying from here, that
+-- option is chosen for you - after auto-quest's hand-ins and pick-ups at the same NPC, which come first. The option is
+-- known by its icon (the game's taxi gossip icon; the type field the older API had). Shift: choose yourself.
+Auto.TAXI_ICON = 132057
+function Auto.TaxiGossip()
+  if not (wantsFlight() and C_GossipInfo and C_GossipInfo.GetOptions and Auto.FlightFor()) then return false end
+  for _, o in ipairs(C_GossipInfo.GetOptions() or {}) do
+    if (o.icon == Auto.TAXI_ICON or o.type == "taxi") and o.gossipOptionID then C_GossipInfo.SelectOption(o.gossipOptionID); return true end
+  end
+  return false
+end
+ns.On("GOSSIP_SHOW", ns.Guard("autofly", function()
+  -- (auto-quest first: it has this same event - Auto.Gossip, above. Whatever it did, the gossip is still open when it
+  -- only read it; one it acted on closes or changes, and the flight waits for the next look)
+  if Auto.Enabled() and (C_GossipInfo.GetActiveQuests and #(C_GossipInfo.GetActiveQuests() or {}) > 0 or C_GossipInfo.GetAvailableQuests and #(C_GossipInfo.GetAvailableQuests() or {}) > 0) then
+    for _, a in ipairs(C_GossipInfo.GetActiveQuests() or {}) do if a.isComplete then return end end
+    for _, a in ipairs(C_GossipInfo.GetAvailableQuests() or {}) do if a.questID and Auto.Wanted(a.questID) then return end end
+  end
+  Auto.TaxiGossip()
+end))

@@ -59,6 +59,7 @@ Nav.STRAIGHT_OFF = 40  -- ...and while you are up to this far off the line: the 
 Nav.AIM_REACH = 1.25   -- far off the line (over Nav.AIM_MERGE_YD), it looks this many times as far as you are off
 Nav.AIM_MERGE = 1.25   -- a little off it, this many (2.5 - a long shallow merge - had followers stray 12 yd from city lines and
 Nav.AIM_MERGE_YD = 20  -- 40 yd from open ones: it cuts the corners the line goes round; the same as far off, for now)
+Nav.AIM_SOFT = 3       -- the planner's path in the open (Nav.Aim soft): beside it, look this many times as far as you are off
 Nav.AIM_BACK = 3       -- where you are on the line is looked for from this many segments behind where you were...
 Nav.AIM_AHEAD_YD = 80  -- ...to this many yards of line ahead of it
 Nav.AIM_JUMP = 0.15    -- yards of "off the line" one yard of skipped line counts as (a nearby later stretch must be much nearer)
@@ -661,7 +662,9 @@ end
 -- -> the spot { x, y } (one table per line, reused), yards to walk (to the spot, then the rest of the line), how
 --    far off the line you are, the line's height where you are (when it has heights)
 -- far: in open country, reach on along a nearly straight stretch (Nav.STRAIGHT_TOL)
-function Nav.Aim(P, px, py, look, far)
+-- soft: the planner's own path in open country (no walk map, no walls): beside it, the arrow only leans toward it
+-- (Nav.AIM_SOFT times as far ahead as you are off), it doesn't pull you back onto it
+function Nav.Aim(P, px, py, look, far, soft)
   local pts, rem = P.pts, P.rem
   local n = #pts
   local aim = P.aim; if not aim then aim = {}; P.aim = aim end
@@ -706,6 +709,10 @@ function Nav.Aim(P, px, py, look, far)
   -- (a little off it: a long shallow merge, Nav.AIM_MERGE times as far ahead as you are off; wandered far off: back
   -- onto the stretch you left at a slant, Nav.AIM_REACH times - a long merge there would cut across to another leg)
   local reach = bd <= Nav.AIM_MERGE_YD and bd * Nav.AIM_MERGE or max(Nav.AIM_MERGE_YD * Nav.AIM_MERGE, bd * Nav.AIM_REACH)
+  -- (the planner's path in the open, and you clearly beside it: a lean, not a pull - 45 yd off it in the Tanaris desert
+  -- the arrow pointed 50 degrees sideways back to the line, the objective straight ahead: "it forces players on the
+  -- path too hard" - a player)
+  if soft and bd >= Nav.STRAIGHT_BESIDE then reach = max(reach, bd * Nav.AIM_SOFT) end
   if reach > R then R = reach end
   local j, t0, t = best, bt, nil
   while true do
