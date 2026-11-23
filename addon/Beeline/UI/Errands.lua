@@ -6,23 +6,19 @@ local Errands = {}
 ns.Errands = Errands
 local HBD = LibStub("HereBeDragons-2.0")
 
-local BAG_LOW, DURABILITY_LOW = 3, 0.25
+local BAG_LOW = 3
 
+-- (kept until the bags change: the card's layout and the live solver ask often; known by the API that counted it)
+local freeKept, freeVia
 function Errands.FreeSlots()
   local free, getFree = 0, (C_Container and C_Container.GetContainerNumFreeSlots) or GetContainerNumFreeSlots
   if not getFree then return nil end
+  if freeKept and freeVia == getFree then return freeKept end
   for bag = 0, 4 do local ok, n = pcall(getFree, bag); if ok and type(n) == "number" then free = free + n end end
+  freeKept, freeVia = free, getFree
   return free
 end
-function Errands.Durability()
-  if not GetInventoryItemDurability then return nil end
-  local low
-  for slot = 1, 18 do
-    local ok, cur, max = pcall(GetInventoryItemDurability, slot)
-    if ok and cur and max and max > 0 then local f = cur / max; if not low or f < low then low = f end end
-  end
-  return low
-end
+ns.On("BAG_UPDATE_DELAYED", function() freeKept = nil end, true) -- (first: before the check below reads it)
 -- the nearest vendor on your map: name, title, yards
 function Errands.Nearest()
   local m = ns.State.Position()
@@ -107,16 +103,10 @@ local function foodWords(tip)
   return w
 end
 local function wellFedAt(w) return w.fed and not w.teaches and w.need <= (UnitLevel and UnitLevel("player") or 1) end
-function Errands.IsWellFedFood(itemID, tip)
-  if notFood(itemID) == false then return false end
-  return wellFedAt(foodWords(tip))
-end
 
--- food in your bags that gives Well Fed; scanned when your bags change. A bag item's tooltip is dear to build (every
--- loot looked through the whole bags this way: a hitch on each corpse looted while not Well Fed): only food is asked
--- for its tooltip - the rest is told by its class - and each food's once: its words don't change (kept once whole;
--- your level is held against its "Requires Level" each scan). A kill step at 12 with four breads in the bags read four
--- tooltips on every loot (perf gate)
+-- food in your bags that gives Well Fed; scanned when your bags change. A bag item's tooltip is dear to build (the bags
+-- are scanned on every loot): only food is asked for its tooltip - the rest is told by its class - and each food's
+-- once: its words don't change (kept once whole; your level is held against its "Requires Level" each scan)
 local foodCache
 local wordsOf = {}
 function Errands.Food()
@@ -157,14 +147,13 @@ end
 Errands.GRIMOIRES = {
   { name = "Sacrifice", level = 16, pet = "Voidwalker" },
   { name = "Consume Shadows", level = 18, pet = "Voidwalker" },
-  -- (the demon by its summoning spell, known to either faction: the quests that teach it differ - 1739 and 1795 are the
-  -- Alliance's, and a Horde warlock never had them)
+  -- (the demon by its summoning spell, known to either faction: the quests that teach it differ by faction)
   { name = "Seduction", level = 26, pet = "Succubus", spell = 712, quest = { 1739 } },
   { name = "Devour Magic", level = 30, pet = "Felhunter", spell = 691, quest = { 1795 } },
   { name = "Spell Lock", level = 36, pet = "Felhunter", spell = 691, quest = { 1795 } },
 }
 -- the demon trainers of the capitals with warlocks (QuestieDB: "Demon Trainer"; Thunder Bluff and Darnassus have none -
--- no Tauren or Night Elf warlocks). Orgrimmar and the Undercity were missing: Horde warlocks never got the errand
+-- no Tauren or Night Elf warlocks)
 Errands.DEMON_TRAINERS = { [1453] = "Spackle Thornberry, by Gakin in the Mage Quarter", [1455] = "Jubahl Corpseseeker, in the Forlorn Cavern",
   [1454] = "Kurgul, in the Cleft of Shadow", [1458] = "Martha Strain, in the Magic Quarter" }
 function Errands.Grimoire()
@@ -189,7 +178,7 @@ end
 function Errands.Current()
   local free = Errands.FreeSlots()
   local needSell = free and free <= BAG_LOW
-  -- (no repair reminder: other addons do that - tester)
+  -- (no repair reminder: other addons do that)
   if not needSell then
     local gt, gk
     if ns.db.remindGrimoire ~= false then gt, gk = Errands.Grimoire() end
@@ -217,14 +206,13 @@ function Errands.Dismiss()
   -- a grimoire's "x" means bought (or not wanted): never again; other errands come back when things change
   local g = key and key:match("^grimoire:(.+)$")
   if g then ns.char.grimoires = ns.char.grimoires or {}; ns.char.grimoires[g] = true else ns.char.errandDismissed = key end
-  ns.Fire("FR_STEP", ns.Engine.Shown())
+  ns.Card.Repaint()
 end
 
 local last
 local function check()
   local text, key = Errands.Current()
-  if key ~= last then last = key; if not key then ns.char.errandDismissed = nil end; ns.Fire("FR_STEP", ns.Engine.Shown()) end
+  if key ~= last then last = key; if not key then ns.char.errandDismissed = nil end; ns.Card.Repaint() end
 end
 ns.On("BAG_UPDATE_DELAYED", check)
-ns.On("UPDATE_INVENTORY_DURABILITY", check)
 ns.On("FR_LOADED", function() C_Timer.After(5, check); ns.NewTicker(15, ns.Guard("errands", check)) end)

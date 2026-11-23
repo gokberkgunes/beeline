@@ -14,8 +14,7 @@ local HBD = LibStub("HereBeDragons-2.0")
 
 local cur -- { map, seg (table of "x,y[,z]" strings), lastX, lastY, lastT }
 
--- the recorded walking lives in BeelineDB.trailData (BeelineDB.trails is the on/off setting - they once
--- shared a name, which broke recording)
+-- the recorded walking lives in BeelineDB.trailData (BeelineDB.trails is the on/off setting: keep the names apart)
 local function store()
   if type(BeelineDB.trailData) ~= "table" then BeelineDB.trailData = {} end
   return BeelineDB.trailData
@@ -38,7 +37,7 @@ local function flush()
 end
 
 -- all trails together stay under TOTAL_BYTES of save file (about 1.5 MB): past it, the oldest trail of the map holding
--- the most goes first. Per-map caps alone allowed ~8 MB over months of play across every zone.
+-- the most goes first (per-map caps alone don't bound the total).
 Trails.TOTAL_BYTES = 1500000
 function Trails.Trim()
   local t = store()

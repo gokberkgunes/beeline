@@ -7,11 +7,43 @@ ns.State = State
 State.completed = {}   -- [questID] = true
 State.knownTaxi = {}   -- [nodeName] = true
 local cache = {}       -- [questID] = { on, complete, objectives } until the next log change
--- [questID] = true: not handed in, as asked since the last full look (a refresh asks for every quest on the route, ~950
--- times on a long plan, each a call into the game and a look at every quest that needs it)
+-- [questID] = true: not handed in, as asked since the last full look (a refresh asks for every quest on the route,
+-- ~950 game calls on a long plan)
 local notDone = {}
 
 local function call(fn, ...) if type(fn) == "function" then local ok, a, b, c, d = pcall(fn, ...); if ok then return a, b, c, d end end end
+
+-- Who you are, kept per game function (tests swap them); an unknown answer is asked again.
+-- State.MyFaction() -> "A" / "H" / nil, State.MySide() -> "alliance" / "horde" (unknown: alliance),
+-- State.MyClass() / State.MyRace() -> the game's file names ("WARRIOR", "NightElf") / nil
+local facFn, facL, classFn, classF, raceFn, raceF
+function State.MyFaction()
+  local fn = UnitFactionGroup
+  if fn ~= facFn or not facL then
+    local f = call(fn, "player")
+    facFn, facL = fn, (f == "Horde" and "H") or (f == "Alliance" and "A") or nil
+  end
+  return facL
+end
+function State.MySide() return State.MyFaction() == "H" and "horde" or "alliance" end
+function State.MyClass()
+  local fn = UnitClass
+  if fn ~= classFn or not classF then local _, c = call(fn, "player"); classFn, classF = fn, c end
+  return classF
+end
+function State.MyRace()
+  local fn = UnitRace
+  if fn ~= raceFn or not raceF then local _, r = call(fn, "player"); raceFn, raceF = fn, r end
+  return raceF
+end
+-- is a quest for you? faction "A"/"H", classes and races as comma lists of the game's file names; nil: anyone.
+-- Unknown about you: it counts as yours.
+function State.ForMe(faction, classes, races)
+  if faction then local me = State.MyFaction(); if me and faction ~= me then return false end end
+  if classes then local c = State.MyClass(); if c and not ("," .. classes .. ","):find("," .. c .. ",", 1, true) then return false end end
+  if races then local r = State.MyRace(); if r and not ("," .. races .. ","):find("," .. r .. ",", 1, true) then return false end end
+  return true
+end
 
 function State.IsCompleted(id)
   if not id then return false end
@@ -21,51 +53,81 @@ function State.IsCompleted(id)
   if done == nil and IsQuestFlaggedCompleted then done = call(IsQuestFlaggedCompleted, id) end
   if done then State.completed[id] = true end
   -- a quest a handed-in quest needed (QUEST_PRE) counts as done: you did it, or went round it (abandoned, then the
-  -- chain carried on) - either way the giver won't offer it again. Jungle Secrets, abandoned with Bookie Herod handed
-  -- in, was offered on the card again and again and flipped with the next pick (tester)
+  -- chain carried on) - either way the giver won't offer it again
   if not done and State.SupersededBy(id) then State.completed[id] = true; return true end
   if not done then notDone[id] = true end
   return done and true or false
 end
--- the quests that need quest id (the reverse of ns.QUEST_PRE), built once
+-- the quests that list q among their prerequisites (ns.QUEST_PRE turned around; built again when the data is swapped)
+-- -> a list, or nil
 local needers
-function State.SupersededBy(id)
+function State.NeedersOf(q)
   local P = ns.QUEST_PRE
   if not P then return nil end
-  if not needers then
-    needers = {}
-    for q, pre in pairs(P) do
-      for _, p in ipairs(pre.g or {}) do needers[p] = needers[p] or {}; table.insert(needers[p], q) end
-      for _, p in ipairs(pre.s or {}) do needers[p] = needers[p] or {}; table.insert(needers[p], q) end
+  if not needers or needers.src ~= P then
+    needers = { src = P }
+    for d, pre in pairs(P) do
+      for _, p in ipairs(pre.g or {}) do local t = needers[p]; if not t then t = {}; needers[p] = t end; t[#t + 1] = d end
+      for _, p in ipairs(pre.s or {}) do local t = needers[p]; if not t then t = {}; needers[p] = t end; t[#t + 1] = d end
     end
   end
-  for _, q in ipairs(needers[id] or {}) do
+  return needers[q]
+end
+-- a handed-in quest that needed quest id (nil: none)
+function State.SupersededBy(id)
+  local ds = State.NeedersOf(id)
+  if not ds then return nil end
+  for n = 1, #ds do
+    local q = ds[n]
     local flagged = State.completed[q] or (C_QuestLog and call(C_QuestLog.IsQuestFlaggedCompleted, q))
     if flagged then return q end
   end
   return nil
 end
+-- are quest q's prerequisites handed in (ns.QUEST_PRE: all of g, one of s)? done (optional): a set of quests to count as
+-- handed in too
+function State.PrereqsMet(q, done)
+  local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
+  if not pre then return true end
+  local IsCompleted = State.IsCompleted
+  local g, s = pre.g, pre.s
+  if g then for n = 1, #g do local p = g[n]; if not (IsCompleted(p) or (done and done[p])) then return false end end end
+  if s and #s > 0 then
+    for n = 1, #s do local p = s[n]; if IsCompleted(p) or (done and done[p]) then return true end end
+    return false
+  end
+  return true
+end
 
 -- the quests in your log, read once per log change: { [questID] = true }, or false when the log can't be read whole
--- (a collapsed header hides its quests from the list: then each quest is asked about by its ID, as before). A refresh
--- asks about every quest on the route - ~600 on a built-in plan - and asking the game each by ID was most of a full
--- look in the game (50-110 ms at level 36, a tester's saved timings; the simulator's quest API costs nothing)
+-- (a collapsed header hides its quests: then each quest is asked by ID). A refresh asks about every quest on the
+-- route (~600) and asking the game each by ID was most of a full look (50-110 ms; the sim's quest API costs nothing)
 local logSet = nil
+-- the quest log's size: rows (headers too), quests
+local function logSize() return call((C_QuestLog and C_QuestLog.GetNumQuestLogEntries) or GetNumQuestLogEntries) end
+local function nextLogQuest(rows, i)
+  while i < rows do
+    i = i + 1
+    local id, hdr, level
+    if C_QuestLog and C_QuestLog.GetInfo then local info = call(C_QuestLog.GetInfo, i); if info then id, hdr, level = info.questID, info.isHeader, info.level end
+    elseif GetQuestLogTitle then local _, l, _, h, _, _, _, q = call(GetQuestLogTitle, i); id, hdr, level = q, h, l end
+    if not hdr and type(id) == "number" and id > 0 then return i, id, level end
+  end
+end
+-- the quests in your log, headers skipped: for row, questID, level in State.LogQuests() do ... end (rows: the log's
+-- size when already asked). No table per walk.
+function State.LogQuests(rows)
+  if rows == nil then rows = logSize() end
+  return nextLogQuest, type(rows) == "number" and rows or 0, 0
+end
 local function readLog()
-  local fn = (C_QuestLog and C_QuestLog.GetNumQuestLogEntries) or GetNumQuestLogEntries
-  local entries, quests = call(fn)
+  local entries, quests = logSize()
   if type(entries) ~= "number" or type(quests) ~= "number" then return false end
   local set, n = {}, 0
-  for i = 1, entries do
-    local id, hdr
-    if C_QuestLog and C_QuestLog.GetInfo then local info = call(C_QuestLog.GetInfo, i); if info then id, hdr = info.questID, info.isHeader end
-    elseif GetQuestLogTitle then local _, _, _, h, _, _, _, q = call(GetQuestLogTitle, i); id, hdr = q, h end
-    if not hdr and type(id) == "number" and id > 0 then set[id] = true; n = n + 1 end
-  end
+  for _, id in State.LogQuests(entries) do set[id] = true; n = n + 1 end
   if n ~= quests then return false end
   return set
 end
-State._readLog = readLog -- (tests)
 -- per-quest live info, by quest ID
 function State.Quest(id)
   if not id then return nil end
@@ -106,14 +168,9 @@ function State.QuestReady(id) local q = State.Quest(id); return q and q.on and (
 
 function State.LogCount()
   local n = 0
-  local fn = (C_QuestLog and C_QuestLog.GetNumQuestLogEntries) or GetNumQuestLogEntries
-  local entries, quests = call(fn)
+  local entries, quests = logSize()
   if quests then return quests end
-  entries = entries or 0
-  for i = 1, entries do
-    local info = C_QuestLog and C_QuestLog.GetInfo and call(C_QuestLog.GetInfo, i)
-    if info and not info.isHeader then n = n + 1 end
-  end
+  for _ in State.LogQuests(entries) do n = n + 1 end
   return n
 end
 -- is the quest log full? Asked for every pick-up on every refresh: read at most once a second, and again as soon as
@@ -143,13 +200,7 @@ end
 -- visible quest log rows (for the snapshot); route quests are added by ID
 local function logIDs()
   local ids = {}
-  local n = C_QuestLog and C_QuestLog.GetNumQuestLogEntries and call(C_QuestLog.GetNumQuestLogEntries) or (GetNumQuestLogEntries and call(GetNumQuestLogEntries)) or 0
-  for i = 1, n do
-    local id, hdr
-    if C_QuestLog and C_QuestLog.GetInfo then local info = call(C_QuestLog.GetInfo, i); if info then id, hdr = info.questID, info.isHeader end
-    elseif GetQuestLogTitle then local _, _, _, h, _, _, _, q = GetQuestLogTitle(i); id, hdr = q, h end
-    if id and id > 0 and not hdr then ids[id] = true end
-  end
+  for _, id in State.LogQuests() do ids[id] = true end
   for _, s in ipairs(BeelineData and BeelineData.steps or {}) do if s.q and State.OnQuest(s.q) then ids[s.q] = true end end
   return ids
 end
@@ -161,8 +212,7 @@ function State.NoteLog()
   ns.char.hadQuest = ns.char.hadQuest or {}
   for id in pairs(logIDs()) do ns.char.hadQuest[id] = true end
 end
--- (a quest comes into your log only by being taken - or was there when you logged in: not on every refresh, 4 ms at
--- level 50 on each one)
+-- (a quest comes into your log only by being taken - or was there at login: not on every refresh, ~4 ms each)
 ns.On("QUEST_ACCEPTED", function() C_Timer.After(0.5, function() pcall(State.NoteLog) end) end)
 ns.On("PLAYER_LOGIN", function() C_Timer.After(5, function() pcall(State.NoteLog) end) end)
 -- what is in your bags: [itemID] = how many (the backpack and your bags, not the bank). nil when the game won't say
@@ -195,9 +245,8 @@ function State.Position()
   if pos then return mapID, pos.x, pos.y end
 end
 
--- your skills: name -> { rank, maxRank } (Skinning 127 of 150). Forever's client has them in C_SkillInfo, each line a
--- table (name, rank, maxRank, isHeader); the old GetSkillLineInfo returned a list of values instead. Without this the
--- save's skills were always empty on Forever.
+-- your skills: name -> { rank, maxRank }. Forever's client has them in C_SkillInfo, each line a table (name, rank,
+-- maxRank, isHeader); the old GetSkillLineInfo returns a list of values instead.
 function State.Skills()
   local skills = {}
   local C = type(C_SkillInfo) == "table" and C_SkillInfo
@@ -215,9 +264,8 @@ function State.Skills()
   return skills
 end
 
--- "Ride to" only once you can ride: before that, every trip on foot reads "Run to" ("ride to xxx when we don't have a
--- mount"). A riding skill of any kind (Riding, Horse Riding, the warlock's and paladin's mounts teach one) counts.
--- Read at most every 10 s: the card asks on every refresh.
+-- "Ride to" only once you can ride: before that, every trip on foot reads "Run to". A riding skill of any kind counts
+-- (Riding, Horse Riding, warlock/paladin mounts teach one). Read at most every 10 s: the card asks on every refresh.
 local rideAt, rideCan = -100, false
 function State.CanRide()
   local now = GetTime and GetTime() or 0
@@ -355,20 +403,17 @@ ns.On("TAXIMAP_OPENED", function()
   local inst = HBD and select(3, HBD:GetPlayerWorldPosition())
   local changed = State.TaxiMapSeen(nodes, inst)
   ns.Fire("FR_TAXI_OPENED")
-  -- (the route again only when what you know changed: opening the map to fly was a 53 ms refresh for nothing in a
-  -- player's game - /bee report perf, a slow moment on TAXIMAP_OPENED)
+  -- (the route again only when what you know changed: opening the map to fly was a 53 ms refresh for nothing)
   if changed then State.Announce("FR_STATE", false) end
 end)
 
 -- The flight paths you know without opening a flight master's map: the world map's own flight points
--- (C_TaxiMap.GetTaxiNodesForMap, every node of a map with isUndiscovered) - a level 32 trying the addon for the first
--- time already knows a dozen, and until a flight map was opened the plan walked them everywhere.
+-- (C_TaxiMap.GetTaxiNodesForMap, every node of a map with isUndiscovered).
 -- A client that marks nothing undiscovered among many nodes is not telling: nothing is taken from it then.
 State.TAXI_SCAN_MAPS = { 1414, 1415 } -- Kalimdor, the Eastern Kingdoms; the zones of FlightMasters.lua and TravelData join them
--- The flight paths you most likely know, from the quests you handed in, while the addon can't tell (on Forever the world
--- map marks no flight point undiscovered, so State.ScanTaxi never trusts it) and no flight master's map was opened on
--- this character (ns.char.taxiSeen). A level 16 trying the addon in the Barrens was taken to know no flight path: told
--- to run to Orgrimmar, and to get the Crossroads flight path he had (a player). Conservative, two rules:
+-- The flight paths you most likely know, from the quests you handed in, while the addon can't tell (on Forever the
+-- world map marks no flight point undiscovered, so State.ScanTaxi never trusts it) and no flight master's map was
+-- opened on this character (ns.char.taxiSeen). Conservative, two rules:
 --   1. a flight point of your side (or neutral: ns.FLIGHT has both) with GUESS_NEAR_N or more quests you completed whose
 --      pick-up or hand-in on any of your routes is within GUESS_NEAR_YD yards of its flight master - his town: you
 --      handed in there, and a player in a town takes its flight path
@@ -430,8 +475,7 @@ function State.GuessTaxi()
 end
 function State.ScanTaxi()
   if not (C_TaxiMap and C_TaxiMap.GetTaxiNodesForMap) then return State.GuessTaxi() end
-  local okF, fac = pcall(UnitFactionGroup, "player")
-  local mine = Enum and Enum.FlightPathFaction and (okF and fac == "Horde" and Enum.FlightPathFaction.Horde or Enum.FlightPathFaction.Alliance)
+  local mine = Enum and Enum.FlightPathFaction and (State.MyFaction() == "H" and Enum.FlightPathFaction.Horde or Enum.FlightPathFaction.Alliance)
   local neutral = Enum and Enum.FlightPathFaction and Enum.FlightPathFaction.Neutral or 0
   local maps, seen = {}, {}
   local function add(m) if m and not seen[m] then seen[m] = true; maps[#maps + 1] = m end end
@@ -465,22 +509,18 @@ function State.ScanTaxi()
 end
 
 -- After a log change the addon looks again. A kill or a looted quest item only moves a count ("Gnoll Paws: 3/8"): the
--- route is the same, so only the card's counts are redrawn (FR_PROGRESS) - every kill used to rebuild the whole route
--- and re-plan the next stop, a hitch on each one ("frame drops after killing mobs for quests or looting quest items",
--- a player on 1.5.0). A quest taken, finished, handed in or dropped, an objective done, a level: the full look
--- (FR_STATE). The log the game fires QUEST_LOG_UPDATE for many times a minute; most of them change nothing at all.
+-- route is the same, so only the card's counts are redrawn (FR_PROGRESS) - a full rebuild per kill was a hitch on
+-- each. A quest taken, finished, handed in or dropped, an objective done, a level: the full look (FR_STATE). The game
+-- fires QUEST_LOG_UPDATE many times a minute; most change nothing at all.
 State.FULL_EVERY = 120 -- seconds: log changes this long after the last full look get one anyway (anything not read here)
 local pending, fullDue, lastFull = false, true, -1000
 local function now() return GetTime and GetTime() or 0 end
 -- the quests in your log as last read (the cache) against the game now: "same", "counts" (only counts moved: the cache
 -- now has them) or "changed", "undone" (something done is not any more).
--- It runs on every kill, loot and log update, and a full log made it dear: three calls into the game for each quest in
--- it (in your log? its objectives, finished?), 65 on a log of 21 at level 50. The log's count is read first (one call):
--- while it is the same, the same quests are in it (a quest taken or dropped is QUEST_ACCEPTED / QUEST_REMOVED, the full
--- look; one taken and one dropped between two looks would need both), so "in your log?" is not asked; and "finished?"
--- only of a quest whose objectives don't tell it (none, or all done but not finished - one to go somewhere too). One
--- call a quest. The count moved: each quest asked all three, as before (a quest dropped: "undone"), then the full look.
--- (anything else: the full look every FULL_EVERY)
+-- Runs on every kill, loot and log update, so it is kept to one game call a quest: the log's count is read first;
+-- while it is the same, the same quests are in it (taken/dropped fire QUEST_ACCEPTED / QUEST_REMOVED, the full
+-- look), so "in your log?" is not asked, and "finished?" only of a quest whose objectives don't tell it. The count
+-- moved: each quest asked all three (a quest dropped: "undone"), then the full look. Anything else: FULL_EVERY.
 local function allFinished(objs) for _, o in ipairs(objs) do if not o.finished then return false end end; return true end
 function State.CheckLog()
   local full = State.LogCount() ~= State.logCountWas
@@ -519,7 +559,7 @@ local function settle()
     local ok, how = pcall(State.CheckLog)
     if ok and how == "same" then return end
     -- (something done is not any more - an item destroyed, a quest dropped: the plan is looked at from its start again)
-    if ok and how == "undone" and ns.Engine and ns.Engine.ForgetDone then ns.Engine.ForgetDone() end
+    if ok and how == "undone" and ns.Engine and ns.Engine.StateChanged then ns.Engine.StateChanged() end
     if ok and how == "counts" then
       local t0 = debugprofilestop and debugprofilestop()
       State.Announce("FR_PROGRESS")
@@ -551,7 +591,7 @@ end
 -- the log changed: maybe only a count
 local function logSoon() schedule() end
 State.Invalidate = refreshSoon
-State._notDone, State._settle = notDone, settle -- (tests)
+State._settle = settle -- (tests)
 
 -- (looked again 3 s into a login, with the route's other catch-up: Engine.lua)
 ns.On("FR_LOADED", function() State.knownTaxi = ns.char.knownTaxi or {} end)
@@ -584,6 +624,5 @@ ns.On("BAG_UPDATE_DELAYED", function()
   State.Announce("FR_STATE", false)
 end)
 -- the cache is kept here: it holds the last live reads, and asking the game again during logout can return nothing
--- (memory only at logout: timing ten route rebuilds there ran past the game's script limit on long plans - "State.lua:25:
--- script ran too long" at PLAYER_LOGOUT in a tester's report - and the snapshot after it never got written)
+-- (memory only at logout: heavier work there ran past the game's script limit and the snapshot never got written)
 ns.On("PLAYER_LOGOUT", function() State.Snapshot("logout"); pcall(ns.Perf, true) end)

@@ -1,21 +1,17 @@
--- "Dungeons": a group's going - pick its dungeon and get a route that picks up every quest for it (and does the whole
+-- "Side trips": a group's going - pick its dungeon and get a route that picks up every quest for it (and does the whole
 -- chain that unlocks them), takes you there, then hands everything in. Every party dungeon with a quest for your race
 -- and class is here (tools/dungeon-routes.js), the ones for your level first; what you've done drops out. Special
 -- rewards (class quests, one-off items) after them. Your leveling path is kept as it was; the card shows "Back to plan"
--- while you're on one. Opened from the card (sword button), the route list or /bee dungeons.
+-- while you're on one. The Home base window's third tab (UI/Paths.lua): Dungeons.Draw draws into the frame it hands
+-- over. Opened from the tab, the route list or /bee dungeons (FR_TOGGLE_DUNGEONS).
 local _, ns = ...
 local Style = ns.Style
 local C = Style.C
 local Dungeons = {}
 ns.Dungeons = Dungeons
 
-local f
-local W, PAD = 470, 14
-local cards = {}
-
 -- quest progress for a route, from the quest log; kept until a quest is picked up, handed in or dropped (a kill or a
--- loot redraws the window and changes none of it: asking the game about every listed dungeon's quests each time was
--- most of a redraw)
+-- loot redraws the window and changes none of it; asking the game each time is most of a redraw)
 local progCache = {}
 function Dungeons.Forget() progCache = {} end
 for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED" }) do ns.On(e, function() progCache = {} end) end
@@ -33,10 +29,13 @@ local function progressOf(r)
   return done, total, inLog
 end
 
+local host, W -- the frame the Home base window hands over, and its width
+local cards = {}
+
 local function card(k)
   if cards[k] then return cards[k] end
-  local c = CreateFrame("Frame", nil, f.content)
-  c:SetWidth(W - 2 * PAD)
+  local c = CreateFrame("Frame", nil, host)
+  c:SetWidth(W)
   c.bg = Style.Nine(c, "panel", "BACKGROUND", 0, 10, 0, 1, 1, 1, 0.035)
   c.edge = c:CreateTexture(nil, "ARTWORK"); c.edge:SetTexture(Style.WHITE); c.edge:SetWidth(3); c.edge:SetPoint("TOPLEFT", 1, -8); c.edge:SetPoint("BOTTOMLEFT", 1, 8)
   c.name = Style.Text(c, 13, C.text, "OUTLINE"); c.name:SetPoint("TOPLEFT", 14, -10); c.name:SetWordWrap(false)
@@ -44,67 +43,45 @@ local function card(k)
   c.quick = Style.Pill(c, "QUICK", C.good)
   c.special = Style.Pill(c, "SPECIAL REWARD", C.gold)
   c.time = Style.Text(c, 12, C.gold); c.time:SetPoint("TOPRIGHT", -14, -11); c.time:SetJustifyH("RIGHT")
-  c.lvl = Style.Text(c, 10, C.sub); c.lvl:SetPoint("TOPLEFT", c.name, "BOTTOMLEFT", 0, -5); c.lvl:SetWordWrap(true); c.lvl:SetWidth(W - 2 * PAD - 150) -- clear of the button
-  c.quests = Style.Text(c, 10, C.dim); c.quests:SetPoint("TOPLEFT", c.lvl, "BOTTOMLEFT", 0, -4); c.quests:SetWidth(W - 2 * PAD - 160)
-  c.go = Style.Button(c, "Route me", 110, 22, function(self) local r = self:GetParent().route; if r then ns.EnterDungeonRoute(r.id); Dungeons.Draw() end end)
+  c.lvl = Style.Text(c, 10, C.sub); c.lvl:SetPoint("TOPLEFT", c.name, "BOTTOMLEFT", 0, -5); c.lvl:SetWordWrap(true); c.lvl:SetWidth(W - 150) -- clear of the button
+  c.quests = Style.Text(c, 10, C.dim); c.quests:SetPoint("TOPLEFT", c.lvl, "BOTTOMLEFT", 0, -4); c.quests:SetWidth(W - 160)
+  c.go = Style.Button(c, "Route me", 110, 22, function(self) local r = self:GetParent().route; if r then ns.EnterDungeonRoute(r.id); Dungeons.Redraw() end end)
   c.go:SetPoint("RIGHT", c, "RIGHT", -12, -6)
   cards[k] = c
   return c
 end
 
-local function build()
-  f = CreateFrame("Frame", "BeelineDungeons", UIParent)
-  f:SetSize(W, 200); f:SetPoint("CENTER", 0, 40)
-  Style.Window(f, "BeelineDungeons")
-  f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -12); f.title:SetText("Dungeons & side trips")
-  local close = Style.CloseButton(f)
-  f.intro = Style.Text(f, 11, C.sub); f.intro:SetPoint("TOPLEFT", PAD, -34); f.intro:SetWidth(W - 2 * PAD)
-  f.intro:SetText("A group's going? Pick its dungeon: the card gets you every quest for it first - and the quests that unlock them - then the run, then the hand-ins. Your plan waits: \"Back to plan\" on the card returns you to it.")
-  f.back = Style.Button(f, "Back to plan", 130, 20, function() ns.LeaveDungeonRoute(); Dungeons.Draw() end)
-  f.empty = Style.Text(f, 11, C.dim)
-  f.heads = {}
-  -- the dungeons for your level are listed; the rest behind this (each one listed is a card to draw and its quests to ask
-  -- the game about: all 20-odd at once took the window from about 1 ms to 6 a redraw, and 760 ms the first time)
-  f.all = false
-  -- the list scrolls (mouse wheel) once it is taller than most of the screen
-  f.scroll = CreateFrame("ScrollFrame", nil, f)
-  f.content = CreateFrame("Frame", nil, f.scroll); f.content:SetSize(W, 10)
-  f.scroll:SetScrollChild(f.content)
-  f.scroll:EnableMouseWheel(true)
-  f.bar = f:CreateTexture(nil, "OVERLAY"); f.bar:SetTexture(Style.WHITE); f.bar:SetWidth(3); f.bar:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.6)
-  local function scrollTo(v)
-    local max = math.max(0, f.content:GetHeight() - f.scroll:GetHeight())
-    v = math.max(0, math.min(max, v)); f.scroll:SetVerticalScroll(v)
-    local vh, ch = f.scroll:GetHeight(), f.content:GetHeight()
-    f.bar:SetShown(max > 0)
-    if max > 0 then
-      local bh = math.max(24, vh * vh / ch)
-      f.bar:ClearAllPoints(); f.bar:SetPoint("TOPRIGHT", f.scroll, "TOPRIGHT", -4, -((vh - bh) * v / max)); f.bar:SetHeight(bh)
-    end
-  end
-  f.scrollTo = scrollTo
-  f.scroll:SetScript("OnMouseWheel", function(_, delta) scrollTo(f.scroll:GetVerticalScroll() - delta * 80) end)
-  f:Hide()
-end
+-- the dungeons for your level are listed; the rest behind a button (each one listed is a card to draw and its quests to
+-- ask the game about: all of them at once is several times dearer)
+Dungeons.all = false
+function Dungeons.Reset() Dungeons.all = false end
+-- the window it is drawn in redraws (the list's height changes the window's scroll)
+function Dungeons.Redraw() if ns.Paths and ns.Paths.Draw then ns.Paths.Draw() end end
 
+-- the frame to draw in (w wide), handed over once when the Home base window is built
+function Dungeons.Attach(into, w)
+  host, W = into, w
+  host.back = Style.Button(host, "Back to plan", 130, 20, function() ns.LeaveDungeonRoute(); Dungeons.Redraw() end)
+  host.empty = Style.Text(host, 11, C.dim)
+  host.heads = {}
+end
+-- draws the list into the frame from its top; returns its height
 function Dungeons.Draw()
-  if not f or not f:IsShown() then return end
-  local list, finished, more, prog = Dungeons.List(nil, f.all)
-  local y = 34 + f.intro:GetStringHeight() + 12
-  local y0
+  local f = host
+  if not f then return 0 end
+  local list, finished, more, prog = Dungeons.List(nil, Dungeons.all)
+  local yc = 0
   local onDungeon = BeelineData and BeelineData.dungeon
-  f.back:ClearAllPoints(); f.back:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD, -y); f.back:SetShown(onDungeon and true or false)
-  if onDungeon then y = y + 28 end
+  f.back:ClearAllPoints(); f.back:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0); f.back:SetShown(onDungeon and true or false)
+  if onDungeon then yc = yc + 28 end
   for k, c in ipairs(cards) do if k > #list then c:Hide() end end
   f.empty:SetShown(#list == 0)
-  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", PAD, -y); f.empty:SetText(finished > 0 and "You've done every dungeon's quests and side trip in this plan." or "No dungeons or side trips in this plan."); y = y + 24 end
-  y0 = y
-  local yc = 0
+  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", 0, -yc); f.empty:SetText(finished > 0 and "You've done every dungeon's quests and side trip in this plan." or "No dungeons or side trips in this plan."); yc = yc + 24 end
   local myLevel = UnitLevel("player") or 1
   for _, h in pairs(f.heads) do h:Hide() end
   local function head(key, text)
-    local h = f.heads[key] or Style.Text(f.content, 12, C.gold, "OUTLINE"); f.heads[key] = h
-    h:ClearAllPoints(); h:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -yc); h:SetText(text); h:Show()
+    local h = f.heads[key] or Style.Text(f, 12, C.gold, "OUTLINE"); f.heads[key] = h
+    h:ClearAllPoints(); h:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -yc); h:SetText(text); h:Show()
     yc = yc + 20
   end
   local lastKind
@@ -142,24 +119,18 @@ function Dungeons.Draw()
     c.quests:ClearAllPoints(); c.quests:SetPoint("TOPLEFT", c.lvl, "BOTTOMLEFT", 0, -4)
     local h = 10 + 16 + 5 + c.lvl:GetStringHeight() + 4 + c.quests:GetStringHeight() + 12
     c:SetHeight(math.max(64, h))
-    c:ClearAllPoints(); c:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -yc); c:Show()
+    c:ClearAllPoints(); c:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -yc); c:Show()
     yc = yc + c:GetHeight() + 8
   end
   if finished > 0 and #list > 0 then head("finished", string.format("|cff8a93a6%d more with nothing left for you|r", finished)) end
   -- the other dungeons: a group going to one not at your level
-  f.more = f.more or Style.Button(f.content, "", 200, 22, function() f.all = not f.all; Dungeons.Draw() end)
-  f.more:SetShown(f.all or more > 0)
-  if f.all or more > 0 then
-    f.more.label:SetText(f.all and "Only the ones for my level" or string.format("All dungeons (%d more)", more))
-    f.more:ClearAllPoints(); f.more:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -yc); yc = yc + 30
+  f.more = f.more or Style.Button(f, "", 200, 22, function() Dungeons.all = not Dungeons.all; Dungeons.Redraw() end)
+  f.more:SetShown(Dungeons.all or more > 0)
+  if Dungeons.all or more > 0 then
+    f.more.label:SetText(Dungeons.all and "Only the ones for my level" or string.format("All dungeons (%d more)", more))
+    f.more:ClearAllPoints(); f.more:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -yc); yc = yc + 30
   end
-  -- at most 85% of the screen tall; the rest scrolls
-  local maxH = (UIParent:GetHeight() or 800) / f:GetScale() * 0.85
-  local view = math.max(60, math.min(yc, maxH - y0 - 6))
-  f.content:SetHeight(math.max(1, yc))
-  f.scroll:ClearAllPoints(); f.scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -y0); f.scroll:SetSize(W, view)
-  f:SetHeight(y0 + view + 6)
-  f.scrollTo(f.scroll:GetVerticalScroll())
+  return yc
 end
 
 -- what the window lists, in order: the dungeons, those for your level first (quests around your level, then the ones
@@ -201,19 +172,20 @@ function Dungeons.List(level, all)
   return dung, finished, more, prog
 end
 
+-- the Home base window on this tab, or closed when it is on it already
 function Dungeons.Toggle()
-  if f:IsShown() then f:Hide(); return end
-  f.all = false -- (opened again: the ones for your level)
-  f:Show(); Dungeons.Draw()
+  local P = ns.Paths
+  if not (P and P.Show) then return end
+  if P.IsShown("trips") then P.Hide(); return end
+  Dungeons.Reset() -- (opened again: the ones for your level)
+  P.Show("trips")
 end
 
-ns.On("FR_LOADED", build)
 ns.On("FR_TOGGLE_DUNGEONS", function() Dungeons.Toggle() end)
-ns.On("FR_ROUTE_CHANGED", function() Dungeons.Draw() end)
 -- (open, it follows your log: once for a burst of log updates - a kill or a loot sends two or three - not for each)
 local redrawDue = false
 ns.On("QUEST_LOG_UPDATE", function()
-  if redrawDue or not (f and f:IsShown()) then return end
+  if redrawDue or not (ns.Paths and ns.Paths.IsShown and ns.Paths.IsShown("trips")) then return end
   redrawDue = true
-  C_Timer.After(0.2, function() redrawDue = false; Dungeons.Draw() end)
+  C_Timer.After(0.2, function() redrawDue = false; Dungeons.Redraw() end)
 end)

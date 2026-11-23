@@ -28,14 +28,13 @@ local function buildPath(s, m, wx, wy)
   for k = #pts - 1, 1, -1 do rem[k] = rem[k + 1] + math.sqrt((pts[k + 1][1] - pts[k][1]) ^ 2 + (pts[k + 1][2] - pts[k][2]) ^ 2) end
   return { pts = pts, rem = rem, cursor = 1, z0 = s.z0, z1 = s.z }
 end
-Arrow._buildPath = function(...) return buildPath(...) end
 -- How far ahead along the path the arrow looks, in yards: about Arrow.LOOK_SEC seconds of travel (so further on a
 -- mount than on foot), within what the place allows. Open country (a walk map of 8-yd squares or more): 16 to 40.
 -- A city's walk map (4-yd squares, walls): 8 to 10. The planner's own path: 8 to 12. Inside a building: 6.
 -- Measured on real lines (docs/research/navigation-paths.md, "The arrow"): someone who follows the arrow strays
--- from the line by up to half of this at a sharp corner (the old arrow: 4 to 5 yd).
-Arrow.LOOK_SEC = 3 -- (1.5 followed every bend of the line: the arrow should give the way, the line the detail)
-Arrow.TURN = 8 -- how fast the drawn arrow follows its direction (1/s; it was 12)
+-- from the line by up to half of this at a sharp corner.
+Arrow.LOOK_SEC = 3 -- (shorter follows every bend of the line: the arrow should give the way, the line the detail)
+Arrow.TURN = 8 -- how fast the drawn arrow follows its direction (1/s)
 local function lookFor(P, speed)
   if Arrow.Indoors() then return 6 end
   local lo, hi = 8, 12
@@ -51,29 +50,57 @@ Arrow._lookFor = lookFor
 -- far: open country (a walk map of 8-yd squares, outdoors), where it may aim as far as the line runs nearly straight
 local function follow(P, px, py, look, far, soft) return ns.Nav.Aim(P, px, py, look or 10, far, soft) end
 -- open country: outdoors, on a walk map of 8-yd squares or on the planner's own path (a zone with no walk map:
--- Arathi), but not in a capital (buildings). The planner's path in the open was followed 8-12 yd at a time, so a few
--- yards beside its start the arrow sent you onto it at a slant instead of the way it goes - tester, Arathi
+-- Arathi), but not in a capital (buildings); a short look-ahead there sends you onto the line at a slant
 local function openCountry(P)
   if Arrow.Indoors() then return false end
   if P.nav then return (P.cell or 8) >= 8 end
   local m = ns.State and ns.State.Position and ns.State.Position()
-  return not (m and ns.Card and ns.Card.CAPITAL_MAPS and ns.Card.CAPITAL_MAPS[m])
+  return not (m and ns.IsCapitalMap(m))
 end
-Arrow._openCountry = openCountry
 Arrow._follow = follow
+-- on the planner's path: within PLANNED_OFF_YD of it (off: yards from it), or still at its start (the arrow and the
+-- map line both ask this)
+Arrow.PLANNED_OFF_YD = 45
+function Arrow.OnPlannedPath(P, px, py, off)
+  if off <= Arrow.PLANNED_OFF_YD then return true end
+  local St = P.start
+  return (St and math.sqrt((px - St[1]) ^ 2 + (py - St[2]) ^ 2) <= (P.startR or 40) + 25) and true or false
+end
 local function colorFor(diff)
   local t = math.abs(diff) / math.pi
   if t < 0.5 then local u = t / 0.5; return lerp(C.good[1], C.gold[1], u), lerp(C.good[2], C.gold[2], u), lerp(C.good[3], C.gold[3], u) end
   local u = (t - 0.5) / 0.5; return lerp(C.gold[1], C.bad[1], u), lerp(C.gold[2], C.bad[2], u), lerp(C.gold[3], C.bad[3], u)
 end
 
+-- Its place is kept in UIParent units, { "ABS", centre x, centre y }, never in the arrow's own scaled units: the game
+-- multiplies offsets by the frame's scale, so a place kept that way moved when the scale changed (as Card.AnchorTop).
+function Arrow.SavePos() if f then Style.SavePos(f, "arrowPos", "CENTER") end end
+function Arrow.ApplyPos()
+  if not f then return end
+  local p, s = ns.db.arrowPos, f:GetScale() or 1
+  f:ClearAllPoints()
+  if Style.PlaceSaved(f, "arrowPos", "CENTER") then -- (kept: Style.SavePos)
+  elseif type(p) == "table" and p[1] and p[2] then
+    -- an older save { point, UIParent's point, x, y } in the arrow's units: where it was, kept the new way from now on
+    -- (worked out, not measured: a hidden frame has no place to measure)
+    local function fx(pt) return pt:find("LEFT") and 0 or pt:find("RIGHT") and 1 or 0.5 end
+    local function fy(pt) return pt:find("BOTTOM") and 0 or pt:find("TOP") and 1 or 0.5 end
+    local W, H, w, h = UIParent:GetWidth(), UIParent:GetHeight(), f:GetWidth() * s, f:GetHeight() * s
+    local cx = fx(p[2]) * W + (tonumber(p[3]) or 0) * s + (0.5 - fx(p[1])) * w
+    local cy = fy(p[2]) * H + (tonumber(p[4]) or 0) * s + (0.5 - fy(p[1])) * h
+    ns.db.arrowPos = { "ABS", cx, cy }
+    f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx / s, cy / s)
+  else
+    f:SetPoint("TOP", UIParent, "TOP", 0, -140) -- (the default place)
+  end
+end
+
 local function build()
   f = CreateFrame("Frame", "BeelineArrow", UIParent)
   f:SetSize(120, 120)
-  f:SetPoint("TOP", UIParent, "TOP", 0, -140)
   f:SetClampedToScreen(true); f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function(self) if not ns.db.locked then self:StartMoving() end end)
-  f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); local p, _, rp, x, y = self:GetPoint(); ns.db.arrowPos = { p, rp, x, y } end)
+  f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); Arrow.SavePos(); Arrow.ApplyPos() end)
   f:SetScript("OnMouseUp", function(_, btn) if btn == "RightButton" and target then Arrow.hiddenFor = BeelineData and BeelineData.steps[target.index]; f:Hide(); if ns.Why then ns.Why("arrow", "hidden: you right-clicked it (comes back on the next step)") end end end)
   f:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:SetText(target and target.label or "", 1, 1, 1, 1, true); GameTooltip:AddLine("Drag to move · right-click to hide for this step", 0.6, 0.65, 0.72); GameTooltip:Show() end)
   f:SetScript("OnLeave", GameTooltip_Hide)
@@ -85,7 +112,7 @@ local function build()
   local pulse = f.ring:CreateAnimationGroup(); pulse:SetLooping("REPEAT")
   local s1 = pulse:CreateAnimation("Scale"); s1:SetScaleFrom(0.6, 0.6); s1:SetScaleTo(1.25, 1.25); s1:SetDuration(1.1); s1:SetSmoothing("OUT")
   local a1 = pulse:CreateAnimation("Alpha"); a1:SetFromAlpha(0.9); a1:SetToAlpha(0); a1:SetDuration(1.1)
-  -- three pulses on arrival, then still (a ring pulsing the whole time you work an area was distracting)
+  -- three pulses on arrival, then still (not the whole time you work an area)
   pulse:SetScript("OnPlay", function() pulse.loops = 0 end)
   pulse:SetScript("OnLoop", function() pulse.loops = (pulse.loops or 0) + 1; if pulse.loops >= 3 then pulse:Stop(); f.ring:SetAlpha(0) end end)
   f.pulse = pulse
@@ -93,8 +120,8 @@ local function build()
   f.check:SetVertexColor(C.good[1], C.good[2], C.good[3]); f.check:Hide()
   f.dist = Style.Text(f, 15, C.text, "OUTLINE"); f.dist:SetPoint("TOP", f.arrow, "BOTTOM", 0, -4); f.dist:SetJustifyH("CENTER")
   f.label = Style.Text(f, 10, C.sub, "OUTLINE"); f.label:SetPoint("TOP", f.dist, "BOTTOM", 0, -2); f.label:SetJustifyH("CENTER"); f.label:SetWidth(220); f.label:SetWordWrap(false)
-  if ns.db.arrowPos then local p = ns.db.arrowPos; f:ClearAllPoints(); f:SetPoint(p[1], UIParent, p[2], p[3], p[4]) end
   Style.Scaled(f, "arrowScale") -- the Beeline scale x the arrow's own
+  Arrow.ApplyPos()
   f:Hide()
 
   -- driver: always running while there's a target
@@ -144,7 +171,7 @@ local function build()
     if not (px and target.wx) or pinst ~= target.winst then
       if f:IsShown() then
         -- on the Deeprun Tram (its own little instance: the game gives no position there) there is nothing to steer:
-        -- say so, instead of a grey arrow and "in Ironforge" (tester)
+        -- say so, instead of a grey arrow
         if Arrow.InTram() then
           f.arrow:SetAlpha(0); f.dist:SetText("On the tram")
           f.label:SetText("ride it to the other end" .. (target.zone and (", then on to " .. target.zone) or ""))
@@ -168,9 +195,7 @@ local function build()
       local aim, walk, off, zHere = follow(P, px, py, lookFor(P, moveSpeed), open, open and not live and not P.nav)
       -- the planned path runs from the previous stop; you may well have come from somewhere else. Use it only while
       -- you're on it (or still at its start); otherwise point straight at the target and hide the line.
-      local St = P.start
-      local atStart = St and math.sqrt((px - St[1]) ^ 2 + (py - St[2]) ^ 2) <= (P.startR or 40) + 25
-      local onPath = live and true or off <= 45 or atStart
+      local onPath = live and true or Arrow.OnPlannedPath(P, px, py, off)
       -- tell the map line how far along you are, so it only draws what's still ahead (not the part behind you)
       lineAcc = (lineAcc or 0) + el
       if not live and lineAcc >= 1.5 and (P.cursor ~= P.lastSeg or not P.lastPX or math.sqrt((px - P.lastPX) ^ 2 + (py - P.lastPY) ^ 2) > 12) then
@@ -183,7 +208,7 @@ local function build()
         if a2 then angle = a2 end
         shown = walk
         -- close to the line but the arrow far off its direction for a few seconds: noted for the report (where you were,
-        -- how far off, which stretch) - "it wants me back on the path while the dots lead where I'm going" (tester)
+        -- how far off, which stretch)
         local c = P.cursor
         local pa, pb = c and P.pts[c], c and P.pts[c + 1]
         local la = pa and pb and HBD:GetWorldVector(pinst, pa[1], pa[2], pb[1], pb[2])
@@ -208,9 +233,7 @@ local function build()
     -- or say "in the area" - the next leg takes over once you fly or sail
     local arrived = not target.leg and dist <= (target.r or 12)
     -- at the crossing a ride was pointed at: on toward the step (crossing the border re-plans anyway)
-    -- ...or one you went past another way: nearer the end of the ride than the waypoint is, it is behind you. Riding to
-    -- Baldruc in Theramore by a way of your own, the arrow stayed on the trip's first waypoint and its distance grew as
-    -- you walked up to him (tester)
+    -- ...or one you went past another way: nearer the end of the ride than the waypoint is, it is behind you
     local behind = false
     if target.leg == "ride" and target.endW and target.endW[3] == pinst then
       local e = target.endW
@@ -299,7 +322,7 @@ end
 -- what the arrow points at ({ index, m, x, y, label, ... } or nil), for tests: card, arrow and pins must agree
 function Arrow.Current() return target end
 
--- Dead: the arrow (and the walking line) go to your corpse until you're back in it, then back to the step (tester).
+-- Dead: the arrow (and the walking line) go to your corpse until you're back in it, then back to the step.
 -- Where you died is kept at PLAYER_DEAD; once you're a ghost the game's own corpse position (on the map you're on)
 -- refines it.
 Arrow.corpse = nil
@@ -344,8 +367,7 @@ function Arrow.SetTarget(i, force)
   if f and corpseTarget(i) then return end
   if target and target.corpse then target = nil end -- alive again: the step's target is built afresh
   local s = i and BeelineData and BeelineData.steps[i]
-  -- (the same step, not just the same number: a stop inserted before it moves the number on, and the arrow kept the old
-  -- step's trip - "Run to Stranglethorn Vale" while the card said a hand-in in Duskwood, tester)
+  -- (the same step, not just the same number: a stop inserted before it moves the number on)
   if target and s and target.index == i and target.step == s and not force then
     f:SetShown(visible(i)); noteHidden(not visible(i) and hiddenReason(i, s) or nil)
     return
@@ -360,7 +382,7 @@ function Arrow.SetTarget(i, force)
   if inDungeon then s = nil end
   -- work the quest data has no place for (s.unknown): its spot is only its place in the order, nothing to point at
   -- - unless the game itself marks the quest on your map (its quest POI, as the game's own tracker uses): then that
-  -- marker is the spot (Foreman's Plight, new in Forever: the arrow hid with nowhere to point - tester)
+  -- marker is the spot
   local unknown = s and s.unknown
   if unknown then s = Arrow.GameSpot(s) end
   local m, x, y, label = s and s.m, s and s.x, s and s.y, nil
@@ -413,7 +435,7 @@ function Arrow.SetTarget(i, force)
       local list = BeelineData.steps
       for j = i - 1, math.max(1, i - 12), -1 do
         local p = list[j]
-        if p.k == "fly" or p.k == "hearth" then break end
+        if ns.Engine.IsTrip(p) then break end
         if p.m == m and p.x then
           local sx, sy = HBD:GetWorldCoordinatesFromZone(p.x, p.y, m)
           if sx then target.path.start = { sx, sy, p.z }; target.path.startR = math.max(40, p.r or 40) end
@@ -475,5 +497,13 @@ local flying = false
 local function retarget() if f then Arrow.SetTarget(ns.Engine.Shown(), true); ns.Fire("FR_STEP", ns.Engine.Shown()) end end
 ns.On("PLAYER_CONTROL_LOST", function() C_Timer.After(1, function() if ns.Is(UnitOnTaxi, "player") then flying = true; retarget() end end) end)
 ns.On("PLAYER_CONTROL_GAINED", function() C_Timer.After(1, function() if flying then flying = false; retarget() end end) end)
-ns.On("FR_SETTINGS", function() if f then Style.ApplyScale(); Arrow.SetTarget(ns.Engine.Shown(), true) end end)
-ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1.5, function() if f and not (target and target.index and BeelineData.steps[target.index] and BeelineData.steps[target.index].x) then Arrow.SetTarget(ns.Engine.Shown(), true) end end) end)
+-- a setting changed (Style applied the scale): the place always; the target (a trip search) only for a setting it reads
+Arrow.RETARGET_KEYS = { arrow = true, gameNav = true, smartNext = true, trails = true }
+ns.On("FR_SETTINGS", function(key)
+  if not f then return end
+  Arrow.ApplyPos()
+  if key == nil or Arrow.RETARGET_KEYS[key] then Arrow.SetTarget(ns.Engine.Shown(), true) end
+end)
+-- (again only when the retarget at 1 s left nothing to point at, e.g. no position yet after a loading screen: not a
+-- second trip search for a target already built)
+ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1.5, function() if f and not target then Arrow.SetTarget(ns.Engine.Shown(), true) end end) end)

@@ -14,15 +14,12 @@ ns.Learn = Learn
 
 Learn.MAX_PACE, Learn.MAX_INCIDENTS = 300, 100
 
+local plain, Sub = ns.Util.Plain, ns.Util.Sub
 local function store()
-  BeelineDB.learn = type(BeelineDB.learn) == "table" and BeelineDB.learn or {}
-  local L = BeelineDB.learn
-  L.killxp = type(L.killxp) == "table" and L.killxp or {}
-  L.pace = type(L.pace) == "table" and L.pace or {}
-  L.incidents = type(L.incidents) == "table" and L.incidents or {}
+  local L = Sub(BeelineDB, "learn")
+  Sub(L, "killxp"); Sub(L, "pace"); Sub(L, "incidents")
   return L
 end
-local function plain(v) return v ~= nil and not (issecretvalue and issecretvalue(v)) end
 -- (only with the companion: it is the only reader - ns.HasCompanion)
 local function guard(fn) return function(...) if not ns.HasCompanion() then return end; local ok, err = pcall(fn, ...); if not ok and ns.LogError then pcall(ns.LogError, "learn", err) end end end
 
@@ -34,19 +31,15 @@ local function noteUnit(unit)
   local okL, lvl = pcall(UnitLevel, unit)
   if okN and okL and plain(name) and plain(lvl) and type(name) == "string" and type(lvl) == "number" and lvl > 0 then levelOf[name] = lvl end
 end
--- "Wolf dies, you gain 120 experience. (+60 exp Rested bonus)" in this client's language
-local function patterns()
-  local function toPattern(fmt)
-    if type(fmt) ~= "string" then return nil end
-    local p = fmt:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)"):gsub("%%%%d", "(%%d+)")
-    return "^" .. p
-  end
-  return toPattern(COMBATLOG_XPGAIN_FIRSTPERSON or "%s dies, you gain %d experience."),
-    toPattern(COMBATLOG_XPGAIN_EXHAUSTION1 or "%s dies, you gain %d experience. (%s exp %s bonus)")
+-- "Wolf dies, you gain 120 experience." in this client's language
+local function killPattern()
+  local fmt = COMBATLOG_XPGAIN_FIRSTPERSON or "%s dies, you gain %d experience."
+  if type(fmt) ~= "string" then return nil end
+  return "^" .. fmt:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)"):gsub("%%%%d", "(%%d+)")
 end
 function Learn.ParseXp(msg)
   if not (plain(msg) and type(msg) == "string") then return nil end
-  local plainP, restedP = patterns()
+  local plainP = killPattern()
   local name, xp = msg:match(plainP or "^(.+) dies, you gain (%d+) experience")
   if not name then return nil end
   local bonus = tonumber(msg:match("%(%+(%d+) exp") or "0") or 0 -- the rested part is not the kill's own XP
@@ -63,28 +56,16 @@ function Learn.RecordKill(name, xp, playerLevel)
 end
 
 -- ---------- pace ----------
-local started -- { key, t, k } for the step on the card
+local started -- { key, t, k } for the step on the card (how long it has been there: CheckStuck)
 local function stepAt(i) local d = BeelineData; return d and d.steps and d.steps[i] end
 function Learn.StepShown(i)
   local s = stepAt(i)
   started = s and { key = ns.Engine.Key and ns.Engine.Key(i), t = GetTime(), k = s.k, text = s.text, q = s.q } or nil
 end
-function Learn.StepDone(i)
-  local s = stepAt(i)
-  if not (s and started and s.k == "obj" and started.key == (ns.Engine.Key and ns.Engine.Key(i))) then return false end
-  local sec = GetTime() - started.t
-  local need = tonumber((s.text or ""):match("^%a+ (%d+)")) -- "Kill 10 Wolf", "Collect 8 Fang"
-  -- steady work only: a step that took over 45 min had a break in it; under 20 s it was done before it was shown
-  if not need or sec < 20 or sec > 45 * 60 then return false end
-  local P = store().pace
-  P[#P + 1] = { k = s.text:match("^(%a+)"), need = need, sec = math.floor(sec), lvl = UnitLevel("player"), q = s.q, rate = s.rate }
-  while #P > Learn.MAX_PACE do table.remove(P, 1) end
-  return true
-end
 
 -- pace from the quest log itself, not the card: every time an objective's count goes up ("Wolf slain: 3/8"), the time
 -- since its last increase is a sample (breaks over PACE_GAP seconds, flights and AFK left out). The card's step changes
--- too often (live reordering, nearby steps) to time kills by it - that recorded 2 samples in many hours of play.
+-- too often (live reordering, nearby steps) to time kills by it.
 -- Samples go in the pace list as { k = "Kill" | "Collect", need = how many came, sec } (tools/learn.js reads them).
 Learn.PACE_GAP = 300
 local lastHave, lastAt = {}, {}
@@ -121,15 +102,14 @@ Learn.TICK = 30
 local zoneAcc = { t = nil, m = nil }
 function Learn.ZoneTick(now)
   now = now or GetTime()
-  local Z = store()
-  Z.zones = type(Z.zones) == "table" and Z.zones or {}
+  local zones = Sub(store(), "zones")
   local m = ns.State.Position()
   local away = ns.Is(UnitIsAFK, "player") or ns.Is(UnitOnTaxi, "player")
   if zoneAcc.t and zoneAcc.m and m == zoneAcc.m and not away then
     local dt = now - zoneAcc.t
     if dt > 0 and dt <= Learn.TICK * 3 then -- a longer gap was a loading screen or a pause
-      local z = Z.zones[m] or { sec = 0, steps = 0, lvlFrom = UnitLevel("player") }
-      Z.zones[m] = z
+      local z = zones[m] or { sec = 0, steps = 0, lvlFrom = UnitLevel("player") }
+      zones[m] = z
       z.sec = z.sec + math.floor(dt); z.lvlTo = UnitLevel("player")
     end
   end
@@ -137,11 +117,10 @@ function Learn.ZoneTick(now)
 end
 function Learn.ZoneStepDone()
   local m = ns.State.Position()
-  local Z = store()
-  Z.zones = type(Z.zones) == "table" and Z.zones or {}
+  local zones = Sub(store(), "zones")
   if not m then return end
-  local z = Z.zones[m] or { sec = 0, steps = 0, lvlFrom = UnitLevel("player") }
-  Z.zones[m] = z
+  local z = zones[m] or { sec = 0, steps = 0, lvlFrom = UnitLevel("player") }
+  zones[m] = z
   z.steps = (z.steps or 0) + 1
 end
 
@@ -152,8 +131,8 @@ end
 -- a detour.
 Learn.ITEMS_PER_TICK = 4
 function Learn.ScanItem(id)
-  local L = store(); L.items = type(L.items) == "table" and L.items or {}
-  if L.items[id] then return true end
+  local items = Sub(store(), "items")
+  if items[id] then return true end
   local Cit = C_Item or {}
   if Cit.RequestLoadItemDataByID then pcall(Cit.RequestLoadItemDataByID, id) end
   local tip = C_TooltipInfo and C_TooltipInfo.GetItemByID and select(2, pcall(C_TooltipInfo.GetItemByID, id))
@@ -166,7 +145,7 @@ function Learn.ScanItem(id)
   end
   local toy = false
   if C_ToyBox and C_ToyBox.GetToyInfo then local ok, tid = pcall(C_ToyBox.GetToyInfo, id); toy = ok and tid ~= nil end
-  L.items[id] = { name = plain(name) and name or nil, toy = toy or nil, use = use }
+  items[id] = { name = plain(name) and name or nil, toy = toy or nil, use = use }
   return true
 end
 local scanQueue
@@ -174,8 +153,8 @@ function Learn.ScanTick()
   if not ns.FUN_CANDIDATES then return end
   if not scanQueue then
     scanQueue = {}
-    local L = store(); L.items = type(L.items) == "table" and L.items or {}
-    for id in pairs(ns.FUN_CANDIDATES) do if not L.items[id] then scanQueue[#scanQueue + 1] = { id = id, tries = 0 } end end
+    local items = Sub(store(), "items")
+    for id in pairs(ns.FUN_CANDIDATES) do if not items[id] then scanQueue[#scanQueue + 1] = { id = id, tries = 0 } end end
   end
   for _ = 1, Learn.ITEMS_PER_TICK do
     local e = table.remove(scanQueue, 1)
@@ -203,15 +182,16 @@ function Learn.Incident(kind, i, extra)
 end
 
 -- ---------- wiring ----------
-local function hook()
-  -- manual ticks and skips: the route thought otherwise
-  local markDone, skip = ns.Engine.MarkDone, ns.Engine.Skip
-  ns.Engine.MarkDone = function(i, ...) pcall(Learn.Incident, "ticked by hand", i or ns.Engine.Shown()); return markDone(i, ...) end
-  ns.Engine.Skip = function(i, ...) pcall(Learn.Incident, "skipped", i or ns.Engine.Shown()); return skip(i, ...) end
-end
+-- manual ticks and skips: the route thought otherwise (FR_USER_ACTION fires before the action: i or the card's step)
+local HAND = { MarkDone = "ticked by hand", Skip = "skipped" }
+local hooked -- (from FR_LOADED, with the companion)
+ns.On("FR_USER_ACTION", function(name, i)
+  local what = hooked and HAND[name]
+  if what then pcall(Learn.Incident, what, i or ns.Engine.Shown()) end
+end)
 ns.On("FR_LOADED", guard(function()
   store()
-  hook()
+  hooked = true
   -- after a reload the card should land where you left it (unless that step got done meanwhile)
   C_Timer.After(6, guard(function()
     local was, i = ns.char.lastShown, ns.Engine.Shown()
@@ -224,6 +204,7 @@ ns.On("FR_LOADED", guard(function()
   end))
 end))
 ns.On("FR_STEP", guard(function(i)
+  if ns.Demo and ns.Demo.active then return end -- (the demo's scripted card is not the route)
   Learn.StepShown(i)
   if i and BeelineData then ns.char.lastShown = { key = ns.Engine.Key(i), route = BeelineData.id } end
   -- the arrow follows the card (checked a moment later, once it has re-targeted)
@@ -232,7 +213,7 @@ ns.On("FR_STEP", guard(function(i)
     if t and shown and t.index ~= shown and not ns.Is(UnitOnTaxi, "player") then Learn.Incident("arrow on another step", shown, { arrow = t.index }) end
   end))
 end))
-ns.On("FR_STEP_DONE", guard(function(i) Learn.StepDone(i); Learn.ZoneStepDone() end))
+ns.On("FR_STEP_DONE", guard(function() Learn.ZoneStepDone() end))
 -- a death on the route usually means a zone, mob or road too far above you: where, and on which step
 -- (in a dungeon the death is the dungeon's, not the step on the card's: it's kept with the dungeon's name instead)
 function Learn.Died()

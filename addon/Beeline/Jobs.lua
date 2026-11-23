@@ -1,15 +1,12 @@
--- Work spread over frames, one queue for all of it. A job is a coroutine; the queue's driver resumes one job a frame,
--- for up to its budget in ms (ns.MaybeYield pauses it inside its long loops), in order of kind - "route" (the passes
--- after a route change and their refreshes: Engine.After), then "solve" (the live next-stop solve: Next.PickAsync) -
--- and first come first served within a kind. This is the only place that sets ns.sliceCo for the frame's slice: two
--- drivers each spending their own budget in the same frame added up.
---   ns.Jobs.Post(kind, fn, opts) -> job    opts: budget (ms a frame), arg (passed to fn), gen (the route change it is
---       for: a newer one drops it - Engine.routeGen), enter / leave (around each slice: a job's own state swapped
---       in and out), abort(job, why) (dropped or failed: put back what a half-done pass left), done(result), fail(err),
---       logAs (the error log's tag), timeAs (ns.Time's name for a slice)
+-- Work spread over frames, one queue for all of it. A job is a coroutine; the driver resumes one job a frame for up
+-- to its budget in ms (ns.MaybeYield pauses it inside long loops), by kind: "route" (passes after a route change:
+-- Engine.After), "solve" (Next.PickAsync), "verify" (the done-run check), "zonetrips" (Zones.lua); FIFO within a kind.
+-- The only place that sets ns.sliceCo: two drivers each spending their own budget in one frame added up.
+--   ns.Jobs.Post(kind, fn, opts) -> job    opts: budget (ms a frame), arg (passed to fn), gen (its route change: a
+--       newer one drops it - Engine.routeGen), enter / leave (around each slice), abort(job, why) (dropped or failed:
+--       undo a half-done pass), done(result), fail(err), logAs (error log tag), timeAs (ns.Time's name for a slice)
 --   ns.Jobs.Busy(kind), ns.Jobs.Cancel(kind), ns.Jobs.Settle(kind) (run them to their end now), ns.Jobs.Inside(kind)
--- Jobs.SYNC: a route job runs to its end inside Post (tests, the simulated players and tools/replay.js: the passes run
--- at their timers' times, as they always did, so a run's results are the same by construction).
+-- Jobs.SYNC: a route job runs to its end inside Post (tests, sims, replay: deterministic results).
 local _, ns = ...
 local Jobs = { SYNC = false, ROUTE_MS = 8 }
 ns.Jobs = Jobs
@@ -55,8 +52,7 @@ local function resume(job, budget)
   ns.sliceCo, ns.sliceT0, ns.sliceBudget = co0, t00, b0
   if job.timeAs and ns.Time then
     local ms = debugprofilestop() - t0
-    -- (a slice over the slow mark: where it was when it paused at last - the end of the stretch that ran on without a
-    -- pause. A 30 ms solve slice in the user's report said nothing more. Only then: a stack is not free)
+    -- (a slow slice records where it last paused; only then: a stack is not free)
     if mark then mark.where = nil; if ms >= (ns.SLOW_MS or 30) and debugstack and coroutine.status(job.co) == "suspended" then local okS, st = pcall(debugstack, job.co, 1, 6, 0); mark.where = okS and st or nil end end
     ns.Time(job.timeAs, ms, mark)
   end
@@ -76,7 +72,6 @@ local function resume(job, budget)
   end
   return false
 end
-Jobs._resume = resume
 
 function Jobs.Post(kind, fn, opts)
   opts = opts or {}

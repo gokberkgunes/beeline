@@ -24,16 +24,14 @@ Moments.COOLDOWN = 120   -- seconds between automatic captures
 Moments.SETTLE = 3       -- seconds a changed card waits before it is looked at (the card settles after a refresh)
 Moments.FLIP_WINDOW = 90 -- seconds: A, B, A, B inside it is a flip
 Moments.NEAR, Moments.AWAY = 250, 250 -- yards: a pick-up "here", a step "out"
-Moments.TAGS = { flagged = true, done = true, gray = true, ["heads-out"] = true, flip = true, arrow = true } -- (gray: a fallback, see CheckStep)
 -- (the perf battery: detectors run, captures are counted, not gathered - the battery prices a capture on its own)
 Moments.dryRun = false
 Moments.captured = 0
 
 local function now() return (GetTime and GetTime()) or 0 end
 local function store()
-  BeelineDB.moments = type(BeelineDB.moments) == "table" and BeelineDB.moments or {}
-  local M = BeelineDB.moments
-  M.list = type(M.list) == "table" and M.list or {}
+  local M = ns.Util.Sub(BeelineDB, "moments")
+  ns.Util.Sub(M, "list")
   return M
 end
 function Moments.List() return store().list end
@@ -80,7 +78,7 @@ function Moments.Capture(tag, why, auto)
   if not (BeelineDB and ns.Report and ns.Engine and BeelineData) then return nil end
   if Moments.InCombat() and not Moments.dryRun then Moments.deferred = { tag = tag, why = why, auto = auto }; return true end
   if auto then
-    if ns.db.moments == false then return nil end
+    if ns.db.keepMoments == false then return nil end
     local had = Moments.Has(tag)
     if had then had.n = (had.n or 1) + 1; return nil end
     if Moments.lastAuto and now() - Moments.lastAuto < Moments.COOLDOWN then return nil end
@@ -159,7 +157,7 @@ local function quiet()
   -- (no verdict while you look at another step, ride a flight, stand in a dungeon or a side trip, or are dead: the card
   -- is not the route's answer to where you are)
   local E = ns.Engine
-  if E.view then return true end
+  if E.view or (ns.Demo and ns.Demo.active) then return true end -- (the demo's scripted card is not the route)
   if ns.Is(UnitOnTaxi, "player") or ns.Is(UnitIsDeadOrGhost, "player") then return true end
   if ns.Dungeon and ns.Dungeon.Inside and ns.Dungeon.Inside() then return true end
   local data = BeelineData
@@ -177,7 +175,6 @@ local function yardsTo(s)
   if pinst ~= winst then return -1 end
   return math.sqrt((px - wx) ^ 2 + (py - wy) ^ 2)
 end
-Moments.Yards = yardsTo
 
 -- done or gray on the card -> tag, why
 function Moments.CheckStep(i)
@@ -216,7 +213,7 @@ function Moments.CheckHeadsOut(i)
   local from = E.planned or i
   for j = from, math.min(#list, from + 60) do
     local t = list[j]
-    if t.k == "fly" or t.k == "hearth" or t.k == "boat" then break end
+    if ns.Engine.IsTrip(t) then break end
     local y = (t.m and not t.unknown) and yardsTo(t) or nil
     if j > from and t.m and not t.unknown and (not y or y < 0 or y > FAR) then break end
     if j ~= i and t.k == "accept" and t.q and E.Status(j) == "todo" and (not E.Available or E.Available(j)) and not (ns.Avail and ns.Avail.Unavailable(t.q))
@@ -239,14 +236,7 @@ function Moments.Counts(i, prevI)
   return true
 end
 function Moments.ForgetChanges() Moments.changes = {} end
-do
-  -- (wrapped at load: the card's buttons and the slash commands call these by name)
-  local E = ns.Engine
-  for _, name in ipairs({ "Skip", "MarkDone", "Undo", "Back", "Forward", "FocusOn", "Nope", "NotOffered" }) do
-    local f = E[name]
-    if type(f) == "function" then E[name] = function(...) Moments.ForgetChanges(); return f(...) end end
-  end
-end
+ns.On("FR_USER_ACTION", function() Moments.ForgetChanges() end)
 function Moments.NoteChange(s, t)
   local c = Moments.changes
   c[#c + 1] = { t = t or now(), s = s }
@@ -280,7 +270,7 @@ function Moments.Look()
   return tag, why
 end
 function Moments.OnStep()
-  if ns.db.moments == false or not BeelineData then return end
+  if ns.db.keepMoments == false or not BeelineData or (ns.Demo and ns.Demo.active) then return end
   local list = BeelineData.steps
   local s = ns.Engine.CardAt() and list and list[ns.Engine.CardAt()]
   if ns.Engine.view or not s then return end
@@ -305,7 +295,7 @@ ns.On("FR_STEP", function() local ok, err = pcall(Moments.OnStep); if not ok and
 -- not a flight (its flight master is the taxi's job) or a hearth
 function Moments.ArrowCase(why, s)
   if not why or not tostring(why):find("^no position for this step") then return false end
-  if not s or s.k == "fly" or s.k == "hearth" or s.k == "boat" then return false end
+  if not s or ns.Engine.IsTrip(s) then return false end
   local HBD = LibStub and LibStub("HereBeDragons-2.0", true)
   local px = HBD and HBD:GetPlayerWorldPosition()
   if not px then return false end
@@ -313,7 +303,7 @@ function Moments.ArrowCase(why, s)
 end
 function Moments.ArrowHidden(why)
   if not why or not tostring(why):find("^no position for this step") then return end
-  if ns.db.moments == false or not (C_Timer and C_Timer.After) then return end
+  if ns.db.keepMoments == false or not (C_Timer and C_Timer.After) then return end
   local s = ns.Engine.CardAt() and BeelineData and BeelineData.steps[ns.Engine.CardAt()]
   if not Moments.ArrowCase(why, s) then return end
   C_Timer.After(Moments.SETTLE, function()

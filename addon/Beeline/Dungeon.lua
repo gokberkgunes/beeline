@@ -8,7 +8,7 @@ local _, ns = ...
 local Dungeon = {}
 ns.Dungeon = Dungeon
 
-local function plain(v) return v ~= nil and not (issecretvalue and issecretvalue(v)) end
+local plain = ns.Util.Plain
 local function norm(x) return (tostring(x or ""):lower():gsub("^the ", "")) end
 
 -- the instance map you are on (0 and 1 are the continents), or nil when the game doesn't say
@@ -118,8 +118,7 @@ function Dungeon.State(id)
   end
   table.sort(out.quests, function(a, b) if a.ready ~= b.ready then return not a.ready end return a.q < b.q end)
   local level = (UnitLevel and UnitLevel("player")) or 1
-  local side = UnitFactionGroup and UnitFactionGroup("player")
-  side = (side == "Alliance" and "A") or (side == "Horde" and "H") or nil
+  local side = ns.State.MyFaction()
   local _, _, classId = UnitClass("player")
   local classBit = type(classId) == "number" and 2 ^ (classId - 1) or nil
   for _, e in ipairs(d.open or {}) do

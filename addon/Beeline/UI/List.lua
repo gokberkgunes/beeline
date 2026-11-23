@@ -24,7 +24,7 @@ local function rebuild()
   -- brings each up when it can be done). When the card is on a step out of plan order (a hand-in at the NPC you're at,
   -- loot counting for a later quest), that step comes first, as "Now", then "Next on your plan".
   local hide = ns.db.hideDone ~= false
-  -- (not the step you clicked to look at: it read "Now - out of plan order: you're at it" - state map)
+  -- (not the step you clicked to look at)
   local cur, planned = (ns.Engine.view and ns.Engine.CardAt()) or ns.Engine.Shown(), ns.Engine.planned or ns.Engine.CardAt()
   local lastSec
   local function add(i)
@@ -32,7 +32,7 @@ local function rebuild()
     if st.sec ~= lastSec then
       lastSec = st.sec
       local sec = data.sections and data.sections[st.sec]
-      -- (the zone once: a section titled by its zone read "Ironforge  Ironforge" - tester)
+      -- (the zone once, not after a section titled by it)
       local named = sec and sec.zone and sec.title:lower():find(sec.zone:lower(), 1, true)
       entries[#entries + 1] = { header = sec and (sec.title .. ((sec.zone and not named) and ("  |cff8a93a6" .. sec.zone .. "|r") or "")) or "" }
     end
@@ -72,7 +72,7 @@ local function build()
   f.logc:SetPoint("TOPRIGHT", -32, -8)
   f.dung = Style.Button(f, "Side trips", 70, 18, function() ns.Fire("FR_TOGGLE_DUNGEONS") end, "Special rewards (like the Cozy Sleeping Bag) and dungeon routes - each a side trip that keeps your path")
   f.dung:SetPoint("RIGHT", f.logc, "LEFT", -4, 0)
-  f.change = Style.Button(f, "Where to?", 88, 18, function() ns.Fire("FR_TOGGLE_PATHS") end, "The zones you could go to now, and your planned paths")
+  f.change = Style.Button(f, "Home base", 88, 18, function() ns.Fire("FR_TOGGLE_PATHS") end, "The zones you could go to now, and your planned paths")
   f.change:SetPoint("RIGHT", f.dung, "LEFT", -4, 0)
   f.hide = Style.Button(f, ns.db.hideDone ~= false and "Show done" or "Hide done", 70, 18, function(self)
     ns.db.hideDone = (ns.db.hideDone == false); self.label:SetText(ns.db.hideDone ~= false and "Show done" or "Hide done")
@@ -130,10 +130,9 @@ function List.Scroll(d)
   List.Draw("rows")
 end
 
--- (the engine says "step" on every refresh, and on a flight that is all the time - the position changes fast: with
--- the list open, each one rebuilt the whole list, every step's status, and the game stuttered for the whole flight -
--- tester. Now only when what it shows changed, or every few seconds for live counts). Scrolling only redraws the rows
--- (it rebuilt the whole list too - "scrolling too makes it stutter", tester).
+-- (the engine says "step" on every refresh, constantly on a flight: rebuilding the whole list and every step's status
+-- each time stutters. So only when what it shows changed, or every few seconds for live counts; scrolling only
+-- redraws the rows.)
 --   List.Draw()        from the engine: nothing unless something changed
 --   List.Draw("rows")  scrolled: the visible rows only
 --   List.Draw(true)    opened, switched route: all of it
@@ -179,10 +178,10 @@ function List.DrawHeader(data)
     f.pathName:SetWidth(math.min(300, f.pathName:GetStringWidth() + 2))
     f.pathFast:ClearAllPoints(); f.pathFast:SetPoint("LEFT", f.pathName, "RIGHT", 6, 0)
     f.pathFast:SetShown(((data.best or m.best) and #list > 1) and true or false)
-    -- the zones ahead from where you are on the route (the plan's leg list started at level 1 - tester), with the
-    -- hand-ins in each; the plan's own list for a route with nothing left to tell from
+    -- the zones ahead from where you are on the route (not from level 1), with the hand-ins in each; the plan's own
+    -- list for a route with nothing left to tell from
     local legs = {}
-    -- (names only: a bare count after each read as noise - "Wetlands 7 > Ironforge 4" - tester; the zones panel says how many)
+    -- (names only: the zones panel says how many)
     for _, z in ipairs(ns.Engine.ZonesAhead and ns.Engine.ZonesAhead(nil, 5) or {}) do
       local name = Style.ShortZone(z.zone)
       if legs[#legs] ~= name then legs[#legs + 1] = name end -- (two spellings of one zone side by side read as one)
@@ -190,12 +189,12 @@ function List.DrawHeader(data)
     if #legs == 0 then
       for z in (m.legs or data.title or ""):gmatch("[^>·]+") do z = z:gsub("^%s+", ""):gsub("%s+$", ""); if z ~= "" and legs[#legs] ~= z then legs[#legs + 1] = z end end
     end
-    -- (a stop in a capital on the way is not a zone you go to: "Ironforge > Desolace" read as a trip to Ironforge)
+    -- (a stop in a capital on the way is not a zone you go to)
     do local kept = {}; for _, z in ipairs(legs) do if not (ns.IsCapital and ns.IsCapital(z)) and kept[#kept] ~= z then kept[#kept + 1] = z end end; if #kept > 0 then legs = kept end end
     local hc = Style.Chips(f.pathChips, legs, 396, 5)
     f.pathChips:SetHeight(hc)
     f.pathMeta:ClearAllPoints(); f.pathMeta:SetPoint("TOPLEFT", f.pathChips, "BOTTOMLEFT", 0, -6); f.pathMeta:SetPoint("RIGHT", f.paths, "RIGHT", -10, 0)
-    -- (a side trip or dungeon route has no level to reach: its plan said "To level 1" - tester)
+    -- (a side trip or dungeon route has no level to reach)
     f.pathMeta:SetText(List.MetaText(data.dungeon and { hours = m.hours } or m, done, total))
     f.pathMeta:SetWordWrap(true); f.pathMeta:SetWidth(396)
     f.metaHit:ClearAllPoints(); f.metaHit:SetAllPoints(f.pathMeta); f.metaHit:Show()
@@ -203,7 +202,7 @@ function List.DrawHeader(data)
   else
     f.pathName:SetText("No route loaded"); f.pathFast:Hide(); Style.Chips(f.pathChips, {}, 396); f.pathMeta:SetText(""); f.metaHit:Hide(); f.paths:SetHeight(30)
   end
-  -- (a built-in plan has one path: its zone routes are what you pick from - the button was hidden without the companion)
+  -- (a built-in plan has one path: its zone routes are what you pick from, so the button shows without the companion)
   f.change:SetShown((#list > 1 or #ns.ZoneRoutes() > 0) and not (data and data.dungeon and not data.special))
   f.dung:SetShown(#ns.DungeonRoutes() > 0)
   -- the step rows sit under the header, whatever its height
@@ -249,9 +248,7 @@ function List.DrawRows(data)
 end
 
 -- The header's line: where the plan takes you and what's left of it - "To level 43  ·  about 37 h left  ·  26 of 893
--- steps done". It was "Level 33 to 43 (62%) · ~39.3 h · 26 of 893 done · planned 8 h ago from your 23:47 save": the
--- start level is behind you, the hours were the whole plan's, and the save time is the planner's business -
--- "meaningless and confusing" (tester). When and from what it was planned is in the tooltip (List.MetaTip).
+-- steps done". When and from what it was planned is in the tooltip (List.MetaTip), not on the line.
 -- The time left is the plan's hours scaled by the steps not done yet: a rough guide, so whole hours (minutes under one).
 function List.MetaText(m, done, total)
   m = m or {}
@@ -268,8 +265,7 @@ function List.MetaText(m, done, total)
   return table.concat(parts, "  ·  ")
 end
 -- the tooltip on that line: how fresh the plan is (the companion replans after every save), or which build of a
--- built-in plan it is (CLAUDE.md, Versioning - "plans 2026-11-11 · QuestieDB 1.0.14 · planner b2aef9e": what a bug
--- report needs)
+-- built-in plan it is (CLAUDE.md, Versioning: what a bug report needs)
 function List.MetaTip()
   local lines = {}
   local sk = ns.planKey and ns.planKey.starter
@@ -306,6 +302,7 @@ local function open()
   List.Draw(true)
 end
 function List.Toggle()
+  if not f then return end -- (a key pressed while loading)
   if f:IsShown() then f:Hide(); return end
   ns.Engine.ReadPass(open) -- (the list, the done count and the zones ahead ask each step's status once between them)
 end

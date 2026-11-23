@@ -1,5 +1,4 @@
--- Options: one window with a rail of tabs on its left, like Where to? (a tester: one long column of checkboxes and
--- sliders was hard to work with; the changelog belongs there; the food reminder should be a toggle). The design pass:
+-- Options: one window with a rail of tabs on its left, like Where to?:
 --   General  what the card shows: a look (Full / Compact / Minimal), the steps under it, each reminder line, extras
 --   Auto   what the addon does for you
 --   Map    the arrow, the pins, the walking path
@@ -16,7 +15,7 @@ local C = Style.C
 local Options = {}
 ns.Options = Options
 
-local MEDIA = "Interface\\AddOns\\Beeline\\Media\\"
+local MEDIA = Style.MEDIA
 local W, H = 540, 500          -- the window: Where to?'s width, room for the links at the bottom
 local RAIL, PAD = 64, 14       -- the tab rail, the page margin
 local TOP = 44                 -- where a page starts
@@ -24,7 +23,7 @@ local PAGE_W = W - RAIL - 2 * PAD - 6
 local host, panel              -- the window, and the page area inside it (BeelineOptions)
 
 local TABS = {
-  { key = "card", label = "General", icon = "btn-list", color = C.gold, title = "General" }, -- ("Card" read as jargon - tester)
+  { key = "card", label = "General", icon = "btn-list", color = C.gold, title = "General" }, -- (not "Card": jargon)
   { key = "auto", label = "Auto", icon = "icon-accept", color = C.gold, title = "Automation" },
   { key = "map", label = "Map", icon = "pin", color = C.good, title = "Map and arrow" },
   { key = "size", label = "Size", icon = "btn-gear", color = C.gold, title = "Size" },
@@ -95,7 +94,7 @@ local function toggle(page, label, key, tipText)
   end
   b.sync = sync
   b:SetScript("OnShow", sync)
-  b:SetScript("OnClick", function() ns.db[key] = not ns.db[key]; sync(); ns.Fire("FR_SETTINGS") end)
+  b:SetScript("OnClick", function() ns.db[key] = not ns.db[key]; sync(); ns.Fire("FR_SETTINGS", key) end)
   b:SetScript("OnEnter", function(self) self.wash:Show() end)
   b:SetScript("OnLeave", function(self) self.wash:Hide() end)
   tip(b, tipText)
@@ -115,21 +114,21 @@ local function slider(page, label, key, lo, hi, step, fmt, default, dep, words)
   local function deps() local on = not dep or ns.db[dep] and true or false; s:SetEnabled(on); s:SetAlpha(on and 1 or 0.4); t:SetAlpha(on and 1 or 0.4); v:SetAlpha(on and 1 or 0.4) end
   s:SetScript("OnShow", function(self) self.loading = true; self:SetValue(ns.db[key] or default); upd(ns.db[key] or default); deps(); self.loading = false end)
   if dep then ns.On("FR_SETTINGS", function() if s:IsVisible() then deps() end end) end
-  -- the Beeline scale also sizes this window: applied while you drag, the slider grew or shrank under the
-  -- cursor and ran off to its end. That one takes effect when you let go (the number follows as you drag)
+  -- the Beeline scale also sizes this window, so applied while you drag the slider would grow or shrink under the
+  -- cursor: that one takes effect when you let go (the number follows as you drag)
   local onRelease = key == "uiScale"
   s:SetScript("OnValueChanged", function(self, x)
     upd(x)
     if self.loading or (ns.db[key] or default) == x then return end
     if onRelease and self.dragging then self.pending = x; return end
-    ns.db[key] = x; ns.Fire("FR_SETTINGS")
+    ns.db[key] = x; ns.Fire("FR_SETTINGS", key)
   end)
   if onRelease then
     s:HookScript("OnMouseDown", function(self) self.dragging = true end)
     s:HookScript("OnMouseUp", function(self)
       self.dragging = false
       local x = self.pending; self.pending = nil
-      if x and (ns.db[key] or default) ~= x then ns.db[key] = x; ns.Fire("FR_SETTINGS") end
+      if x and (ns.db[key] or default) ~= x then ns.db[key] = x; ns.Fire("FR_SETTINGS", key) end
     end)
   end
   for _, r in ipairs({ s:GetRegions() }) do if r.GetText and (r:GetText() == "Low" or r:GetText() == "High") then r:SetText("") end end
@@ -211,7 +210,7 @@ function BUILD.auto(p)
   toggle(p, "Learn my city paths", "trails", "Remembers your walks in cities. Stays on your PC.")
   -- (Moments.lua: the moments stay on your PC; sending them is the companion's own question, off until you say yes there)
   header(p, "Bug reports")
-  toggle(p, "Keep notes for bug reports", "moments", "When the card looks off, notes it on your PC for /bee report.")
+  toggle(p, "Keep notes for bug reports", "keepMoments", "When the card looks off, notes it on your PC for /bee report.")
   confirmButton(p, "Clear the notes", 190, function() if ns.Moments then ns.Moments.Clear() end end, "Deletes the notes kept for bug reports.")
 end
 
@@ -232,7 +231,7 @@ function BUILD.size(p)
   local all = slider(p, "Everything", "uiScale", Style.SCALE_MIN, Style.SCALE_MAX, 0.05, nil, 1, nil, "scale size bigger smaller text ui")
   -- the scale that makes our text a comfortable size on this screen, one click away when it differs
   local sug = Style.Button(p, "", 130, 20, function()
-    local v = Style.SuggestScale(); if v then ns.db.uiScale = v; ns.Fire("FR_SETTINGS"); p:Hide(); p:Show() end
+    local v = Style.SuggestScale(); if v then ns.db.uiScale = v; ns.Fire("FR_SETTINGS", "uiScale"); p:Hide(); p:Show() end
   end, "Readable text on this screen.")
   sug:SetPoint("LEFT", all, "RIGHT", 14, 0)
   local function sugShow()
@@ -250,7 +249,7 @@ function BUILD.size(p)
     if ns.Card and ns.Card.ResetPos then ns.Card.ResetPos(true) end
     if ns.Card and ns.Card.ResetTarget then ns.Card.ResetTarget() end
     ns.db.arrowPos = nil
-    if BeelineArrow then BeelineArrow:ClearAllPoints(); BeelineArrow:SetPoint("TOP", UIParent, "TOP", 0, -140) end
+    if ns.Arrow and ns.Arrow.ApplyPos then ns.Arrow.ApplyPos() end
     ns.Print("Card, arrow and Target button back in place.")
   end, "Puts the card, arrow and Target button back.")
   p.example = true
@@ -265,16 +264,13 @@ local function fmtDate(d)
   return (M[tonumber(m)] or m) .. " " .. tonumber(dd)
 end
 function BUILD.news(p)
-  local scroll = CreateFrame("ScrollFrame", nil, p); scroll:SetPoint("TOPLEFT", 0, 0); scroll:SetPoint("BOTTOMRIGHT", 0, 30)
-  scroll:EnableMouseWheel(true)
-  local content = CreateFrame("Frame", nil, scroll); content:SetSize(PAGE_W, 10); scroll:SetScrollChild(content)
-  scroll:SetScript("OnMouseWheel", function(self, d)
-    local max = math.max(0, content:GetHeight() - self:GetHeight())
-    self:SetVerticalScroll(math.min(max, math.max(0, self:GetVerticalScroll() - d * 50)))
-  end)
-  -- (cheap rows: building every version's row, pill, body and link up front was 160 ms on a fresh load - the perf
-  -- battery's "options tab switched". A row is its one-line header; the NEW mark, the body and the "more" link are
-  -- made when needed; the newest SHOWN versions are listed, the rest behind "Older versions")
+  Style.ScrollList(p, PAGE_W, 50)
+  local scroll, content = p.scroll, p.content
+  scroll:SetPoint("TOPLEFT", 0, 0); scroll:SetPoint("BOTTOMRIGHT", 0, 30)
+  p.track:SetPoint("TOPRIGHT", 0, 0); p.track:SetPoint("BOTTOMRIGHT", 0, 30)
+  -- (cheap rows: building every version's row up front costs ~100+ ms. A row is its one-line header; the NEW mark,
+  -- the body and the "more" link are made when needed; the newest SHOWN versions are listed, the rest behind
+  -- "Older versions")
   local SHOWN = 10
   local rows, open, all = {}, {}, false
   local function row(k)
@@ -336,6 +332,7 @@ function BUILD.news(p)
       older.text:SetText("Older versions (" .. (#news - last) .. ")"); older:ClearAllPoints(); older:SetPoint("TOPLEFT", 0, -y); y = y + 24
     end
     content:SetHeight(math.max(10, y))
+    p.setScroll(scroll:GetVerticalScroll())
   end
   -- under the list: the bar after an update
   local bar = CreateFrame("Frame", nil, p); bar:SetPoint("BOTTOMLEFT", 0, 0); bar:SetSize(PAGE_W, 26); bar.y = 0; bar.tabKey = "news"
@@ -348,7 +345,7 @@ function BUILD.news(p)
       Options.unreadFrom = (cur and ns.db.newsSeen and ns.News.Newer(cur, ns.db.newsSeen)) and ns.db.newsSeen or false
     end
     wipe(open); open[1] = 1; all = false
-    p.layout(); scroll:SetVerticalScroll(0)
+    p.layout(); p.setScroll(0)
     if ns.News and ns.News.Dismiss then ns.News.Dismiss() end
     Options.Dot()
   end
@@ -358,7 +355,7 @@ function BUILD.help(p)
   header(p, "Keys")
   note(p, "Esc > Key Bindings > AddOns > Beeline")
   header(p, "Commands")
-  for _, c in ipairs({ { "/bee", "show / hide the card" }, { "/bee list", "the whole route" }, { "/bee paths", "pick a home base" }, { "/bee report", "copy a bug report" } }) do
+  for _, c in ipairs({ { "/bee", "show / hide the card" }, { "/bee list", "the whole route" }, { "/bee home", "pick a home base" }, { "/bee report", "copy a bug report" } }) do
     local a = Style.Text(p, 11, C.gold); a:SetPoint("TOPLEFT", 0, -p.y); a:SetText(c[1])
     local b = Style.Text(p, 11, C.sub); b:SetPoint("TOPLEFT", 90, -p.y); b:SetText(c[2])
     p.y = p.y + 18
@@ -381,14 +378,7 @@ end
 
 -- ---------------------------------------------------------------- the window
 
-local function paintTab(b)
-  local lit = b.on or b.hover
-  local col = lit and b.t.color or C.sub
-  b.icon:SetVertexColor(col[1], col[2], col[3]); b.icon:SetAlpha(lit and 1 or 0.65)
-  b.label:SetTextColor(col[1], col[2], col[3])
-  b.wash:SetVertexColor(b.t.color[1], b.t.color[2], b.t.color[3], 0.12); b.wash:SetShown(b.on)
-  b.bar:SetVertexColor(b.t.color[1], b.t.color[2], b.t.color[3]); b.bar:SetShown(b.on)
-end
+local paintTab = Style.PaintTab
 
 -- the gold dot on News while an update is unread
 function Options.Dot()
@@ -504,17 +494,9 @@ local function build()
   local railBg = host.rail:CreateTexture(nil, "BACKGROUND"); railBg:SetTexture(Style.WHITE); railBg:SetAllPoints(); railBg:SetVertexColor(0, 0, 0, 0.25)
   host.tabs = {}
   for k, t in ipairs(TABS) do
-    local b = CreateFrame("Button", nil, host.rail)
-    b:SetSize(RAIL - 6, 48); b:SetPoint("TOP", host.rail, "TOP", 0, -(8 + (k - 1) * 52)); b.t = t
-    b.wash = b:CreateTexture(nil, "BACKGROUND"); b.wash:SetTexture(Style.WHITE); b.wash:SetAllPoints()
-    b.bar = b:CreateTexture(nil, "ARTWORK"); b.bar:SetTexture(Style.WHITE); b.bar:SetWidth(3); b.bar:SetPoint("TOPLEFT", 0, -6); b.bar:SetPoint("BOTTOMLEFT", 0, 6)
-    b.icon = b:CreateTexture(nil, "ARTWORK"); b.icon:SetTexture(MEDIA .. t.icon); b.icon:SetSize(18, 18); b.icon:SetPoint("TOP", 0, -8)
-    b.label = Style.Text(b, 10, C.sub); b.label:SetPoint("TOP", b.icon, "BOTTOM", 0, -4); b.label:SetJustifyH("CENTER"); b.label:SetText(t.label)
+    local b = Style.RailTab(host.rail, t, 8 + (k - 1) * 52, function() Options.Show(t.key) end, RAIL - 6)
     b.dot = b:CreateTexture(nil, "OVERLAY"); b.dot:SetTexture(MEDIA .. "dot"); b.dot:SetSize(8, 8); b.dot:SetPoint("TOPRIGHT", -8, -6)
     b.dot:SetVertexColor(C.gold[1], C.gold[2], C.gold[3]); b.dot:Hide()
-    b:SetScript("OnClick", function() Options.Show(t.key) end)
-    b:SetScript("OnEnter", function(self) self.hover = true; paintTab(self) end)
-    b:SetScript("OnLeave", function(self) self.hover = false; paintTab(self) end)
     host.tabs[t.key] = b
   end
   -- the title, and the links at its right: show the demo card, reset this tab

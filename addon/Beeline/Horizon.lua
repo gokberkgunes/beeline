@@ -8,11 +8,10 @@
 --     so reordering is only chosen when it really is shorter - the plan stays the guidance, and is the cost-to-go.
 --   * Other stops are optional prizes: a finished quest's hand-in that isn't the plan's, a side quest's objective,
 --     a pick-up next to you, an errand. Each says what doing it now is worth (prize, seconds): for a hand-in, the
---     time it would cost to come back for it later (the detour from your route to the NPC, and the hand-in itself).
---     Next to you that is a lot more than it costs now - "while you're here: hand in X" - and across the world it
---     is much less - never "all the way to Stormwind for one hand-in". No rule of its own: arithmetic.
+--     time it would cost to come back for it later (the detour from your route to the NPC, and the hand-in itself):
+--     next to you that beats its cost now, across the world it doesn't.
 --   * Straying from the plan's order costs a little (stability): each planned stop passed over, Horizon.STABILITY
---     seconds. A guide that reshuffles for a few seconds saved is no guide.
+--     seconds, so a few seconds saved don't reshuffle the guide.
 --   * Your quest log is the vehicle's capacity: a pick-up is +1, a hand-in -1, never over cap. Pick-up before
 --     objectives before hand-in (needs).
 --
@@ -28,9 +27,39 @@ Horizon.B = 60           -- partial routes kept per depth
 Horizon.STABILITY = 45   -- seconds charged for each planned stop passed over (out of plan order)...
 Horizon.STABLE_NEAR = 60 -- ...in full for a stop this many seconds away or more, less for nearer ones: doing what's
                          -- right here isn't the confusing kind of out of order - being sent somewhere else is
-Horizon.MAX_CANDIDATES = 30
+Horizon.MAX_CANDIDATES = 30 -- stops one solve weighs at most (Horizon.Trim; a state's number key is exact to 47)
 
 local huge = math.huge
+
+-- -> stops cut to max (the same list when it fits): the planned stops and the stop keep (an id) first, then the
+-- optional ones of the highest prize; a stop that needs a cut one is cut too. List order is kept.
+function Horizon.Trim(stops, max, keep)
+  if #stops <= max then return stops end
+  local rank, order, kept = {}, {}, {}
+  for i, s in ipairs(stops) do rank[s] = i; order[i] = s; kept[s.id] = false end
+  table.sort(order, function(a, b)
+    local ma, mb = a.plan ~= nil or a.id == keep, b.plan ~= nil or b.id == keep
+    if ma ~= mb then return ma end
+    if not ma and (a.prize or 0) ~= (b.prize or 0) then return (a.prize or 0) > (b.prize or 0) end
+    return rank[a] < rank[b]
+  end)
+  for i = 1, max do kept[order[i].id] = true end
+  local again = true
+  while again do
+    again = false
+    for i = 1, max do
+      local s = order[i]
+      if kept[s.id] then
+        for _, id in ipairs(s.needs or {}) do
+          if kept[id] == false then kept[s.id] = false; again = true; break end
+        end
+      end
+    end
+  end
+  local out = {}
+  for _, s in ipairs(stops) do if kept[s.id] then out[#out + 1] = s end end
+  return out
+end
 
 -- problem:
 --   start    where you are (passed to travel() as the first place of the first leg)
@@ -43,7 +72,7 @@ local huge = math.huge
 --   first    optional stop id the window must start with (to score keeping the current target: hysteresis)
 -- -> { seq = { stops }, score = -(seconds to finish) + prizes, first = the stop to do now (nil: nothing to do) }
 function Horizon.Solve(P)
-  local stops = P.stops or {}
+  local stops = Horizon.Trim(P.stops or {}, Horizon.MAX_CANDIDATES, P.first)
   local n = #stops
   local K, B = P.K or Horizon.K, P.B or Horizon.B
   local stab = P.stability or Horizon.STABILITY
@@ -73,11 +102,9 @@ function Horizon.Solve(P)
   local np0 = #planned
   -- the rest of the window's planned stops from last, then on to the anchor: in plan order, except that a stop that
   -- can't be done yet (its pick-up not done, the log full) gives way to the first one that can - the way you'd
-  -- follow the plan. -> seconds, and the order (when asked for)
-  -- (one pass in plan order: a stop that can't be done yet waits aside and goes as soon as it can - after each stop
-  -- taken, the waiting ones are tried again, earliest first)
-  -- (it runs for every partial route the search keeps - thousands a solve - so its helpers are made once, here, and
-  -- share the state of the one tail being worked out: tt, tat, tm, tld, torder, tnp)
+  -- follow the plan; after each stop taken, the waiting ones are tried again, earliest first. -> seconds, and the
+  -- order (when asked for)
+  -- (hot path - thousands of calls a solve: helpers made once here, sharing the tail's state tt, tat, tm, tld, torder, tnp)
   local pending = {}
   local tt, tat, tm, tld, torder, tnp = 0, 0, 0, 0, nil, 0
   local function can(j)
@@ -111,8 +138,8 @@ function Horizon.Solve(P)
     return tt + trip(tat, ANCHOR)
   end
   -- the planned stops a stop passes over (out of plan order): of those before it in the plan (rank[i] of them, the
-  -- first of planned), the ones not done yet. Counted per node once (pre[k]: of the first k planned, how many are not
-  -- done) rather than per stop tried from it.
+  -- first of planned), the ones not done yet. Counted once per node (pre[k]: of the first k planned, how many are not
+  -- done).
   local rank, pre, preFor = {}, { [0] = 0 }, nil
   for i, s in ipairs(stops) do
     if s.plan then
@@ -123,11 +150,8 @@ function Horizon.Solve(P)
   end
 
   -- a node: { mask, last, worth (prizes - time - penalties so far), load, up (the node it grew from), first (its first
-  -- stop) }. Its stops in order are read back through up only for the best one: copying them into every node tried was
-  -- a table per candidate.
-  -- (a node's key - its stops done and the last one - is a number when it fits one exactly: a string per candidate was
-  -- much of a solve's time)
-  local numKey = n <= 47
+  -- stop) }. Its stops in order are read back through up only for the best one (no table per candidate: hot path).
+  -- (a node's key - its stops done and the last one - is one number, not a string (perf): exact for n <= 47, Horizon.Trim)
   local root = { mask = 0, last = 0, worth = 0, load = load0 }
   local function score(nd) return nd.worth - tail(nd.mask, nd.last, nd.load) end
   local best, bestScore = root, score(root)
@@ -163,8 +187,7 @@ function Horizon.Solve(P)
               end
               local worth = nd.worth + (s.prize or 0) - t - (s.service or 0) - stab * near * po
               local mask = ndMask + bit[i]
-              local key
-              if numKey then key = mask * (n + 1) + i else key = mask .. ":" .. i end
+              local key = mask * (n + 1) + i
               local old = byKey[key]
               if not old or worth > old.worth then
                 if not old then keys[#keys + 1] = key end
@@ -175,8 +198,8 @@ function Horizon.Solve(P)
         end
       end
     end
-    -- the best B of the layer, kept as they are scored (a heap whose top is the worst kept): sorting all of them - up
-    -- to B x n, ~1800 - was one long step the background solve could not pause in
+    -- the best B of the layer, kept as they are scored (a heap whose top is the worst kept): sorting all ~B x n at once
+    -- would be one long step the background solve can't pause in
     local function better(a, b)
       if a.score ~= b.score then return a.score > b.score end
       return (stops[a.first].plan or huge) < (stops[b.first].plan or huge) -- ties: plan order

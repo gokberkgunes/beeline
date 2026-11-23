@@ -18,8 +18,8 @@ ns.DEFAULTS = {
   trails = true,         -- record where you walk in the capital cities (improves city paths)
   locked = false,
   rewardHint = true,     -- highlight the best quest reward
-  combatFade = false,    -- fade the card while in combat (off: testers disliked it)
-  smartNext = true,      -- the live solver picks what to do next from where you are (Next.lua); off: the plan order and the old reordering
+  combatFade = false,    -- fade the card while in combat
+  smartNext = true,      -- the live solver picks what to do next from where you are (Next.lua); off: the plan order
   autoFly = false,       -- at a flight master, take the flight the card's trip needs
   autoQuest = false,     -- accept route quests and hand in finished ones (no reward choice) by themselves
   markTarget = true,     -- the Target button (and its key) also puts a star on the NPC
@@ -32,7 +32,7 @@ ns.DEFAULTS = {
   remindFood = true,     -- eat for Well Fed
   remindGrimoire = true, -- warlocks: a grimoire at the demon trainer
   newsBar = true,        -- the "updated to ..." bar under the card after an update
-  moments = true,        -- keep notes of odd moments on the card for the next /bee report (Moments.lua; on your PC only)
+  keepMoments = true,    -- keep notes of odd moments on the card for the next /bee report (Moments.lua; on your PC only)
 }
 
 -- ns.Is(fn, ...): a yes/no question to the game (UnitOnTaxi, UnitIsAFK, IsFlying, IsIndoors...). Forever hides some
@@ -65,18 +65,30 @@ function ns.NewTicker(period, fn)
   ns._tickers[#ns._tickers + 1] = { period = period, fn = fn }
   return C_Timer.NewTicker(period, fn)
 end
+-- ns.Debounce(secs, fn) -> a function: a burst of calls runs fn once, secs after the first (fn reads the state then)
+-- (the pending run is known by the C_Timer.After that holds it: a test world swaps that one and drops its timers)
+function ns.Debounce(secs, fn)
+  local via
+  return function()
+    local after = C_Timer.After
+    if via == after then return end
+    via = after
+    after(secs, function() if via == after then via = nil end; fn() end)
+  end
+end
 local function isGameEvent(event)
   if event:find("^FR_") then return false end -- our own messages
   if C_EventUtils and C_EventUtils.IsEventValid then return C_EventUtils.IsEventValid(event) end
   return true
 end
--- ns.On("EVENT", fn): pub/sub for our FR_* messages; game events are registered on demand
-function ns.On(event, fn)
+-- ns.On("EVENT", fn, first): pub/sub for our FR_* messages; game events are registered on demand. first: run before
+-- the listeners already registered (a reader that must see the event before anything acts on it)
+function ns.On(event, fn, first)
   if not listeners[event] then
     listeners[event] = {}
     if isGameEvent(event) then pcall(ns.frame.RegisterEvent, ns.frame, event) end
   end
-  table.insert(listeners[event], fn)
+  if first then table.insert(listeners[event], 1, fn) else table.insert(listeners[event], fn) end
 end
 -- Error log: every error in our code is kept (deduplicated, with a count) in BeelineDB.log with what we were doing
 -- at the time (route, step, zone, level, build), so it can be read from SavedVariables after a /reload. It also goes to
@@ -124,12 +136,10 @@ ns.stats = {} -- name -> { n, total, max } (ms), since the last perf sample
 local clock = debugprofilestop
 ns.loadedAt = GetTime and GetTime() or 0
 -- the slow moments, with what set them off: a timing of SLOW_MS or more is kept (the last 30, per character) with the
--- game event being handled (nil: a timer or a frame), the seconds since the UI loaded and your level. The totals above
--- said a quest log change once cost 73 ms, never which one or when (/bee report perf lists these: the dev tools)
+-- game event being handled (nil: a timer or a frame), the seconds since the UI loaded and your level (/bee report perf)
 ns.SLOW_MS = 30
 -- ns.Mark() at the start of a timed moment, passed to ns.Time: a slow one then also keeps what it did - the trip
 -- searches (Travel.searches) and the step statuses worked out (Engine.statusN) - so a report says why, not only that.
--- A 485 ms refresh 21 s after login in a player's report said nothing more (2026-11-21)
 function ns.MarkInto(t)
   local E = ns.Engine
   t.trips, t.status, t.walks, t.fromStart = ns.Travel and ns.Travel.searches or 0, E and E.statusN or 0, E and E.computeN or 0, E and E.walkN or 0
@@ -206,7 +216,7 @@ end
 -- by that character's companion; only yours is loaded. An older file with a single plan is used as it is.
 -- On a fresh login the name can still read "Unknown" when the addon loads; then the key saved last time is used, and the
 -- plan is looked up again at PLAYER_LOGIN.
-local function plain(s) return (tostring(s or ""):lower():gsub("[^%w]", "")) end
+local function normName(s) return (tostring(s or ""):lower():gsub("[^%w]", "")) end
 function ns.CharKey()
   local okN, name = pcall(UnitName, "player")
   local okR, realm = pcall(GetRealmName)
@@ -224,12 +234,12 @@ function ns.FindMyPlan(key)
   if BeelineByChar[key] then return BeelineByChar[key], key end
   -- the block this character matched before (the game's realm name can differ from the folder the planner names it after)
   local before = BeelineChar and BeelineChar.planBlock
-  if before and BeelineByChar[before] and plain(before:match("^([^-]+)")) == plain(key:match("^([^-]+)")) then return BeelineByChar[before], before end
-  local want, wantName = plain(key), plain(key:match("^([^-]+)"))
+  if before and BeelineByChar[before] and normName(before:match("^([^-]+)")) == normName(key:match("^([^-]+)")) then return BeelineByChar[before], before end
+  local want, wantName = normName(key), normName(key:match("^([^-]+)"))
   local byName, nByName
   for k, f in pairs(BeelineByChar) do
-    if plain(k) == want then return f, k end
-    if plain(k:match("^([^-]+)")) == wantName then byName, nByName = { f, k }, (nByName or 0) + 1 end
+    if normName(k) == want then return f, k end
+    if normName(k:match("^([^-]+)")) == wantName then byName, nByName = { f, k }, (nByName or 0) + 1 end
   end
   if nByName == 1 then return byName[1], byName[2] end
 end
@@ -242,24 +252,21 @@ function ns.StarterKey()
   local okR, _, race = pcall(UnitRace, "player")
   local okC, _, class = pcall(UnitClass, "player")
   if not (okR and okC) or type(race) ~= "string" or type(class) ~= "string" then return nil end
-  race = plain(race)
+  race = normName(race)
   if race == "scourge" then race = "undead" end -- the game's token for undead; the plans are named undead_<class>
   -- the Horde's Skyborne (Windshaper Skyborne): skybornehorde, told apart by the faction
   if race:find("skyborne", 1, true) then
-    local okF, f = pcall(UnitFactionGroup, "player")
-    race = (race:find("windshaper", 1, true) or (okF and f == "Horde")) and "skybornehorde" or "skyborne"
+    race = (race:find("windshaper", 1, true) or ns.State.MyFaction() == "H") and "skybornehorde" or "skyborne"
   end
-  return race .. "-" .. plain(class)
+  return race .. "-" .. normName(class)
 end
 -- The built-in plan for your race and class. The plans come as one load-on-demand addon per faction
 -- (Beeline_Plans_Alliance / _Horde, tools/bundle-plans.js), each plan as text: only yours is made into code and
--- the rest is let go (51 addons, one per race and class, filled the game's addon list). An older install's per-plan
--- addon (Beeline_Starter_<race>_<class>) still works.
+-- the rest is let go. An older install's per-plan addon (Beeline_Starter_<race>_<class>) still works.
 function ns.LoadStarter(sk)
   local load = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
   if not load then return false end
-  local okF, fac = pcall(UnitFactionGroup, "player")
-  local sides = (okF and fac == "Horde") and { "Horde", "Alliance" } or { "Alliance", "Horde" }
+  local sides = ns.State.MyFaction() == "H" and { "Horde", "Alliance" } or { "Alliance", "Horde" }
   for _, side in ipairs(sides) do
     if not (type(BeelinePlanSources) == "table" and BeelinePlanSources[sk]) then pcall(load, "Beeline_Plans_" .. side) end
   end
@@ -268,7 +275,7 @@ function ns.LoadStarter(sk)
   if src and type(BeelinePlanShared) == "table" then
     local shared = BeelinePlanShared
     src = src:gsub("\n%-%-@zr ([^@\n]+)@", function(id) return shared[id] end)
-    -- and the step lines (3.4 part 1): "--@sl i:sec:id,..." is your plan's step list, each step the faction's line i
+    -- and the step lines: "--@sl i:sec:id,..." is your plan's step list, each step the faction's line i
     -- with its section and id put back
     if type(shared.lines) == "string" and src:find("\n--@sl ", 1, true) then
       local lines = {}
@@ -324,30 +331,47 @@ local starterSaid
 function ns.StarterNote()
   if starterSaid or not (ns.planKey and ns.planKey.starter) then return end
   starterSaid = true
-  C_Timer.After(5, function() ns.Print("Following the plan for your race and class (steps you've already done are skipped). Bored of a zone? /bee paths shows where else you could go.") end)
+  C_Timer.After(5, function() ns.Print("Following the plan for your race and class (steps you've already done are skipped). Bored of a zone? The house on the card (/bee home) shows where else you could go.") end)
 end
 
 -- flight masters and vendors come for both factions (FlightMasters.lua, Vendors.lua: ns.FLIGHT_BY, ns.VENDORS_BY);
 -- yours are ns.FLIGHT and ns.VENDORS. Picked when the addon loads and again at login (the faction is surely known then)
+-- (these run from ADDON_LOADED on, once every file - State.lua too - has loaded)
 function ns.UseFaction()
-  local ok, f = pcall(UnitFactionGroup, "player")
-  local side = (ok and f == "Horde") and "Horde" or "Alliance"
+  local side = ns.State.MyFaction() == "H" and "Horde" or "Alliance"
   if ns.FLIGHT_BY and ns.FLIGHT_BY[side] then ns.FLIGHT = ns.FLIGHT_BY[side] end
   if ns.VENDORS_BY and ns.VENDORS_BY[side] then ns.VENDORS = ns.VENDORS_BY[side] end
   return side
 end
+-- what you do to the route (the card's buttons, the slash commands): FR_USER_ACTION(name, ...) fires just before the
+-- Engine function runs, its arguments after the name. Wrapped once, here, when every Engine file has loaded.
+ns.USER_ACTIONS = { "Skip", "MarkDone", "Undo", "Back", "Forward", "FocusOn", "Nope", "NotOffered", "Jump" }
+local actionsWrapped
+function ns.WrapUserActions()
+  local E = ns.Engine
+  if actionsWrapped or not E then return end
+  actionsWrapped = true
+  for _, name in ipairs(ns.USER_ACTIONS) do
+    local fn = E[name]
+    if type(fn) == "function" then E[name] = function(...) ns.Fire("FR_USER_ACTION", name, ...); return fn(...) end end
+  end
+end
 ns.On("ADDON_LOADED", function(name)
   if name ~= ADDON then return end
+  ns.WrapUserActions()
   ns.migrated = { ns.Migrate.Run() } -- ForeverRoute's saves, once (Migrate.lua)
   ns.UseFaction()
   ns.hasPlan = ns.LoadMyPlan()
   BeelineDB = BeelineDB or {}
   BeelineChar = BeelineChar or {}
+  -- the option once shared BeelineDB.moments with the moments queue: an off saved that way stays off
+  if BeelineDB.moments == false then BeelineDB.keepMoments, BeelineDB.moments = false, nil end
   copyDefaults(BeelineDB, ns.DEFAULTS)
   ns.db = BeelineDB
-  -- combat fade was on by default and testers disliked it: off once for everyone (anyone can turn it back on)
+  -- combat fade used to default on: off once for everyone (anyone can turn it back on)
   if not ns.db.combatFadeReset then ns.db.combatFade = false; ns.db.combatFadeReset = true end
   ns.char = BeelineChar
+  ns.char.perf = nil -- (a logout record nothing read: out of the save)
   -- stay on the path you were on; nothing switches unless you choose (the zone you asked for is the one exception)
   ns.SelectRoute(ns.SavedRoute(), true)
   -- a path you asked for has arrived: switch to it once (you can switch away; it won't pull you back)
@@ -359,12 +383,12 @@ ns.On("ADDON_LOADED", function(name)
   ns.Fire("FR_LOADED")
 end)
 -- the name wasn't known yet when the addon loaded: look again now, and show the plan if it's found
--- maps the planner has no world bounds for (Forever's new ones: Zephras Isle 2521 and its second map 2665, Riverglades 2548, Shen'dralas 2652, Mount Hyjal 2482): the client
--- knows them for any map, wherever you are - recorded at login for the planner (tools/learn.js -> map-extras.json)
+-- maps the planner has no world bounds for (Forever's new zones): the client knows them for any map, wherever you
+-- are - recorded at login for the planner (tools/learn.js -> map-extras.json)
 ns.MAPS_TO_MEASURE = { 2521, 2665, 2548, 2652, 2482 }
 function ns.RecordMapBounds()
   if not (C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D) or not BeelineDB then return 0 end
-  BeelineDB.mapBounds = type(BeelineDB.mapBounds) == "table" and BeelineDB.mapBounds or {}
+  ns.Util.Sub(BeelineDB, "mapBounds")
   local n = 0
   for _, id in ipairs(ns.MAPS_TO_MEASURE) do
     local ok, inst, tl = pcall(C_Map.GetWorldPosFromMapPos, id, CreateVector2D(0, 0))
@@ -403,9 +427,8 @@ end)
 
 -- Where the Map button takes you for step i: the map to open and the step whose pin to flash there.
 --   a step with a spot of its own: its map, its pin
---   a trip (a fly step with no spot): the zone it goes to, and the pin of the first stop there. It used the arrow's
---     target, which for a trip is the flight master in the zone you are in - so the map opened where you stand, not
---     where you're going ("this just seems to open the map on your character and not the destination" - tester)
+--   a trip (a fly step with no spot): the zone it goes to, and the pin of the first stop there (not the arrow's
+--     target, which for a trip is the flight master where you stand)
 --   a spot nobody knows (s.unknown): its zone, no pin
 -- -> uiMapID, step index (or nil); nil when the step has no place on a map
 function ns.MapSpot(i)
@@ -416,7 +439,7 @@ function ns.MapSpot(i)
   if s.to and s.k == "fly" then
     for j = i + 1, #list do
       local t = list[j]
-      if t.k == "fly" or t.k == "hearth" then break end
+      if ns.Engine.IsTrip(t) then break end
       if t.m == s.to and t.x and not t.unknown and not ns.Engine.IsDone(j) then return s.to, j end
     end
     return s.to, nil
@@ -446,7 +469,7 @@ function ns.ShowOnMap(i)
   -- can do it a frame later), which undid the step's map
   C_Timer.After(0, function() pcall(setMap) end)
   C_Timer.After(0.2, function() pcall(setMap) end)
-  -- and make its pin flash, so the eye finds it among the map's own markers (tester)
+  -- and make its pin flash, so the eye finds it among the map's own markers
   if pin and ns.Pins and ns.Pins.Blink then ns.Pins.Blink(pin) end
 end
 
@@ -476,7 +499,7 @@ SlashCmdList.BEELINE = function(msg)
   msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if msg == "" or msg == "toggle" then ns.Fire("FR_TOGGLE")
   elseif msg == "list" then ns.Fire("FR_TOGGLE_LIST")
-  elseif msg == "paths" then ns.Fire("FR_TOGGLE_PATHS")
+  elseif msg == "home" or msg == "paths" then ns.Fire("FR_TOGGLE_PATHS")
   elseif msg == "why" then ns.WhyPrint(15)
   elseif msg == "save" then if ns.Card and ns.Card.Save then ns.Card.Save() else ReloadUI() end
   elseif msg == "dungeons" or msg == "dungeon" or msg == "trips" or msg == "bag" then ns.Fire("FR_TOGGLE_DUNGEONS")
@@ -509,18 +532,17 @@ SlashCmdList.BEELINE = function(msg)
   elseif msg == "back" then ns.Engine.Back()
   elseif msg == "undo" then ns.Engine.Undo()
   elseif msg == "reset" then ns.char.skipped, ns.char.manualDone, ns.char.history = {}, {}, {}; ns.Engine.Refresh(); ns.Print("skips and manual ticks cleared.")
-  elseif msg == "lock" then ns.db.locked = not ns.db.locked; ns.Fire("FR_SETTINGS"); ns.Print(ns.db.locked and "locked." or "unlocked.")
-  elseif msg == "arrow" then ns.db.arrow = not ns.db.arrow; ns.Fire("FR_SETTINGS")
+  elseif msg == "lock" then ns.db.locked = not ns.db.locked; ns.Fire("FR_SETTINGS", "locked"); ns.Print(ns.db.locked and "locked." or "unlocked.")
+  elseif msg == "arrow" then ns.db.arrow = not ns.db.arrow; ns.Fire("FR_SETTINGS", "arrow")
   elseif msg == "demo" then ns.Demo.Start()
   elseif msg == "snapshot" then ns.State.Snapshot("manual"); ns.Print("snapshot saved - written to disk on /reload or logout.")
   elseif msg == "options" or msg == "config" then ns.Fire("FR_OPEN_OPTIONS")
   else
-    ns.Print("/bee - card · /bee list - whole route · /bee paths - where to? (pick a zone) · /bee dungeons - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee options")
+    ns.Print("/bee - card · /bee list - whole route · /bee home - home base (pick a zone) · /bee dungeons - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee options")
   end
 end
--- /fr was the command until 2.0, when ForeverRoute became Beeline. It still works, with a one-time note, unless another
--- addon has it (the other ForeverRoute): then it's theirs. /bl and /bline as well, only when free (DaylightUI and
--- BuffLedger use /bl): checked at login, when every addon has registered its own.
+-- /fr (ForeverRoute's old command) still works, with a one-time note, unless another addon has it: then it's theirs.
+-- /bl and /bline as well, only when free (other addons use /bl): checked at login, when every addon has registered its own.
 local function slashTaken(cmd)
   for key in pairs(SlashCmdList) do
     for i = 1, 9 do
@@ -551,17 +573,11 @@ function ns.ShortSlash()
 end
 ns.On("PLAYER_LOGIN", function() ns.OldSlash(); ns.ShortSlash() end)
 
--- /bee perf: what the addon costs in your game (memory, time per refresh), also saved with the snapshot
--- memOnly (at logout): just the memory, keeping the last timing - the timing runs ten route rebuilds, too long there
+-- /bee perf: what the addon costs in your game (memory, time per refresh); nothing saved (memOnly: a no-op)
 function ns.Perf(memOnly)
+  if memOnly then return nil end
   if UpdateAddOnMemoryUsage then pcall(UpdateAddOnMemoryUsage) end
   local mem = GetAddOnMemoryUsage and select(2, pcall(GetAddOnMemoryUsage, ADDON)) or nil
-  if memOnly then
-    local p = ns.char.perf or {}
-    p.memoryKB, p.at = type(mem) == "number" and math.floor(mem) or nil, time and time()
-    ns.char.perf = p
-    return p
-  end
   local t = debugprofilestop
   local refresh, progress
   if t then
@@ -569,13 +585,10 @@ function ns.Perf(memOnly)
     refresh, progress = (b - a) / 10, (c - b) / 10
   end
   local unpacked = 0; for _, r in ipairs(ns.Routes()) do if r.steps then unpacked = unpacked + 1 end end
-  local p = { memoryKB = type(mem) == "number" and math.floor(mem) or nil, refreshMs = refresh, progressMs = progress, routes = #ns.Routes(), unpacked = unpacked, at = time and time() }
-  ns.char.perf = p
-  return p
+  return { memoryKB = type(mem) == "number" and math.floor(mem) or nil, refreshMs = refresh, progressMs = progress, routes = #ns.Routes(), unpacked = unpacked, at = time and time() }
 end
 
--- (the addon's memory is read only at logout: UpdateAddOnMemoryUsage walks every loaded addon's memory - 76 ms in a
--- player's game with ~30 addons, a hitch every 5 minutes from this sample alone: /bee report perf, "SEEN perf")
+-- (the addon's memory is read only at logout: UpdateAddOnMemoryUsage walks every loaded addon's memory, tens of ms)
 local function perfSample(atLogout)
   if atLogout == true and UpdateAddOnMemoryUsage then pcall(UpdateAddOnMemoryUsage) end
   local okm, mem = pcall(GetAddOnMemoryUsage or error, ADDON)
@@ -586,7 +599,7 @@ local function perfSample(atLogout)
   table.insert(ns.char.perfLog, e)
   while #ns.char.perfLog > 20 do table.remove(ns.char.perfLog, 1) end
 end
--- failures go to the error log (they used to be swallowed, which hid a broken logger)
+-- failures go to the error log
 local guardedSample = ns.Guard("perf", perfSample)
 ns.On("FR_LOADED", function() C_Timer.After(60, guardedSample); ns.NewTicker(300, guardedSample) end)
 ns.On("PLAYER_LOGOUT", function() guardedSample(true) end)

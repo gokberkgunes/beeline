@@ -1,13 +1,9 @@
--- The route engine, "not doing this quest" and quests you abandoned. Part of Engine.lua, split out as is (the code review: Engine.lua was 13 features in
--- one file); loaded right after it, so its event handlers run in the same order as before.
+-- The route engine, "not doing this quest" and quests you abandoned. Loaded right after Engine.lua, so its event
+-- handlers run in the same order as before the split.
 local _, ns = ...
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end
-local function key(i) return Engine.Key(i) end
-local keyCache = Engine._keyCache
-local HBD = LibStub("HereBeDragons-2.0")
-local wpos = ns.Util.WPos
 
 ----------------------------------------------------------------------------------------------------------------
 -- "Not doing this quest": drops it from the route (all its steps), from future plans (the planner reads the list),
@@ -32,7 +28,7 @@ end
 -- changed your mind: the quest is back on your route (its steps show again; the next replan plans it)
 function Engine.Unnope(q)
   if not (q and ns.Nope(q)) then return end
-  ns.char.nope[q] = nil; Engine.GrayForget()
+  Engine.BringBack(q)
   if ns.Why then ns.Why("abandon", questName(q) .. ": you brought it back; on your route again") end
   if ns.ZoneCountsChanged then ns.ZoneCountsChanged() end -- (Where to? counts it again)
   Engine.Refresh()
@@ -60,7 +56,6 @@ end
 -- you back to pick them up, and the planner leaves them out. Undo brings them back; so does taking the quest again.
 -- (A plain abandon in the game's quest log still sends you back: that's how a failed escort is taken again.)
 function Engine.Abandoned(qs, why)
-  Engine.ForgetDone()
   ns.char.nope = ns.char.nope or {}
   for _, q in ipairs(qs) do ns.char.nope[q] = State.QuestReady(q) and "ready" or true; if ns.Why then ns.Why("abandon", questName(q) .. ": abandoned from the quest log check (" .. (why or "not worth doing") .. "); dropped from the route") end end
   table.insert(ns.char.history, { kind = "nope", ids = {}, nope = qs })
@@ -73,18 +68,18 @@ end
 ns.On("QUEST_ACCEPTED", function(a, b)
   local q = type(b) == "number" and b or a -- (questID) on this client, (logIndex, questID) on older ones
   if q and ns.Nope(q) then
-    ns.char.nope[q] = nil
+    Engine.BringBack(q)
     if ns.Why then ns.Why("abandon", questName(q) .. ": you took it again; back on your route") end
   end
 end)
--- and so does finishing one you said you wouldn't do, while it was in your log all along (From the Ashes: marked
--- "not doing", then done anyway - no pick-up to notice, and its hand-in stayed off the route)
+-- and so does finishing one you said you wouldn't do while it was in your log (no pick-up to notice, and its
+-- hand-in stayed off the route)
 ns.On("FR_STATE", function()
   if not (ns.char and ns.char.nope and next(ns.char.nope)) then return end
   local back = false
   for q, how in pairs(ns.char.nope) do
     if how == true and State.OnQuest(q) and State.QuestReady(q) then
-      ns.char.nope[q] = nil; back = true
+      Engine.BringBack(q); back = true
       if ns.Why then ns.Why("abandon", questName(q) .. ": you finished it after all; its hand-in is back on your route") end
     end
   end

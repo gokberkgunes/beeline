@@ -35,6 +35,7 @@ Engine\Inserts.lua
 Engine\Side.lua
 Engine\Nope.lua
 Engine\Worth.lua
+Engine\Trips.lua
 Quests.lua
 Trails.lua
 Boats.lua
@@ -63,6 +64,9 @@ Next.lua
 UI\Style.lua
 UI\Window.lua
 UI\Explain.lua
+UI\Card\Text.lua
+UI\Card\Secure.lua
+UI\Card\Footer.lua
 UI\Card.lua
 UI\Arrow.lua
 UI\GameNav.lua

@@ -1,10 +1,7 @@
--- The route engine, a leftover not worth the trip. The plan's visit to a zone had several quests; you did most of them
--- ahead of it or dropped them, and one is left. The plan still sent you there for it: "all the way to Stranglethorn for
--- one collect quest, a long walk to hand it in, then Arathi" (tester, level 37 on a stretch planned at 33). The sim
--- measured it: drifting from the plan doubles these one-quest trips (tests/_player.lua "one-quest trips").
--- When the card's next step opens such a visit in another zone, its trip is long and the quest pays little for it, and
--- nothing later on the plan needs that quest, its steps are skipped quietly (as "skip" does: /bee undo brings them
--- back; the decision log says why). A visit the plan made for one quest is the plan's own choice and is left alone.
+-- The route engine, leftovers not worth the trip. When the card's next step opens a plan visit in another zone
+-- where you already did or dropped all but one quest, the trip is long, the quest pays little for it, and nothing
+-- later on the plan needs it, its steps are skipped quietly (as "skip": /bee undo brings them back; the decision
+-- log says why). A visit the plan made for one quest is the plan's own choice and is left alone.
 local _, ns = ...
 local Engine = ns.Engine
 local State = ns.State
@@ -13,8 +10,7 @@ local function key(i) return Engine.Key(i) end
 
 Engine.WORTH_MIN_TRIP = 300 -- seconds: a shorter trip is always worth it
 Engine.WORTH_MIN_PLANNED = 3 -- the plan's visit had at least this many quests (fewer: the plan meant it that way)
-Engine.WORTH_LEVEL_HOURS = 2 -- (old: a level every 2 h; the price now follows Forever's pace, Engine.XpPerSec)
-local TRAVEL = { fly = true, hearth = true, boat = true }
+local isTrip = Engine.IsTrip
 
 -- the plan's visit that step j opens: j and the steps after it in the same zone, up to the next trip
 local function visitOf(j)
@@ -23,7 +19,7 @@ local function visitOf(j)
   local last = j
   for k = j + 1, #list do
     local t = list[k]
-    if TRAVEL[t.k] or (t.zone and t.zone ~= z) then break end
+    if isTrip(t) or (t.zone and t.zone ~= z) then break end
     last = k
   end
   return z, j, last
@@ -45,7 +41,7 @@ function Engine.NotWorth(i)
   if not d or d.dungeon or d.special or Engine.view then return no("not on the plan") end
   local list = steps()
   local j = i
-  while list[j] and TRAVEL[list[j].k] do j = j + 1 end -- (the card's step can be the trip itself)
+  while list[j] and isTrip(list[j]) do j = j + 1 end -- (the card's step can be the trip itself)
   local s = list[j]
   if not (s and s.zone and s.m and s.x) then return no("no place") end
   local pm, px, py = State.Position()
@@ -62,8 +58,7 @@ function Engine.NotWorth(i)
   local np = 0; for _ in pairs(planned) do np = np + 1 end
   if np < Engine.WORTH_MIN_PLANNED or left.n ~= 1 then return no("planned " .. np .. ", left " .. tostring(left.n)) end
   if neededLater(q, b) then return no("needed later") end
-  -- (and only with something after it: skipped, the last quest of a route left the card empty - a zone picked for the one
-  -- quest you carry there, offered by Where to? and emptied by this rule at once - mutate sweep)
+  -- (only with something after it: skipping a route's last quest left the card empty)
   local more = false
   for k = b + 1, #list do
     local t = list[k]
@@ -99,15 +94,14 @@ function Engine.CheckWorth()
   if not q then return end
   local ids, list = {}, steps()
   for j = i, #list do
-    if list[j].q == q and not ns.char.skipped[key(j)] then ns.char.skipped[key(j)] = true; ids[#ids + 1] = key(j) end
+    if list[j].q == q and not ns.char.skipped[key(j)] then Engine.SetSkipped(key(j)); ids[#ids + 1] = key(j) end
   end
   if #ids == 0 then return end
-  Engine.ForgetDone()
   Engine._remember("skip", ids)
   local short = (ns.Style and ns.Style.ShortZone and ns.Style.ShortZone(z)) or z
   local line = string.format("Skipped %s: the last quest left in %s, ~%d min away for ~%s XP. /bee undo brings it back.",
     tostring(name or ("quest " .. q)), short, math.floor(secs / 60 + 0.5), xp >= 1000 and string.format("%.1fk", xp / 1000) or tostring(math.floor(xp)))
-  -- (silent: nobody reads a chat line about it - tester; the card simply goes on. The decision log keeps the why)
+  -- (silent: no chat line; the decision log keeps the why)
   if ns.Why then ns.Why("worth", line) end
   Engine.Refresh()
 end

@@ -15,7 +15,6 @@ Report.FORMAT = 1
 -- (12: a saved moment's tag - Moments.lua: why it was kept, noticed by itself or flagged by you, how many times;
 -- 13: the saved moments not sent yet, each a whole report of its own, with a count of those left out for size)
 local T = { meta = 1, log = 2, completed = 3, taxi = 4, ticks = 5, why = 6, errors = 11, card = 8, settings = 9, where = 10, moment = 12, moments = 13 }
-Report.TAGS = T
 -- why a step before the card's was passed over
 local REASON = { done = 1, todo = 2, blocked = 3, wait = 4, notready = 5, later = 6, skip = 7, tick = 8, nope = 9,
   outlevel = 10, gray = 11, crumb = 12, behind = 13, unavail = 14 }
@@ -30,7 +29,6 @@ local function varint(b, n)
   while n >= 128 do byte(b, 128 + n % 128); n = math.floor(n / 128) end
   byte(b, n)
 end
-local function sint(b, n) n = math.floor(tonumber(n) or 0); varint(b, n >= 0 and n * 2 or -n * 2 - 1) end
 local function str(b, s, max)
   s = tostring(s or ""); if max and #s > max then s = s:sub(1, max) end
   varint(b, #s); for i = 1, #s do b[#b + 1] = s:byte(i) end
@@ -53,7 +51,6 @@ local function b64(bytes)
   end
   return table.concat(out)
 end
-Report.B64 = b64
 
 ---------------------------------------------------------------------------------------------------------------
 -- what goes in
@@ -72,8 +69,8 @@ end
 
 -- the report's data, gathered fresh (a table: Report.Pack turns it into text; the tests check both halves)
 function Report.Gather(full)
-  -- a fresh read, without replacing the snapshot the companion plans from (a report run where the game gives no
-  -- coordinates once left the save with no position: the live check and the planner had nothing to start from)
+  -- a fresh read, without replacing the snapshot the companion plans from (where the game gives no coordinates that
+  -- would leave the save with no position)
   local kept = ns.char.snapshot
   ns.State.Snapshot("report")
   local sn = ns.char.snapshot or {}
@@ -113,8 +110,7 @@ function Report.Gather(full)
   local why = (BeelineDB and BeelineDB.why) or {}
   d.why = {}
   for i = math.max(1, #why - (full and 30 or 12) + 1), #why do local w = why[i]; if w then d.why[#d.why + 1] = w end end
-  -- errors seen in the last week, newest first (the log keeps every error ever, deduplicated: the last three entries
-  -- were once version 0.3.0's, long fixed)
+  -- errors seen in the last week, newest first (the log keeps every error ever, deduplicated)
   d.errors = {}
   local log, now = (BeelineDB and BeelineDB.log) or {}, time()
   -- (from the version you run, or seen in the last day: an old install's errors are noise)
@@ -135,7 +131,6 @@ end
 
 local KINDS = { "accept", "turnin", "obj", "fly", "fp", "hearth", "train", "bind", "goto", "grind", "bonus", "special" }
 local KIND = {}; for i, k in ipairs(KINDS) do KIND[k] = i end
-Report.KINDS = KINDS
 
 -- the data as text: "Beeline report 1.2.2 | built-in gnome-warlock | lvl 30 | Hillsbrad Foothills 50.5,51.8 | step 7 ..."
 -- then "FR1." and the packed data

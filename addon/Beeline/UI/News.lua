@@ -129,16 +129,9 @@ end
 
 -- the bar under the card
 local function buildBar()
-  local card = BeelineCard
-  if not card then return nil end
-  local b = CreateFrame("Frame", "BeelineNewsBar", card)
-  b:SetHeight(22); b:SetPoint("TOPLEFT", card, "BOTTOMLEFT", 0, -4); b:SetPoint("TOPRIGHT", card, "BOTTOMRIGHT", 0, -4)
-  Style.Panel(b, C.bg2)
-  b.text = Style.Text(b, 11, C.gold); b.text:SetPoint("LEFT", 10, 0)
-  local x = Style.Button(b, "x", 18, 18, function() News.Dismiss() end, "Dismiss"); x:SetPoint("RIGHT", -3, 0)
-  local open = Style.Button(b, "What's new", 80, 18, function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(ns.db.newsSeen) end end, "What changed since your last version")
-  open:SetPoint("RIGHT", x, "LEFT", -4, 0)
-  b.text:SetPoint("RIGHT", open, "LEFT", -6, 0); b.text:SetWordWrap(false)
+  local b = Style.CardBar("BeelineNewsBar", 1, C.gold, function() News.Dismiss() end, "Dismiss")
+  if not b then return nil end
+  Style.CardBarButton(b, "What's new", 80, function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(ns.db.newsSeen) end end, "What changed since your last version")
   News.bar = b
   return b
 end
@@ -149,6 +142,7 @@ function News.Check()
   if not b then return false end
   b.text:SetText("Beeline updated to " .. tostring(News.Current()))
   b:Show()
+  Style.StackCardBars()
   return true
 end
 

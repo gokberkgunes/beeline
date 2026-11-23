@@ -1,4 +1,4 @@
--- Beeline was called ForeverRoute until 2.0 (another addon has that name). The game keeps an addon's saves in a file
+-- Beeline was called ForeverRoute (another addon has that name). The game keeps an addon's saves in a file
 -- named after its folder, so the old ones sit in ForeverRoute.lua, where Beeline can't see them. The release ships an
 -- empty addon by that name (addon/ForeverRoute: the two old saved tables, and a note to restart the game when Beeline
 -- was installed while it ran) so each character's first login under Beeline can read them once and copy what Beeline
@@ -79,12 +79,14 @@ function Migrate.Bindings()
   if n > 0 and SaveBindings and GetCurrentBindingSet then SaveBindings(GetCurrentBindingSet()) end
   return n
 end
--- (no "done" flag: a character's bindings may not be there yet at login, and moving finds nothing the second time)
-local function moveBindings()
-  if BeelineChar and BeelineChar.migratedFrom == Migrate.OLD then Migrate.Bindings() end
+-- done per character after a pass at UPDATE_BINDINGS (the bindings may not be loaded yet at login)
+local function moveBindings(loaded)
+  local c = BeelineChar
+  if not (c and c.migratedFrom == Migrate.OLD) or c.bindingsMoved then return end
+  if Migrate.Bindings() ~= nil and loaded then c.bindingsMoved = true end
 end
-ns.On("PLAYER_LOGIN", moveBindings)
-ns.On("UPDATE_BINDINGS", moveBindings)
+ns.On("PLAYER_LOGIN", function() moveBindings(false) end)
+ns.On("UPDATE_BINDINGS", function() moveBindings(true) end)
 
 -- a whole 1.x ForeverRoute running beside Beeline: turned off for this character (not all of them: each alt still has
 -- to bring its own saves over), once the character's name is known
@@ -97,6 +99,14 @@ function Migrate.TurnOffOld()
   return true
 end
 ns.On("PLAYER_LOGIN", Migrate.TurnOffOld)
+
+-- the account save, once copied: only the marker an alt's copy checks (oursDB) is kept
+function Migrate.ShrinkOld()
+  local t = ForeverRouteDB
+  if not (BeelineDB.migratedFrom == Migrate.OLD and oursDB(t)) or next(t, next(t)) == nil then return false end
+  ForeverRouteDB = { mapBounds = t.mapBounds }
+  return true
+end
 
 -- at ADDON_LOADED, before the saves are used. Returns what it did ("copied", "none", "skip", "old"), for the tests.
 function Migrate.Run()
@@ -111,7 +121,10 @@ function Migrate.Run()
     Migrate.oldRunning = true -- (turned off at PLAYER_LOGIN)
     return "old", d, c
   end
-  if BeelineDB.migratedFrom and BeelineChar.migratedFrom then return "none" end
+  if BeelineDB.migratedFrom and BeelineChar.migratedFrom then
+    if kind == "stub" then Migrate.ShrinkOld() end
+    return "none"
+  end
   -- a whole 1.x ForeverRoute installed but turned off: its saves can't be loaded (it isn't load-on-demand). Not marked
   -- done: the release's empty one, once in its place, still brings them over
   if kind == "old" then return "skip" end
@@ -141,5 +154,6 @@ function Migrate.Run()
     if oursChar(ForeverRouteChar, dbOurs) then c = fill(BeelineChar, ForeverRouteChar) end
     BeelineChar.migratedFrom = Migrate.OLD
   end
+  Migrate.ShrinkOld()
   return "copied", d, c
 end

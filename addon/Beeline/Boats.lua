@@ -27,6 +27,7 @@ function Boats.Apply()
     if p and p.m == s.m then
       if not s.learned then s.planX, s.planY = s.x, s.y end
       s.x, s.y, s.r, s.learned, s.wp = p.x, p.y, 25, true, nil
+      ns.Util.ForgetWPos(s)
     end
   end
 end
@@ -61,7 +62,6 @@ local function plausible(m, w, want, what)
   end
   return false
 end
-Boats._plausible = plausible
 
 local function tick()
   local m, x, y = ns.State.Position()

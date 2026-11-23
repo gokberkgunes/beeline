@@ -13,12 +13,12 @@ function Auto.Enabled() return ns.db and ns.db.autoQuest == true and not (IsShif
 
 -- the quests your route picks up: an accept step for it, on any of your routes; cached per plan. Escort quests too
 -- (the plan's pick-up says "Escort: <NPC> leaves with whoever takes this", or an objective "Escort <NPC>"): those are
--- never accepted for you - the escort starts at once and fails if you aren't ready (tester)
+-- never accepted for you - the escort starts at once and fails if you aren't ready
 local wantCache, wantFor, escortCache
 local function build()
   local routes = {}
-  -- (not the dungeon routes: one per dungeon, unpacked here they stayed unpacked and every later look over your routes'
-  -- steps went through them - the one you picked is BeelineData, below)
+  -- (not the dungeon routes: unpacking them here would keep them unpacked and slow every later look over your routes'
+  -- steps - the one you picked is BeelineData, below)
   for _, r in ipairs(ns.Routes and ns.Routes() or {}) do if not (r.dungeon and not r.special) then routes[#routes + 1] = r end end
   if BeelineData then routes[#routes + 1] = BeelineData end -- (the plan you are on)
   if wantFor ~= routes[1] or not wantCache then
@@ -40,7 +40,7 @@ function Auto.Wanted(q)
   build()
   local w = wantCache[q]
   if not w then return false end
-  -- (never a gray quest, whatever route has it: a player - "we should NEVER offer to pick up grey quests")
+  -- (never a gray quest, whatever route has it)
   if type(w) == "number" and w > 0 and ns.Engine and ns.Engine.GrayAt and w <= ns.Engine.GrayAt((UnitLevel and UnitLevel("player")) or 1) then return false end
   return true
 end
@@ -81,10 +81,11 @@ function Auto.Progress()
   if q and inLog(q) and IsQuestCompletable and IsQuestCompletable() then CompleteQuest(); return true end
   return false
 end
--- the reward: take it when there's nothing to choose
+-- the reward: take it when there's nothing to choose (only for a quest in your log)
 function Auto.Complete()
   if not Auto.Enabled() then return false end
   local q = GetQuestID and GetQuestID()
+  if not inLog(q) then return false end
   local n = GetNumQuestChoices and GetNumQuestChoices() or 0
   if n > 1 then return false end
   GetQuestReward(n == 1 and 1 or 0); did("handed in", q, GetTitleText and GetTitleText())
@@ -118,15 +119,13 @@ end
 ns.On("QUEST_DETAIL", ns.Guard("auto", Auto.Detail))
 ns.On("QUEST_PROGRESS", ns.Guard("auto", Auto.Progress))
 ns.On("QUEST_COMPLETE", ns.Guard("auto", Auto.Complete))
-ns.On("GOSSIP_SHOW", ns.Guard("auto", Auto.Gossip))
 ns.On("QUEST_GREETING", ns.Guard("auto", Auto.Greeting))
 
 -- Auto-fly, on its own toggle (ns.db.autoFly, off by default; Options: "Take the flight my route needs"): open a flight
 -- master's map while the card's trip flies from here, and it takes that flight. Only a flight path you have (the map
 -- lists it as reachable), only the trip of the step the card shows, and Shift held opens the map for you to choose.
--- (the card's step's own trip, Engine.TravelFor - kept, so no search: Engine.lastTrip is the last trip worked out for
--- any step, and once the solve or the "?" had worked one out for another, the card's came from the memo, lastTrip was
--- that other step's, and auto-fly did nothing at the flight master - a player)
+-- (the card's step's own trip, Engine.TravelFor - kept, so no search. Not Engine.lastTrip: that is the last trip
+-- worked out for any step, which the solve or the "?" may have set for another)
 function Auto.FlightFor()
   local E = ns.Engine
   local shown = E and E.Shown and E.Shown()
@@ -143,7 +142,7 @@ function Auto.FlightFor()
   end
 end
 -- the flight map's node for a flight path's name: as the map names it, else by its town (the part before the comma) -
--- our names come from the flight data, the map's from the game, and one word apart the flight was never taken
+-- our names come from the flight data, the map's from the game, and they can differ by a word
 local function townOf(n) return (n or ""):match("^%s*([^,]+)") end
 function Auto.TaxiSlot(want)
   if not (want and NumTaxiNodes and TaxiNodeName) then return nil end
@@ -169,8 +168,8 @@ ns.On("TAXIMAP_OPENED", function()
     TakeTaxiNode(i)
   end))
 end)
--- A flight master with quests or more to say opens a chat first: the flight map waits for "Show me where I can fly",
--- and auto-fly never ran (a player: it "doesn't work"). With auto-fly on and the card's trip flying from here, that
+-- A flight master with quests or more to say opens a chat first: the flight map waits for "Show me where I can fly".
+-- With auto-fly on and the card's trip flying from here, that
 -- option is chosen for you - after auto-quest's hand-ins and pick-ups at the same NPC, which come first. The option is
 -- known by its icon (the game's taxi gossip icon; the type field the older API had). Shift: choose yourself.
 Auto.TAXI_ICON = 132057
@@ -181,12 +180,8 @@ function Auto.TaxiGossip()
   end
   return false
 end
-ns.On("GOSSIP_SHOW", ns.Guard("autofly", function()
-  -- (auto-quest first: it has this same event - Auto.Gossip, above. Whatever it did, the gossip is still open when it
-  -- only read it; one it acted on closes or changes, and the flight waits for the next look)
-  if Auto.Enabled() and (C_GossipInfo.GetActiveQuests and #(C_GossipInfo.GetActiveQuests() or {}) > 0 or C_GossipInfo.GetAvailableQuests and #(C_GossipInfo.GetAvailableQuests() or {}) > 0) then
-    for _, a in ipairs(C_GossipInfo.GetActiveQuests() or {}) do if a.isComplete then return end end
-    for _, a in ipairs(C_GossipInfo.GetAvailableQuests() or {}) do if a.questID and Auto.Wanted(a.questID) then return end end
-  end
-  Auto.TaxiGossip()
-end))
+-- a gossip window: auto-quest's hand-in or pick-up first; only when it took none, the flight option (the gossip it
+-- acted on closes or changes, and the flight waits for the next look)
+local gossipQuest = ns.Guard("auto", function() return Auto.Gossip() end)
+local gossipTaxi = ns.Guard("autofly", function() return Auto.TaxiGossip() end)
+ns.On("GOSSIP_SHOW", function() if not gossipQuest() then gossipTaxi() end end)

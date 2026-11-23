@@ -3,8 +3,8 @@ local _, ns = ...
 local Q = {}
 ns.Quests = Q
 
--- Nothing here clicks for you: quests are never accepted or handed in automatically. It only suggests a reward.
-local function call(fn, ...) if type(fn) == "function" then local ok, a = pcall(fn, ...); if ok then return a end end end
+-- Nothing here clicks for you: it only suggests a reward (accepting and handing in for you is AutoQuest.lua, on its toggle).
+local call, Plain = ns.Util.Call, ns.Util.Plain
 
 ----------------------------------------------------------------------------------------------------------------
 -- Reward picker: score each choice for this character against what's equipped in that slot.
@@ -49,11 +49,10 @@ local function statScore(link, class)
 end
 
 -- the enchant on what you wear goes when you swap it out, so it counts for the item you have (the game's own comparison
--- leaves it out: "Enchanted: Stamina +2 and Armor +16" on Robes of the Disgraced Thane made the Robes of Antiquity
--- look like an upgrade)
+-- leaves it out)
 local ENCH = { stamina = "STAMINA", intellect = "INTELLECT", spirit = "SPIRIT", strength = "STRENGTH", agility = "AGILITY",
   armor = "RESISTANCE0", ["spell power"] = "SPELL_POWER", ["attack power"] = "ATTACK_POWER", ["healing"] = "HEAL" }
-local function plainText(t) return type(t) == "string" and not (issecretvalue and issecretvalue(t)) and t or nil end
+local function plainText(t) return type(t) == "string" and Plain(t) or nil end
 function Q.EnchantStats(slot)
   local tip = C_TooltipInfo and C_TooltipInfo.GetInventoryItem and call(C_TooltipInfo.GetInventoryItem, "player", slot)
   local out = {}
@@ -126,6 +125,8 @@ local function highlight(index)
   glow:SetTexture(ns.Style.WHITE); glow:SetVertexColor(0.36, 0.86, 0.48, 0.25); glow:Show()
 end
 
+-- the reward window is open (by the events, not QuestFrame: another quest UI may show it instead)
+local rewardOpen = false
 local function pickReward(retry)
   local n = GetNumQuestChoices() or 0
   if n < 2 then return end
@@ -140,7 +141,7 @@ local function pickReward(retry)
       if (value or 0) > bestValue then bestValue, bestValueIdx = value or 0, i end
     end
   end
-  if uncached and not retry then C_Timer.After(0.6, function() if QuestInfoFrame and (QuestFrame and QuestFrame:IsShown() or true) then pickReward(true) end end); return end
+  if uncached and not retry then C_Timer.After(0.6, function() if rewardOpen then pickReward(true) end end); return end
   local pick, why
   if best then pick, why = best, string.format("best for you (+%d)", math.floor(bestDelta + 0.5))
   elseif bestValueIdx then pick, why = bestValueIdx, "no upgrade - highest vendor price" end
@@ -150,8 +151,8 @@ local function pickReward(retry)
   showToast("|cff5cdc7aReward:|r " .. (link or "?") .. "\n|cff9aa3b5" .. why .. "|r")
   ns.Print("pick " .. (link or "?") .. " - " .. why)
 end
-ns.On("QUEST_COMPLETE", function() pickReward(false) end)
-ns.On("QUEST_FINISHED", function() if glow then glow:Hide() end end)
+ns.On("QUEST_COMPLETE", function() rewardOpen = true; pickReward(false) end)
+ns.On("QUEST_FINISHED", function() rewardOpen = false; if glow then glow:Hide() end end)
 
 Q.Evaluate = evaluate -- exposed for tests
 
@@ -161,7 +162,7 @@ Q.Evaluate = evaluate -- exposed for tests
 -- difference (<= 0: not an upgrade), worn = what was in the slot }. The card says it on the step at once; the
 -- companion reads the save and stops counting a reward that isn't one (tools/quality.js).
 ----------------------------------------------------------------------------------------------------------------
-local function verdicts() ns.char.gearVerdict = type(ns.char.gearVerdict) == "table" and ns.char.gearVerdict or {}; return ns.char.gearVerdict end
+local function verdicts() return ns.Util.Sub(ns.char, "gearVerdict") end
 function Q.Judge(id)
   local ok, _, link = pcall(ns.GetItemInfo, id)
   if not ok then link = nil end
@@ -193,14 +194,10 @@ ns.On("PLAYER_EQUIPMENT_CHANGED", function() if ns.char then ns.char.gearVerdict
 ns.On("FR_ROUTE_CHANGED", function() judgeQueue = nil end)
 ns.On("FR_LOADED", function() C_Timer.After(15, function() ns.NewTicker(2, ns.Guard("gear", function() Q.JudgeTick(3) end)) end) end)
 -- the step's note with the planner's reward guess replaced by the game's verdict
--- (the shipped plans' note for a step with no known spot said "isn't in the quest data": plain words)
-local OLD_UNKNOWN = "Where to do this isn't in the quest data: follow your quest log and map."
 function Q.RewardNote(s)
   local note = s and s.note
-  if note == OLD_UNKNOWN then note = "No known spot for this: follow your quest log and map." end
   local v = note and s.reward and Q.Verdict(tonumber(s.reward))
   if not v then return note end
   local say = v.unusable and "not usable by you" or v.d > 0 and string.format("upgrade for you, +%d", v.d) or "not an upgrade for you"
   return (note:gsub("(Reward: [^(]-) %(([^)]*)%)", function(name) return name .. " (" .. say .. ")" end, 1))
 end
-Q.PickReward = pickReward

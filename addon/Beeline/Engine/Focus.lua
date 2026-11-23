@@ -1,12 +1,10 @@
--- The route engine, live reordering: what you are plainly doing, the solve as you move (Engine.UpdateFocus, Repick). Part of Engine.lua, split out as is (the code review: Engine.lua was 13 features in
--- one file); loaded right after it, so its event handlers run in the same order as before.
+-- The route engine, live reordering: what you are plainly doing, the solve as you move (Engine.UpdateFocus, Repick).
+-- Loaded right after Engine.lua, so its event handlers run in the same order as before the split.
 local _, ns = ...
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end
 local function key(i) return Engine.Key(i) end
-local keyCache = Engine._keyCache
-local HBD = LibStub("HereBeDragons-2.0")
 local wpos = ns.Util.WPos
 
 ----------------------------------------------------------------------------------------------------------------
@@ -15,8 +13,6 @@ local wpos = ns.Util.WPos
 -- it's right here. Nothing is skipped: once it's done, the planned order comes back. It holds until done or until
 -- you walk well away, so it doesn't flicker.
 ----------------------------------------------------------------------------------------------------------------
-local HBD = LibStub("HereBeDragons-2.0")
-local wpos = ns.Util.WPos
 local function distTo(s, px, py, pinst) local w = wpos(s); if not w or w[3] ~= pinst then return nil end return math.sqrt((w[1] - px) ^ 2 + (w[2] - py) ^ 2) end
 local WINDOW = 10
 Engine.READY_NEAR = 300  -- yards: near enough that the card takes you there now (the town you are in), when clearly nearer than the plan
@@ -33,9 +29,8 @@ local function setFocus(i, why, kind)
   if ns.Why and s then ns.Why("reorder", "now on step " .. i .. " (" .. (s.name or s.text or s.k) .. "): " .. (why or "")) end
   Engine.Refresh()
 end
--- a finished quest whose hand-in is close by, wherever the plan has it: the card's "ready nearby" line (The Hermit was
--- ready with Abercrombie 20 yd away and the card said nothing). Its own check, not the live reordering's - one line you
--- choose from, nothing moves by itself. -> { i, q, name, npc, d } or nil
+-- a finished quest whose hand-in is close by, wherever the plan has it: the card's "ready nearby" line. Its own
+-- check, not the live reordering's: one line you choose from, nothing moves by itself. -> { i, q, name, npc, d } or nil
 Engine.READY_LINE_YD = 300 -- within the hold of a chosen hand-in (READY_NEAR + 40)
 function Engine.ReadyNearby(px, py, pinst)
   if not px then return nil end
@@ -51,9 +46,8 @@ end
 -- you picked it ("Do it now"): the card shows it until it's handed in (held like a ready hand-in the card picked)
 function Engine.FocusOn(i, why) if i then setFocus(i, why or "you chose it", "chosen") end end
 
--- called by the arrow driver about once a second with your position
--- can you do this step right now? A pick-up whose earlier chain quest isn't handed in yet isn't offered (Chef Grual
--- has nothing until Jitters' Growling Gut is in), and a hand-in needs the quest in your log
+-- can you do this step right now? A pick-up whose earlier chain quest isn't handed in yet isn't offered, and a
+-- hand-in needs the quest in your log
 local prereqOf
 -- the quests that must be handed in before this one is offered (the plan's BeelineUnlocks, turned around)
 function Engine.PrereqsOf(q)
@@ -71,22 +65,11 @@ function Engine.Available(j)
   for _, p in ipairs(Engine.PrereqsOf(s.q)) do if not State.IsCompleted(p) then return false end end
   -- (nor once you took one of its alternatives elsewhere: Engine.Excluded)
   if Engine.Excluded(s) then return false end
-  -- and the quest data's own prerequisites, whatever the plan carries (QuestData.lua ns.QUEST_PRE): all of g, one of s.
-  -- A plan without Gleaning Our Future sent a player to Prospector Whelgar for For Further Study, which needs it - tester
-  local pre = ns.QUEST_PRE and ns.QUEST_PRE[s.q]
-  if pre then
-    for _, p in ipairs(pre.g or {}) do if not State.IsCompleted(p) then return false end end
-    if pre.s and #pre.s > 0 then
-      local any = false
-      for _, p in ipairs(pre.s) do if State.IsCompleted(p) then any = true; break end end
-      if not any then return false end
-    end
-  end
-  return true
+  -- and the quest data's own prerequisites, whatever the plan carries (QuestData.lua ns.QUEST_PRE): all of g, one of s
+  return State.PrereqsMet(s.q)
 end
 -- why a step can't be done at this moment, or nil when it can. For the pins: a step you can't act on yet must not
--- look like an instruction (a hand-in pin beside you for a quest you only get two stops from now - "dafuq is up with
--- this turn in"). Returns a reason and, where the route has it, the step that opens this one:
+-- look like an instruction. Returns a reason and, where the route has it, the step that opens this one:
 --   "level", nil, N        waits for level N
 --   "pickup", j            its quest isn't in your log; step j picks it up
 --   "handin", j            a pick-up whose earlier chain quest isn't handed in; step j hands it in
@@ -94,11 +77,11 @@ end
 --   "dungeon", nil, name   left for your next run of that dungeon
 --   "full"                 a pick-up while your quest log is full
 local questSteps = setmetatable({}, { __mode = "k" })
--- kind -> quest -> the plan's step indices of that kind for that quest, in order (kept per plan list and length)
+-- kind -> quest -> the plan's step indices of that kind for that quest, in order (kept per list generation)
 local function stepsOfQuest(list)
   local c = questSteps[list]
-  if c and c.n == #list then return c.by end
-  c = { n = #list, by = {} }
+  if c and c.gen == (list._gen or 0) then return c.by end
+  c = { gen = list._gen or 0, by = {} }
   for j, t in ipairs(list) do
     if t.k and t.q ~= nil then
       local byK = c.by[t.k]; if not byK then byK = {}; c.by[t.k] = byK end
@@ -119,9 +102,8 @@ function Engine.NotYet(i)
     -- (training: the lowest level it names - Engine.TrainFrom; no level at all is nil, never "at level 0" on the pin)
     local lv = math.max(s.minLevel or s.until_ or 0, Engine.TooHigh(s) or 0, Engine.TrainFrom(i) or 0)
     if lv > 0 then return "level", nil, lv end
-    -- (a pick-up whose earlier quest is not handed in - on a zone you picked, or in your log on any plan: the card
-    -- says which; below, with that hand-in's step - the pin of a pick-up there is drawn as that one)
-    if not (s.q and ns.PrereqsMet and not ns.PrereqsMet(s.q)) then return "level" end
+    -- (a pick-up whose earlier quest is not handed in: falls through to "handin" below with that hand-in's step)
+    if not (s.q and not State.PrereqsMet(s.q)) then return "level" end
   end
   if st == "full" then return "full" end
   if st == "later" then
@@ -136,8 +118,7 @@ function Engine.NotYet(i)
     return "objectives"
   end
   -- the step of that kind for that quest still to do: the last one before this step, else the first one after it
-  -- (the steps of each kind and quest, from an index kept per plan list: the map pins ask this for every pin, every
-  -- refresh, and walking the whole plan for it was a good part of their time)
+  -- (from an index kept per plan list: the map pins ask this for every pin, every refresh)
   local function opener(kind, q)
     local found
     local idx = q ~= nil and stepsOfQuest(list)
@@ -162,15 +143,12 @@ function Engine.NotYet(i)
   if st == "wait" then return "handin" end
   return nil
 end
--- the way to the shown step can change while the step stays the same: a flight that beats the walk from Darkshire
--- stops doing so once you have walked half the way (and starts to, when you wander back to the flight master). The
--- arrow only re-targets when the step or the zone changes, so this is watched here, once a second with the focus: the
--- card and the arrow are told, and keep saying the same thing. (Only a step in the zone you are in is asked about: a
--- trip to another zone is planned when the card or the arrow need it, not once a second here.)
+-- the way to the shown step can change while the step stays the same: a flight that beats the walk stops doing so
+-- halfway (and starts again if you wander back). The arrow only re-targets when the step or zone changes, so this
+-- is watched here once a second with the focus, and card and arrow are told. Only a step in your current zone.
 local shortcutSeen
--- (a fresh trip plan is up to 3 ms in one frame; the trip memo's own key moves every ~8 yd, so walking re-planned once
--- a second. Asked again only once you've moved a hundredth of the map (~20-50 yd) or the step changed: whether a
--- flight beats the walk doesn't flip in less - the perf battery's "walking, a frame", orc @25)
+-- (a fresh trip plan costs up to 3 ms; asked again only after moving WATCH_MOVE of the map (~20-50 yd) or a step
+-- change: whether a flight beats the walk doesn't flip in less)
 local watchAt = {}
 Engine.WATCH_MOVE = 0.01
 function Engine.WatchShortcut()
@@ -191,15 +169,14 @@ function Engine.WatchShortcut()
 end
 local nextFrom -- { x, y, inst, t }: where the live solver last ran from
 -- You moved on (30 yd, or 5 s): only the next stop's solve can change - the plan's statuses don't move with you. It
--- runs in the background, a slice a frame (Next.PickAsync), and only when it picks another step than the card shows
--- does the card change (the full refresh, which finds that solve remembered). It used to be the full refresh every
--- time, in one frame: 20-50 ms at level 50, a hitch every 30 yards (the perf battery, tools/perf-gate.js)
+-- runs in the background, a slice a frame (Next.PickAsync); the card changes (full refresh, which finds that solve
+-- remembered) only when it picks another step. A full refresh each time was 20-50 ms in one frame.
 function Engine.Repick()
   local planned = Engine.planned
   if not (planned and ns.Next and ns.Next.PickAsync) then return Engine.Refresh() end
   -- (what the full refresh would keep without a solve: a flight, a step you chose or are farming)
   if ns.Is and UnitOnTaxi and ns.Is(UnitOnTaxi, "player") then return end
-  local fi, why = Engine.focus, Engine.focusWhy
+  local why = Engine.focusWhy
   if Engine.Holding() then return end
   if Engine.focus and why == "progress" then return Engine.Refresh() end -- (its hold just ended: the full look lets it go)
   if Engine.RecentProgress(planned) then return end
@@ -209,14 +186,14 @@ function Engine.Repick()
     Engine.ShowPick(pick or planned)
   end)
 end
+-- called by the arrow driver about once a second with your position
 function Engine.UpdateFocus(px, py, pinst)
   if Engine.Busy() then return end -- (a route change's passes are moving the steps: the next look, after them)
   Engine.WatchShortcut()
   Engine.SideOffer(px, py, pinst)
   if Engine.view or not px then return end
-  -- dead or a ghost: you can't take or hand in anything until you're back in your body, so where your ghost runs is not
-  -- where you are - the card keeps its step (the arrow points to your corpse) and solves again once you're alive. Running
-  -- past a hand-in as a ghost put it on the card (tester)
+  -- dead or a ghost: you can't take or hand in anything, so the ghost's position doesn't count - the card keeps its
+  -- step (the arrow points to your corpse) and solves again once you're alive
   if ns.Is(UnitIsDeadOrGhost, "player") then nextFrom = nil; return end
   -- the live solver decides the order: it runs again as you move (30 yd, or every 5 s), the focus rules don't
   if ns.Next and ns.Next.Enabled() then
@@ -231,9 +208,8 @@ function Engine.UpdateFocus(px, py, pinst)
   local planned = Engine.planned or Engine.current
   if not planned then return end
   local list = steps()
-  -- standing at an NPC you can hand a finished quest to: that hand-in, now - wherever the plan has it (From the Ashes
-  -- was step 282, out of the reorder's reach, with Captain Stoutfist right there) and over any other step the card
-  -- holds (it kept Crocs of the Sky, 40 yd away). Not the planned step itself: that one is shown anyway
+  -- standing at an NPC you can hand a finished quest to: that hand-in, now - wherever the plan has it, over any other
+  -- step the card holds. Not the planned step itself: that one is shown anyway
   do
     local best, bestD
     for j, s in ipairs(list) do
@@ -265,8 +241,7 @@ function Engine.UpdateFocus(px, py, pinst)
   local ps = list[planned]
   local dP = ps and distTo(ps, px, py, pinst)
   if dP and dP <= (ps.r or 40) + 10 then return end -- you're at the planned step: nothing to do
-  -- farming the planned kill / loot step: its mobs roam well past the one marker the planner picked (Wetlands: the
-  -- Pristine Crimson Scale crocs ran into the War Banners' circle, 100 yd off, and the card jumped there)
+  -- farming the planned kill / loot step: its mobs roam well past the one marker the planner picked
   if ps and ps.k == "obj" and dP and dP <= 2 * (ps.r or 40) + 80 then return end
   -- never past a step you are making progress on (its kills / loot counted in the last PROGRESS_HOLD seconds)
   local function busyBefore(j)
@@ -277,8 +252,8 @@ function Engine.UpdateFocus(px, py, pinst)
   for _, j in ipairs(Engine.Upcoming(planned, WINDOW)) do
     local s = list[j]
     -- an NPC stop you're standing at (pick-up, hand-in, flight path) - not a kill / loot step: walking through a
-    -- quest's circle doesn't mean you're doing it (the Wetlands' circles overlap everywhere, and the card kept
-    -- jumping to War Banners); those take over when your kills or loot count for them (FR_STATE below)
+    -- quest's circle doesn't mean you're doing it (circles overlap); those take over when your kills or loot count
+    -- for them (FR_STATE below)
     if Engine.Status(j) == "todo" and (s.k == "accept" or s.k == "turnin" or s.k == "fp") and Engine.Available(j) then
       local d = distTo(s, px, py, pinst)
       if d then
@@ -291,9 +266,8 @@ function Engine.UpdateFocus(px, py, pinst)
   if not pick and near and dP and dP > 200 and nearD < dP * 0.4 then pick = near end
   if pick and busyBefore(pick) then pick = nil end
   local why = inArea and "you are standing at it" or "it is right next to you and your planned step is far away"
-  -- a quest already done (or a delivery, done as you take it) whose hand-in is right here, though the plan hands it
-  -- in much later: hand it in while you're here, not on a trip back (Menethil: the plan sent you to one hand-in and
-  -- walked past five finished ones it had for later)
+  -- a quest already done (or a delivery) whose hand-in is right here though the plan hands it in much later: hand it
+  -- in while you're here, not on a trip back
   if not pick then
     local best, bestD
     -- (cheap checks first - this runs every second: a hand-in, its quest ready in your log, near you - then its status)
@@ -317,8 +291,7 @@ local function countsMoved()
   -- the planned step too: its loot counting means you're on it (UpdateFocus never jumps past it then), and if the card
   -- had moved on to another step, it comes back
   local js = Engine.Upcoming(planned, WINDOW); table.insert(js, 1, planned)
-  -- (and the card's step when the solve picked another - an extra, a quest from the part you passed: farming it set no
-  -- hold, and the card could leave mid-farm - code review)
+  -- (and the card's step when the solve picked another: otherwise farming it set no hold and the card could leave)
   local cur = Engine.current
   if cur and cur ~= planned then local seen = false; for _, j in ipairs(js) do if j == cur then seen = true end end; if not seen then js[#js + 1] = cur end end
   for _, j in ipairs(js) do

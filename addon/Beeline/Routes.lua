@@ -1,5 +1,5 @@
--- Routes: the routes in the plan, which one you are on, entering and leaving zones and side trips, a route's steps. Part of Core.lua, split out as is (the code review: Core.lua mixed the event bus, saved data, plan
--- loading, route selection, zone economics, slash commands and perf sampling); loaded right after it.
+-- Routes: the routes in the plan, which one you are on, entering and leaving zones and side trips, a route's steps.
+-- Split out of Core.lua; loaded right after it.
 local _, ns = ...
 
 -- Several planned paths (BeelineRoutes) or one route (BeelineData). Progress flags are kept per route.
@@ -19,10 +19,8 @@ function ns.ZoneRoutes()
 end
 -- a zone route that fits a level: a built-in plan's tree has one per zone and level band (r.level: planned from the
 -- trunk at that level - tools/zone-routes.js); the newest one you are in reach of (its level up to 2 above yours). A
--- plan's own zone routes carry no level: the first for the zone, when no band of that zone fits. (A built-in plan has
--- both: its own route per zone, planned at the plan's start - Hillsbrad at 22 - and the tree's bands. The one without a
--- level came first at any level, so at 28 Where to? offered Hillsbrad's 22 route, done long ago, and picking it left
--- the card empty - mutate sweep.)
+-- plan's own zone routes carry no level: the first for the zone, only when no band of that zone fits (a built-in plan
+-- has both, and its level-less route may be long outlevelled).
 local function fits(r, level) return not r.level or not level or (r.level <= level + 2 and r.level >= level - 6) end
 -- (over ns.Routes() itself, not ns.ZoneRoutes(): no list made per call - Where to? asks once per zone on your plan)
 function ns.ZoneRouteFor(zone, level)
@@ -37,9 +35,8 @@ function ns.ZoneRouteFor(zone, level)
   return best or plain
 end
 -- the zones you could go to now (one route each, the best fit for your level): what "fancy a change?" offers.
--- (one walk over the routes: each zone's ZoneRouteFor pick, the zones in the order their first band that fits comes -
--- a ZoneRouteFor per zone walked every route again, ~100 zone routes on a built-in plan's tree, each time Where to?
--- opened)
+-- (one walk over the routes: each zone's ZoneRouteFor pick, the zones in the order their first band that fits comes;
+-- not a ZoneRouteFor per zone - perf, ~100 zone routes)
 function ns.ZoneRoutesAt(level)
   level = level or (UnitLevel and UnitLevel("player")) or nil
   local best, order = {}, {}
@@ -65,8 +62,7 @@ end
 -- dungeon routes are a side trip: remember the path you were on, and go back to it with its progress untouched
 function ns.EnterDungeonRoute(id)
   local r = ns.RouteById(id); if not r then return end
-  -- (from a zone you picked: your plan stays the way back - the zone route took its place, and "Back to my path" then
-  -- went back to the zone, off the plan for good - state map)
+  -- (from a zone you picked: your plan stays the way back, not the zone route that took its place)
   if BeelineData and not BeelineData.dungeon and not BeelineData.zoneRoute then ns.char.returnTo = BeelineData.id end
   ns.char.chosenTrip = id -- (you picked it: kept across logins - ns.SavedRoute)
   ns.SelectRoute(id)
@@ -74,10 +70,9 @@ function ns.EnterDungeonRoute(id)
 end
 -- a zone you picked (a zone route, ns.ZoneRouteFor): the route you were on is remembered, so "Planned route" in the
 -- zone picker goes back to it - picked up where it still has something for you at your level (UI/Paths.lua)
--- The zones you have quested in, in order (stage 2.7): ns.char.zoneOrder = "Westfall>Redridge Mountains>*Duskwood", the
--- last where you are now, * a zone you picked. Written next to the older fields (routeLegs, requestZone, returnTo), which
--- stay as they were: nothing is migrated, an older save just starts its list from the zone of its next hand-in. For the
--- planner (the zones you chose, kept when it replans) and the companion's data.
+-- The zones you have quested in, in order: ns.char.zoneOrder = "Westfall>Redridge Mountains>*Duskwood", the last where
+-- you are now, * a zone you picked. Written next to the older fields (routeLegs, requestZone, returnTo); nothing is
+-- migrated. For the planner (the zones you chose, kept when it replans) and the companion's data.
 local ZONE_ORDER_MAX = 12
 function ns.NoteZone(zone, picked)
   if not (zone and zone ~= "" and ns.char) then return end
@@ -110,7 +105,7 @@ function ns.EnterZoneRoute(id)
   -- (where: the first quest step the plan still has for you, as PLANNED NEXT read it - the engine's position can sit
   -- before a stretch it counts as behind you)
   if d and not d.dungeon and not d.special and not d.zoneRoute and not d.branch then
-    local E, at = ns.Engine, ns.Engine and (ns.Engine.planned or ns.Engine.current) -- (the plan's place, not the card's step - code review)
+    local E, at = ns.Engine, ns.Engine and (ns.Engine.planned or ns.Engine.current) -- (the plan's place, not the card's step)
     if E and at and E.Status then local list = ns.Steps(d); for i = at, #list do local s = list[i]; if s and s.q and s.zone and (s.k == "accept" or s.k == "turnin" or s.k == "obj") and E.Status(i) ~= "done" then at = i; break end end end
     ns.char.returnTo = d.id; ns.char.returnAt = at
   end
@@ -128,7 +123,7 @@ function ns.LeaveDungeonRoute()
   end
   ns.char.returnTo = back.id
   ns.char.chosenTrip = nil
-  ns.char.returnAt, ns.char.requestZone = nil, nil -- (stale after: reused against a rebuilt plan, and "On your way to X" stayed - state map)
+  ns.char.returnAt, ns.char.requestZone = nil, nil -- (stale after: must not be reused against a rebuilt plan)
   ns.SelectRoute(back.id); ns.Print("Back on your path: " .. (back.title or ""))
 end
 -- a route's steps; branches and dungeon routes are kept packed until needed (see the planner's paths.js)
@@ -166,8 +161,7 @@ end
 -- how well a path (its zones) continues the one you followed (old zones): the zones the two have in common in the same
 -- order, over the next PATH_LOOK zones of each, and more for starting in the same zone - what you do next counts most.
 -- "Wetlands > Duskwood > Ashenvale > Desolace" is continued by "Wetlands > Ashenvale > Arathi > Desolace" (3 in order,
--- same start), not by "Duskwood > Ashenvale > Stranglethorn > Wetlands" (2 in order): matching only from the old second
--- zone on once took a player standing in the Wetlands off to Ashenvale.
+-- same start), not by "Duskwood > Ashenvale > Stranglethorn > Wetlands" (2 in order).
 ns.PATH_LOOK = 6
 function ns.PathContinuity(old, legs)
   local n, m = math.min(#old, ns.PATH_LOOK), math.min(#legs, ns.PATH_LOOK)
@@ -219,12 +213,12 @@ function ns.PathSwitchNote(title, pick)
     if same then return nil end
   end
   local function head(t) local o = {}; for k = 1, math.min(3, #t) do o[k] = t[k] end; return table.concat(o, " > ") end
-  return "The new plan does not have the path you were on (" .. head(old) .. "). You are now on the closest one: " .. head(now) .. ". The Paths window (/bee paths) has the others."
+  return "The new plan does not have the path you were on (" .. head(old) .. "). You are now on the closest one: " .. head(now) .. ". The Home base window (/bee home) has the others."
 end
 -- pick by id or by title (titles from older saves); a renamed path is found by its zone order (ns.ResolvePath);
 -- nothing at all falls back to the first main path
 -- the route saved last time, at login / a new plan: a dungeon or class route you never chose (no path to go back to)
--- was a fallback (a plan file with no path in it put a player on Gnomeregan): back to a leveling path
+-- was a fallback: back to a leveling path
 function ns.SavedRoute()
   local t = ns.char and ns.char.routeTitle
   local r = t and ns.RouteById and ns.RouteById(t)
@@ -238,7 +232,7 @@ end
 function ns.SelectRoute(title, quiet)
   local list = ns.Routes()
   local pick, exact = ns.ResolvePath(title)
-  -- (never a dungeon or class route by default: a plan file with no path in it put a player on Gnomeregan)
+  -- (never a dungeon or class route by default)
   if not pick then for _, r in ipairs(list) do if not r.dungeon and not r.special then pick = r; break end end end
   pick = pick or ns.MainRoutes()[1]
   if not exact and title and ns.char.routeLegs and pick then

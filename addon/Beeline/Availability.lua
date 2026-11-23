@@ -1,6 +1,6 @@
 -- What the game really offers you. The quest database comes from several game versions, so it can list a quest
--- Forever doesn't give you (A Friend of the Family, from Bolvar: the card sent you there and he had nothing). The game
--- knows: the quest givers you talk to list what they offer, and the world map's "!" list shows what's available on a
+-- Forever doesn't give you. The game knows: the quest givers you talk to list what they offer, and the world map's
+-- "!" list shows what's available on a
 -- map. Both are recorded per character in BeelineChar.avail:
 --   seen[q] = { t, lvl }       the game offered it (a giver listed it, or the map showed it)
 --   no[q]   = { t, lvl, npc }  you talked to its giver and it wasn't among the offers, at that level
@@ -10,23 +10,19 @@ local _, ns = ...
 local Avail = {}
 ns.Avail = Avail
 
-local function call(fn, ...) if type(fn) == "function" then local ok, a, b, c, d, e = pcall(fn, ...); if ok then return a, b, c, d, e end end end
-local function plain(v) return v ~= nil and not (issecretvalue and issecretvalue(v)) end
+local call, plain, Sub = ns.Util.Call, ns.Util.Plain, ns.Util.Sub
 local function store()
   local c = BeelineChar
   if not c then return { seen = {}, no = {} } end
-  c.avail = type(c.avail) == "table" and c.avail or {}
-  c.avail.seen = type(c.avail.seen) == "table" and c.avail.seen or {}
-  c.avail.no = type(c.avail.no) == "table" and c.avail.no or {}
-  return c.avail
+  local a = Sub(c, "avail"); Sub(a, "seen"); Sub(a, "no")
+  return a
 end
-Avail._store = store
 local function level() return (UnitLevel and UnitLevel("player")) or 0 end
 
 -- fromMap: the world map's "!" list, which says the quest is offered somewhere on the map, not by whom. After the
--- giver the plan sends you to turned it down at this level, that is no reason to send you back to the same giver:
--- the two took turns, and the step went off and on your route without end (The Shamed Lieutenant in Stormwind). A
--- giver offering it, or a level up, still brings it back.
+-- giver the plan sends you to turned it down at this level, that is no reason to send you back to the same giver
+-- (the two would take turns, the step going off and on your route without end). A giver offering it, or a level up,
+-- still brings it back.
 function Avail.Seen(q, fromMap)
   if not q then return end
   local A = store()
@@ -42,17 +38,16 @@ function Avail.Seen(q, fromMap)
   end
   A.no[q] = nil
   if ns.Why then ns.Why("avail", "quest " .. q .. " is offered after all: back on your route") end
+  return true -- (changed: back on the route)
 end
 -- the game did not offer this quest at its giver (q: quest id, npc: who you talked to, step: the route's pick-up, if
 -- known). The first time, a level up brings it back. Turned down again at a higher level, with every quest before it
 -- done, a level clearly isn't the reason: it stays off until the game offers it (a giver lists it, or the map's "!"
--- shows it) - Captain Stoutfist turned down This Land Was Their Land at 28 and 29, and the card sent you back at 30,
--- 31, 32. (Not after one refusal, even at the level the data says it needs: Forever asks more for some - the City of
--- Dalaran quests need 30 where the data says 24.)
+-- shows it). (Not after one refusal, even at the level the data says it needs: Forever asks a higher level for some.)
 function Avail.NotOffered(q, npc, name, step)
   local A = store()
   local old, lvl = A.no[q], level()
-  if old and old.lvl == lvl then return end
+  if old and old.lvl == lvl then return false end
   local waits = {}
   for _, p in ipairs((ns.Engine and ns.Engine.PrereqsOf and ns.Engine.PrereqsOf(q)) or {}) do
     if not (ns.State and ns.State.IsCompleted(p)) then waits[#waits + 1] = p end
@@ -64,10 +59,10 @@ function Avail.NotOffered(q, npc, name, step)
   local what = stay and "left off your route until the game offers it" or "left off your route until you level up"
   if ns.Why then ns.Why("avail", (name or ("quest " .. q)) .. ": " .. tostring(npc) .. " doesn't offer it to you - " .. what) end
   ns.Print((name or ("Quest " .. q)) .. ": " .. tostring(npc) .. " doesn't offer it to you, so it's off your route" .. (stay and "." or " for now."))
+  return true
 end
--- what this quest needs that you don't have: "needs Engineering 200", or nil (ns.QUEST_NEEDS in QuestData.lua). Plans
--- made before the planner checked this carried Goblin Engineering to a level 34 warlock with no Engineering, and the
--- card walked them to Lilliam Sparkspindle, who had nothing. Your skills are read at most every 10 s.
+-- what this quest needs that you don't have: "needs Engineering 200", or nil (ns.QUEST_NEEDS in QuestData.lua; older
+-- plans don't check it). Your skills are read at most every 10 s.
 local skillsAt, skills = -100, {}
 local told = {}
 function Avail.ForgetSkills() skillsAt = -100 end -- (read again on the next ask: tests; a profession just learned)
@@ -87,8 +82,8 @@ function Avail.Needs(q)
   end
   -- a reputation: { faction, at least this much } (the game's bar value; a client that won't say keeps the step)
   if not why and need.rp and GetFactionInfoByID then
-    local ok, name, _, _, _, _, value = pcall(GetFactionInfoByID, need.rp[1]) -- 6 values: not call() (keeps 5)
-    if ok and name and plain(value) and type(value) == "number" and value < need.rp[2] then why = "needs more reputation with " .. name end
+    local name, _, _, _, _, value = call(GetFactionInfoByID, need.rp[1])
+    if name and plain(value) and type(value) == "number" and value < need.rp[2] then why = "needs more reputation with " .. name end
   end
   if why and not told[q] and ns.Why then
     told[q] = true
@@ -98,9 +93,8 @@ function Avail.Needs(q)
 end
 
 -- a battleground quest (ns.PVP_QUESTS, PvpQuests.lua from the quest data): its work is a PvP match - Marks of Honor
--- from a battleground, or the match itself - so no route does it: the battleground's name, or nil. Plans made before the
--- planner knew this carry them (Darkspear Islands Clash sent a level 38 across Stormwind to the Brigadier General, its
--- objective a step nobody could do). One already in your log is yours: the card does its hand-in once it is finished
+-- from a battleground, or the match itself - so no route does it: the battleground's name, or nil (older plans carry
+-- them). One already in your log is yours: the card does its hand-in once it is finished
 function Avail.Pvp(q) local P = ns.PVP_QUESTS; return P and q and P[q] or nil end
 
 -- left off the route: the game didn't offer it (and hasn't since), and nothing that could change that has happened -
@@ -147,21 +141,32 @@ local function expectedFrom(npc)
   end
   return out
 end
-function Avail.OnGiver(event)
+-- what the giver offers, read at the event itself (before auto-quest picks one: the window then lists the others no
+-- more); nil when the game didn't say
+function Avail.Read(event)
   local ids, partial = offeredHere(event)
-  if not ids then return end
-  local offered = {}
-  for _, id in ipairs(ids) do offered[id] = true; Avail.Seen(id) end
-  if partial then return end
+  if not ids then return nil end
   local npc = call(UnitName, "npc")
-  if not (plain(npc) and type(npc) == "string") then return end
-  for q, s in pairs(expectedFrom(npc)) do
-    if not offered[q] then Avail.NotOffered(q, npc, s.name, s) end
-  end
-  if ns.Engine then ns.Engine.Refresh() end
+  return { ids = ids, partial = partial, npc = plain(npc) and type(npc) == "string" and npc or nil }
 end
+-- the route is refreshed only when the offers changed what is on it
+function Avail.Judge(r)
+  if not r then return end
+  local offered, changed = {}, false
+  for _, id in ipairs(r.ids) do offered[id] = true; if Avail.Seen(id) then changed = true end end
+  if not r.partial and r.npc then
+    for q, s in pairs(expectedFrom(r.npc)) do
+      if not offered[q] and Avail.NotOffered(q, r.npc, s.name, s) then changed = true end
+    end
+  end
+  if changed and ns.Engine then ns.Engine.Refresh() end
+end
+function Avail.OnGiver(event) Avail.Judge(Avail.Read(event)) end
 for _, ev in ipairs({ "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL" }) do
-  ns.On(ev, function() C_Timer.After(0.2, ns.Guard("avail", function() Avail.OnGiver(ev) end)) end)
+  ns.On(ev, ns.Guard("avail", function()
+    local r = Avail.Read(ev)
+    if r then C_Timer.After(0.2, ns.Guard("avail", function() Avail.Judge(r) end)) end
+  end), true)
 end
 
 -- the world map's available quests on the map you're on (the "!" icons): what the game says you can pick up there

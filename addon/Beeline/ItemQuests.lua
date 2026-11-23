@@ -1,6 +1,5 @@
--- Quests an item starts: a drop (Message in a Bottle's Carefully Folded Note, an OOX distress beacon) comes when it
--- comes, so no plan can count on it - and an unread one sat in the bags while the route ran out of quests and sent you
--- grinding. When one is in your bags and the quest is yours to take, the card offers it: one line, "use it" (the
+-- Quests an item starts: a drop (an OOX distress beacon) comes when it comes, so no plan can count on it. When one is
+-- in your bags and the quest is yours to take, the card offers it: one line, "use it" (the
 -- use-item button above the card), and an "x" to say no. Once you take it, its objectives and hand-in are fitted into
 -- your route where they cost least, the way a side quest's are (Engine.SideStops, ns.ITEM_QUESTS in QuestData.lua).
 local _, ns = ...
@@ -8,13 +7,7 @@ local IQ = {}
 ns.ItemQuests = IQ
 
 -- some values are hidden from addons on Forever ("secret values"): unknown
-local function plain(v) if v == nil or (issecretvalue and issecretvalue(v)) then return nil end return v end
-local function call(fn, ...)
-  if type(fn) ~= "function" then return nil end
-  local ok, a, b, c = pcall(fn, ...)
-  if not ok then return nil end
-  return plain(a), plain(b), plain(c)
-end
+local plain, call = ns.Util.Plain, ns.Util.PlainCall
 local CC = function() return C_Container or {} end
 
 -- item -> the quest it starts (ITEM_QUESTS lists the items per quest)

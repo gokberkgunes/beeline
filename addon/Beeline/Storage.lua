@@ -1,7 +1,7 @@
 -- What the addon keeps in your saved files, and keeping it small. Everything has a cap (Why.lua 300 decisions, Core.lua
 -- 200 chat lines and 20 timing records, Learn.lua 300 pace samples and 100 incidents, Trails.lua 1.5 MB of walking).
 -- Walking trails and learning are read only by the companion (the planner on your PC): an install without it (no
--- plan file of its own - ns.HasCompanion) records neither, and what an older version recorded is cleared at login.
+-- plan file of its own - ns.HasCompanion) records neither, and what was recorded before is cleared at login.
 -- /bee storage shows the sizes.
 local _, ns = ...
 local Storage = {}
@@ -29,7 +29,7 @@ function Storage.Parts()
   return out
 end
 
--- without the companion, what only it reads goes (an addon-site install that recorded trails before this version)
+-- without the companion, what only it reads goes
 function Storage.Clean()
   if ns.HasCompanion() or not BeelineDB then return 0 end
   local freed = 0

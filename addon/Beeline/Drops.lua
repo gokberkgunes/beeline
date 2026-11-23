@@ -1,6 +1,6 @@
 -- Real drop rates, learned from your play: while you're on a "collect" step, every corpse of the step's mob you loot
 -- counts as a kill, and the step's item in that corpse's loot counts as a drop. The quest data has the original Classic
--- rates; Forever changed some (the Battleworn Axe is far rarer). With enough kills, the card warns when drops are much
+-- rates; Forever changed some. With enough kills, the card warns when drops are much
 -- rarer than planned, and the planner on your PC uses your measured rate instead of the old one.
 -- Kept per item in BeelineDB.drops (shared by your characters): { kills, drops, from = { [npc id] = name } }.
 --
@@ -14,10 +14,7 @@ ns.Drops = Drops
 Drops.MIN_KILLS = 15      -- enough to say something
 Drops.RARE = 0.5          -- warn when the measured rate is under half the planned one
 
-local function store()
-  if type(BeelineDB.drops) ~= "table" then BeelineDB.drops = {} end
-  return BeelineDB.drops
-end
+local function store() return ns.Util.Sub(BeelineDB, "drops") end
 local function entry(item)
   local d = store(); local e = d[item]
   if type(e) ~= "table" then e = { kills = 0, drops = 0 }; d[item] = e end
@@ -31,22 +28,7 @@ local function currentCollect()
   if s and s.k == "obj" and s.loot and s.match and s.q then return s end
 end
 -- some values are hidden from addons on Forever ("secret values"); treat those as unknown
-local function plain(v)
-  if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
-  return v
-end
-local function call(fn, ...)
-  if type(fn) ~= "function" then return nil end
-  local r = { n = 0 }
-  local function grab(ok, ...)
-    if not ok then return false end
-    r.n = select("#", ...)
-    for k = 1, r.n do r[k] = plain((select(k, ...))) end
-    return true
-  end
-  if not grab(pcall(fn, ...)) then return nil end
-  return unpack(r, 1, r.n)
-end
+local call = ns.Util.PlainCall
 
 -- the mobs the step names: its target, or the planner's "Collect 10 Razormaw Incisor (Highland Razormaw, Elder
 -- Razormaw)" list (the first bracket after the item; "(in The Stockade)" is a place, not a mob). nil when it names none.

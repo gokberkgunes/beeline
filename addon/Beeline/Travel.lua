@@ -20,8 +20,7 @@ function Travel.Speed()
 end
 Travel.DANGER_ABOVE, Travel.TOWN_WALK = TD.DANGER_ABOVE, TD.TOWN_WALK
 -- the dangerous zone you stand in (Travel.DangerHere): a ride in it of up to DANGER_HERE_YD yards is a way out, counted
--- DANGER_HERE times its time - Morgan's Vigil to the Riverglades border at 41 (~300 yd); a longer one is kept out of as
--- in any such zone - riding out of Theramore through Dustwallow at 21, not the flight
+-- DANGER_HERE times its time; a longer one is kept out of as in any such zone
 Travel.DANGER_HERE, Travel.DANGER_HERE_YD = 3, 400
 -- a ride leg points at the first waypoint at least this far ahead (yards): nearer ones are under your feet
 Travel.AHEAD_YD = 40
@@ -31,12 +30,11 @@ Travel.ZONE_MIN_HORDE = TD.ZONE_MIN_HORDE or {}
 Travel.CROSS_CLEAR = 150 -- yards beyond a hostile town's radius where a border crossing is no way for you
 Travel.NET = TD.NET
 -- your faction, as the travel facts name it: crossings, spells and gates with a faction are only there for that one
-function Travel.Side()
-  local ok, f = pcall(UnitFactionGroup, "player")
-  return (ok and f == "Horde") and "horde" or "alliance"
-end
+function Travel.Side() return ns.State.MySide() end
 local function forSide(only, side) return not only or only == side end
 Travel.OFFNET = 1.25 -- straight-line yards to the network's key points count this much longer (roads bend)
+-- seconds to walk (or ride) a straight line of this many yards: OFFNET longer, at your speed
+function Travel.WalkSecs(yards) return yards * Travel.OFFNET / (Travel.Speed() or 7) end
 
 local function world(m, x, y)
   local wx, wy, inst = HBD:GetWorldCoordinatesFromZone(x, y, m)
@@ -49,10 +47,8 @@ local function d(a, b) return math.sqrt((a.w[1] - b.w[1]) ^ 2 + (a.w[2] - b.w[2]
 Travel.HOSTILE, Travel.HOSTILE_SEC = TD.HOSTILE or {}, TD.HOSTILE_SEC or 0
 local hostileW, hostileFor, hostileConv
 function Travel.HostileTowns()
-  local okF, f = pcall(UnitFactionGroup, "player")
-  local side = (okF and f == "Horde") and "horde" or "alliance"
-  -- (made again when the map positions come from elsewhere: tests swap the coordinates in, and a list made under the
-  -- simulator's own - which has no map data - was empty for every test after it, tools/unit.js's shards)
+  local side = ns.State.MySide()
+  -- (made again when the map conversion changes: tests swap the coordinates in)
   local conv = HBD.GetWorldCoordinatesFromZone
   if hostileFor ~= side or not hostileW or hostileConv ~= conv then
     hostileW, hostileFor, hostileConv = {}, side, conv
@@ -60,12 +56,14 @@ function Travel.HostileTowns()
   end
   return hostileW
 end
-local function segDist(a, b, p)
+-- the distance from point (px, py) to the segment a-b ({ x, y }), and where on it the nearest point is (0 to 1)
+function Travel.SegDist(px, py, a, b)
   local dx, dy = b[1] - a[1], b[2] - a[2]
   local L = dx * dx + dy * dy
-  local t = L > 0 and math.max(0, math.min(1, ((p[1] - a[1]) * dx + (p[2] - a[2]) * dy) / L)) or 0
-  return math.sqrt((a[1] + t * dx - p[1]) ^ 2 + (a[2] + t * dy - p[2]) ^ 2)
+  local t = L > 0 and math.max(0, math.min(1, ((px - a[1]) * dx + (py - a[2]) * dy) / L)) or 0
+  return math.sqrt((a[1] + t * dx - px) ^ 2 + (a[2] + t * dy - py) ^ 2), t
 end
+local segDist = Travel.SegDist
 -- the other faction's town a ride from a to b passes through (its entry: name, radius), or nil. A quick box test first:
 -- this runs for every road of every trip the card, arrow and pins ask for
 -- (the towns of each world apart, in their order: a trip joins you and the target to dozens of roads, each checked)
@@ -84,7 +82,7 @@ function Travel.Through(a, b)
   local y0, y1 = math.min(a[2], b[2]), math.max(a[2], b[2])
   for _, h in ipairs(hostileIn(Travel.HostileTowns(), a[3])) do
     local p, r = h.w, h.r
-    if p[3] == a[3] and p[1] + r >= x0 and p[1] - r <= x1 and p[2] + r >= y0 and p[2] - r <= y1 and segDist(a, b, p) < r then return h end
+    if p[3] == a[3] and p[1] + r >= x0 and p[1] - r <= x1 and p[2] + r >= y0 and p[2] - r <= y1 and segDist(p[1], p[2], a, b) < r then return h end
   end
   return nil
 end
@@ -95,8 +93,7 @@ local function throughCached(u, v)
   -- (and the map positions they were worked out with: tests swap them in - see Travel.HostileTowns)
   if roadFor ~= side or roadConv ~= HBD.GetWorldCoordinatesFromZone then roadHostile, roadFor, roadConv = {}, side, HBD.GetWorldCoordinatesFromZone end
   if not (u.id and v.id) or u.id == "you" or u.id == "target" or v.id == "you" or v.id == "target" then return Travel.Through(u.w, v.w) end
-  -- (by the two ids, the lower first: a string made of them for each of the network's 9,000 roads was much of building
-  -- the trip planner's graph)
+  -- (by the two ids, the lower first - no key string per road: ~9,000 roads, perf)
   local a, b = u.id, v.id
   if b < a then a, b = b, a end
   local row = roadHostile[a]
@@ -105,7 +102,6 @@ local function throughCached(u, v)
   if c == nil then c = Travel.Through(u.w, v.w) or false; row[b] = c end
   return c or nil
 end
-Travel.ThroughCached = throughCached
 
 -- the network's nodes with world coords, once (the map data doesn't change)
 local netNodes, netById, netMaps, netInst, netSrc, netConv
@@ -126,23 +122,21 @@ local function net()
   end
   return netNodes
 end
-Travel.HasNetwork = function(m) net(); return netMaps[m] == true end
 -- where a trip can leave the walk on map m: your side's flight masters (known or not) and the piers - the places a
 -- trip between two far stops starts or lands at (Next indexes the plan's far gaps by the walks to them before it
 -- knows which one the trip takes) -> { world positions }
 -- a flight master of your side (ns.FLIGHT, your faction's list): the network's nodes carry no faction, and where both
--- sides have one under the same name (Booty Bay: Gyll and Gringer) the name alone doesn't tell them apart
+-- sides have one under the same name (Booty Bay) the name alone doesn't tell them apart
 local function ourFP(m, npc)
   local list = ns.FLIGHT and ns.FLIGHT[m]
   if not list then return false end
   for _, f in ipairs(list) do if f[3] == npc then return true end end
   return false
 end
-Travel.OurFlightMaster = ourFP
 local portsOf, portsKey = {}, nil
 function Travel.Ports(m)
   net()
-  local letter = Travel.Side() == "horde" and "H" or "A"
+  local letter = ns.State.MyFaction() or "A"
   local key = tostring(netNodes) .. letter .. tostring(ns.FLIGHT)
   if portsKey ~= key then portsOf, portsKey = {}, key end
   local out = portsOf[m]
@@ -176,10 +170,9 @@ end
 function Travel.IsTram(leg) return leg ~= nil and type(leg.dock) == "string" and leg.dock:find("^tram") ~= nil end
 
 -- do you have this flight point? FlightMasters.lua names each flight master's point as the flight map does
--- ("Sentinel Hill, Westfall": the client's TaxiNodes table), so a zone with two points for your faction (Feralas, The
--- Barrens, Stranglethorn, Ashenvale, Mount Hyjal) no longer counts both as yours when you have one. Having the point by
--- that name: yes. Having another point of the same zone by its name, and not this one: no. Otherwise (a flight master
--- without a name, a client in another language) the zone's name decides, as it always did.
+-- ("Sentinel Hill, Westfall": the client's TaxiNodes table), so a zone with two points for your faction doesn't count
+-- both as yours when you have one. Having the point by that name: yes. Having another point of the same zone by its
+-- name, and not this one: no. Otherwise (no name, a client in another language) the zone's name decides.
 local taxiOf, taxiSrc
 local function taxiNames()
   if taxiOf and taxiSrc == ns.FLIGHT_BY then return taxiOf end
@@ -193,8 +186,7 @@ local function taxiNames()
 end
 local function knowsFP(m, npc)
   local known = (ns.State and ns.State.knownTaxi) or {}
-  -- the other faction's flight master is never yours, even where both sides' share a name: Booty Bay's Gringer (Horde)
-  -- is "Booty Bay, Stranglethorn" as Gyll is, and an Alliance gnome at 41 was sent to fly from Gringer - user
+  -- the other faction's flight master is never yours, even where both sides' share a point name (Booty Bay)
   if npc and not ourFP(m, npc) then return false end
   local mine = npc and taxiNames()[m .. ":" .. npc]
   if mine then
@@ -209,59 +201,117 @@ Travel.KnowsFlightPoint = knowsFP
 Travel.HEARTH_CAST, Travel.HEARTH_VALUE = 10, 180
 -- where your hearthstone takes you, if it is in your bags and ready: the innkeeper of the map you bound on (or the map
 -- named like your bind location). nil when unknown - never guess a hearth
+-- (the innkeeper found for a bind is kept until the bind, boundAt, the vendor data or the map names change)
+local innMemo = {}
+local function findInn(bind, b)
+  local maps = {}
+  if b and b.m and b.name == bind then maps[#maps + 1] = b.m end
+  for m in pairs(ns.VENDORS or {}) do
+    local n = mapName(m)
+    if n == bind or bind:find(n, 1, true) or n:find(bind, 1, true) then maps[#maps + 1] = m end
+  end
+  for _, m in ipairs(maps) do
+    for _, v in ipairs(ns.VENDORS[m] or {}) do
+      if v[4] == "Innkeeper" then return { m = m, x = v[1], y = v[2], name = v[3] } end
+    end
+  end
+  return false
+end
+local function hearthInn()
+  if not GetBindLocation then return nil end
+  local count = GetItemCount and GetItemCount(6948)
+  if not (type(count) == "number" and count > 0) then return nil end
+  if not (ns.HearthCooldown and ns.HearthCooldown() == 0) then return nil end
+  local bind = GetBindLocation()
+  if type(bind) ~= "string" or bind == "" then return nil end
+  local b = ns.char and ns.char.boundAt
+  local bm, bn, M = b and b.m, b and b.name, innMemo
+  local fn = C_Map and C_Map.GetMapInfo
+  if not (M.bind == bind and M.bm == bm and M.bn == bn and M.vendors == ns.VENDORS and M.fn == fn) then
+    innMemo = { bind = bind, bm = bm, bn = bn, vendors = ns.VENDORS, fn = fn, inn = findInn(bind, b) }
+    M = innMemo
+  end
+  local inn = M.inn
+  return inn and { m = inn.m, x = inn.x, y = inn.y, name = inn.name, bind = bind } or nil
+end
 function Travel.HearthInn()
-  local ok, inn = pcall(function()
-    if not GetBindLocation then return nil end
-    local count = GetItemCount and GetItemCount(6948)
-    if not (type(count) == "number" and count > 0) then return nil end
-    if not (ns.HearthCooldown and ns.HearthCooldown() == 0) then return nil end
-    local bind = GetBindLocation()
-    if type(bind) ~= "string" or bind == "" then return nil end
-    local maps, b = {}, ns.char and ns.char.boundAt
-    if b and b.m and b.name == bind then maps[#maps + 1] = b.m end
-    for m in pairs(ns.VENDORS or {}) do
-      local n = mapName(m)
-      if n == bind or bind:find(n, 1, true) or n:find(bind, 1, true) then maps[#maps + 1] = m end
-    end
-    for _, m in ipairs(maps) do
-      for _, v in ipairs(ns.VENDORS[m] or {}) do
-        if v[4] == "Innkeeper" then return { m = m, x = v[1], y = v[2], name = v[3], bind = bind } end
-      end
-    end
-  end)
+  local ok, inn = pcall(hearthInn)
   return ok and inn or nil
 end
 
 -- The graph a trip is searched on, without you and the target: the network's places, its roads, the gates, the
--- flights between the flight paths you know and the boats. Building it was most of a trip's ~35 ms (9,000 roads, each
--- checked against the other faction's towns), and the card asks for trips many times a minute - so it is built once and
--- kept until something it is made of changes: the flight paths you know, your level and speed, your faction, race and
--- class, the piers you learned, or the data itself (tests swap all of these). You and the target are joined on each
+-- flights between the flight paths you know and the boats. Building it is most of a trip's ~35 ms, and the card asks
+-- for trips many times a minute (perf), so it is kept until an input changes: known flight paths, level, speed,
+-- faction, race, class, learned piers, or the data (tests swap all of these). You and the target are joined on each
 -- trip; those roads are kept apart from the graph's own (ext), so the kept graph is never changed by a trip.
+-- (kept graphs: { ground, lvl, side, race, class, speed, here, G }, all of the same envGen. What the graphs are made of
+-- besides those is compared with the last call's values in place - no key strings: Travel.Plan asks this on every trip)
 local graphs, graphCount = {}, 0
-local function taxiSig()
-  local parts = {}
-  for name, v in pairs((ns.State and ns.State.knownTaxi) or {}) do parts[#parts + 1] = tostring(name) .. "=" .. tostring(v) end
-  return table.concat(parts, ",")
+local envGen, envLast, envN = 0, {}, 0
+local taxiSeen, taxiSeenN = {}, 0
+local docksSeen, docksSeenN = {}, 0
+-- the flight paths you know and the piers you learned, by content: true when they differ from the last seen (and
+-- remembered then)
+local function taxiMoved(T)
+  local n = 0
+  for k, v in pairs(T) do if taxiSeen[k] ~= v then n = -1; break end; n = n + 1 end
+  if n == taxiSeenN then return false end
+  taxiSeen, taxiSeenN = {}, 0
+  for k, v in pairs(T) do taxiSeen[k] = v; taxiSeenN = taxiSeenN + 1 end
+  return true
 end
-local function docksSig(learned)
-  local parts = {}
-  for k, L in pairs(learned) do parts[#parts + 1] = tostring(k) .. "=" .. (type(L) == "table" and (tostring(L.m) .. ":" .. tostring(L.x) .. ":" .. tostring(L.y)) or tostring(L)) end
-  return table.concat(parts, ",")
+local function dockSame(was, L)
+  if type(L) == "table" then return type(was) == "table" and was.m == L.m and was.x == L.x and was.y == L.y end
+  return was == L
+end
+local function docksMoved(learned)
+  local n = 0
+  for k, L in pairs(learned) do if not dockSame(docksSeen[k], L) then n = -1; break end; n = n + 1 end
+  if n == docksSeenN then return false end
+  docksSeen, docksSeenN = {}, 0
+  for k, L in pairs(learned) do docksSeen[k] = type(L) == "table" and { m = L.m, x = L.x, y = L.y } or L; docksSeenN = docksSeenN + 1 end
+  return true
+end
+local function envSet(v)
+  envN = envN + 1
+  if envLast[envN] ~= v then envLast[envN] = v; return true end
+  return false
+end
+-- -> the generation of everything a graph is made of but the per-call values (bumped when any of it changed)
+local function envNow(nodes, learned)
+  envN = 0
+  local c = taxiMoved((ns.State and ns.State.knownTaxi) or {})
+  c = docksMoved(learned) or c
+  c = envSet(nodes) or c; c = envSet(Travel.NET) or c; c = envSet(ns.FLIGHT) or c; c = envSet(ns.FLIGHT_BY) or c
+  c = envSet(C_Map and C_Map.GetMapInfo) or c; c = envSet(ns.Engine and ns.Engine.KnowsFlightIn) or c; c = envSet(HBD.GetWorldCoordinatesFromZone) or c
+  c = envSet(Travel.DOCKS) or c; c = envSet(Travel.GATES) or c; c = envSet(Travel.BOATS) or c; c = envSet(Travel.ZONE_MIN) or c
+  c = envSet(Travel.ZONE_MIN_HORDE) or c; c = envSet(Travel.HOSTILE) or c
+  c = envSet(Travel.DANGER_ABOVE) or c; c = envSet(Travel.TOWN_WALK) or c; c = envSet(Travel.OFFNET) or c; c = envSet(Travel.FLY) or c
+  c = envSet(Travel.FLY_EXTRA) or c; c = envSet(Travel.BOAT) or c; c = envSet(TD.TRANSFER) or c; c = envSet(Travel.HOSTILE_SEC) or c
+  c = envSet(Travel.CROSS_CLEAR) or c
+  if c then envGen = envGen + 1 end
+  return envGen
 end
 -- what knowsFP says of each flight master: asked again for every leg of every trip, and it only changes with things the
--- graph's key holds
-local fpKnown, fpKey = {}, nil
+-- graph's own inputs hold (whichever kind of trip asks: all of them but ground)
+local fpKnown, fpAt = {}, {}
+local NILK = {}
+local function fpSync(lvl, side, myRace, myClass, speed, here, gen)
+  local a = fpAt
+  if a[1] == lvl and a[2] == side and a[3] == myRace and a[4] == myClass and a[5] == speed and a[6] == here and a[7] == gen then return end
+  fpKnown, fpAt = {}, { lvl, side, myRace, myClass, speed, here, gen }
+end
 local function knowsFPKept(m, npc)
-  local k = tostring(m) .. ":" .. tostring(npc)
-  local v = fpKnown[k]
-  if v == nil then v = knowsFP(m, npc) and true or false; fpKnown[k] = v end
+  local mk = m == nil and NILK or m
+  local row = fpKnown[mk]
+  if not row then row = {}; fpKnown[mk] = row end
+  local k = npc == nil and NILK or npc
+  local v = row[k]
+  if v == nil then v = knowsFP(m, npc) and true or false; row[k] = v end
   return v
 end
 -- a Horde player's own lands are not the 60 that keeps the Alliance out (ZONE_MIN_HORDE)
--- (the zone you stand in gets a short way out: Travel.DANGER_HERE_YD. A level 41 who had flown to Morgan's Vigil had
--- every road of the Burning Steppes (50) taken away, the Riverglades border beside the step with them: the trip went out
--- through Redridge, and the marker on its crossing led the player past the step - user)
+-- (the zone you stand in gets a short way out: Travel.DANGER_HERE_YD)
 local function riskyFor(side, lvl)
   return function(m)
     local z = Travel.ZONE_MIN[m]
@@ -291,12 +341,12 @@ local function myRaceClass()
   local myRace = ns.StarterKey and ns.StarterKey()
   local myClass = myRace and myRace:match("%-(.+)$")
   myRace = myRace and myRace:match("^(.-)%-")
-  if not myClass and UnitClass then local _, c = UnitClass("player"); myClass = c and c:lower() end
+  if not myClass then local c = ns.State.MyClass(); myClass = c and c:lower() end
   return myRace, myClass
 end
 local campMemo = setmetatable({}, { __mode = "k" })
 local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
-  local risky, gates = riskyFor(side, lvl, here), gatesFor(side)
+  local risky, gates = riskyFor(side, lvl), gatesFor(side)
   local gated = gatedBy(gates)
   local myLetter = side == "horde" and "H" or "A"
   local N = { false, false } -- (you and the target: each trip's own)
@@ -309,8 +359,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     local au, av = adj[u], adj[v]; au[#au + 1] = { v, c, how }; av[#av + 1] = { u, c, how }
   end
   local hostile = Travel.HostileTowns()
-  -- (whether a crossing is in a camp only changes with your faction's list of camps: the graph is built again for every
-  -- flight path you learn and every level, and this was most of that)
+  -- (whether a crossing is in a camp only changes with your faction's list of camps: memoized across graph rebuilds, perf)
   local camps = campMemo[hostile]
   if not camps or camps.clear ~= Travel.CROSS_CLEAR then camps = { clear = Travel.CROSS_CLEAR, of = setmetatable({}, { __mode = "k" }) }; campMemo[hostile] = camps end
   local function inCamp(n)
@@ -323,8 +372,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     camps.of[n] = v
     return v
   end
-  -- (built inside the solve's slices too - the first trip after a login: 55 ms in one slice on the user's PC, /bee report
-  -- perf. It pauses with them: all it makes is its own until it returns)
+  -- (built inside the solve's slices too, so it yields (perf: up to ~55 ms); all it makes is its own until it returns)
   local tick = 0
   local function pause() tick = tick + 1; if tick % 64 == 0 then ns.MaybeYield() end end
   for _, n in ipairs(net()) do
@@ -340,7 +388,7 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     end
     -- a flight master of the other faction is only a spot on the road for you
     if n.kind == "fp" and not ground and (not n.side or n.side:find(myLetter, 1, true)) and knowsFPKept(n.m, n.name) then c = setmetatable({ fp = true }, { __index = c }) end
-    -- a border crossing inside the other faction's town or camp (Mor'shan Rampart's gate) is no way for you: a crossing
+    -- a border crossing inside the other faction's town or camp is no way for you: a crossing
     -- is a chokepoint, and the border has another one clear of it (tools/travel.js does the same)
     if not (n.kind == "cross" and inCamp(n)) then idx[n.id] = add(c) end
   end
@@ -419,21 +467,19 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
 end
 local function graphFor(ground, lvl, side, myRace, myClass, here)
   local learned = (BeelineDB and BeelineDB.docks) or {}
-  local nodes = net()
-  -- (everything the graph is made of; all but the flight paths you know and the piers you learned change almost never)
-  local key = table.concat({ ground and "g" or "-", lvl, side, tostring(myRace), tostring(myClass), Travel.Speed(), taxiSig(), docksSig(learned),
-    tostring(nodes), tostring(Travel.NET), tostring(ns.FLIGHT), tostring(ns.FLIGHT_BY), tostring(C_Map and C_Map.GetMapInfo), tostring(ns.Engine and ns.Engine.KnowsFlightIn), tostring(HBD.GetWorldCoordinatesFromZone),
-    tostring(Travel.DOCKS), tostring(Travel.GATES), tostring(Travel.BOATS), tostring(Travel.ZONE_MIN), tostring(Travel.ZONE_MIN_HORDE), tostring(Travel.HOSTILE),
-    Travel.DANGER_ABOVE, Travel.TOWN_WALK, Travel.OFFNET, Travel.FLY, Travel.FLY_EXTRA, tostring(Travel.BOAT), tostring(TD.TRANSFER), Travel.HOSTILE_SEC, Travel.CROSS_CLEAR, tostring(here) }, "|")
-  -- (the flight-path answers hold while the same things do, whichever kind of trip asks)
-  local fk = key:sub(3)
-  if fpKey ~= fk then fpKnown, fpKey = {}, fk end
-  local G = graphs[key]
-  if G then return G end
+  local gen = envNow(net(), learned)
+  local speed = Travel.Speed()
+  fpSync(lvl, side, myRace, myClass, speed, here, gen)
+  local g = ground and true or false
+  for i = 1, graphCount do
+    local e = graphs[i]
+    if e[9] == gen and e[1] == g and e[2] == lvl and e[3] == side and e[4] == myRace and e[5] == myClass and e[6] == speed and e[7] == here then return e[8] end
+  end
   -- (a few kept: the card's shortcut check asks with and without flights in turn)
   if graphCount >= 4 then graphs, graphCount = {}, 0 end
-  G = buildGraph(ground, lvl, side, myRace, myClass, learned, here)
-  graphs[key], graphCount = G, graphCount + 1
+  local G = buildGraph(ground, lvl, side, myRace, myClass, learned, here)
+  graphCount = graphCount + 1
+  graphs[graphCount] = { g, lvl, side, myRace, myClass, speed, here, G, gen }
   return G
 end
 
@@ -447,14 +493,15 @@ end
 -- from = { m, x, y }, to = { m, x, y, name } -> legs { { how = "ride"|"fly"|"boat", m, x, y (where to go), text } }, seconds
 -- opts.ground: on foot only (no flights, boats, spells or hearthstone) - what the same trip takes without them
 -- opts.hearth = false: without your hearthstone
-local function planTrip(from, to, opts)
+-- (G: the graph Travel.Plan already looked up for the same call)
+local function planTrip(from, to, opts, G)
   local ground = opts and opts.ground
   from.w = from.w or world(from.m, from.x, from.y); to.w = to.w or world(to.m, to.x, to.y)
   if not (from.w and to.w) then return nil end
   local lvl = UnitLevel and UnitLevel("player") or 60
   local side = Travel.Side()
   local myRace, myClass = myRaceClass()
-  local G = graphFor(ground, lvl, side, myRace, myClass, Travel.DangerHere(from.m, side, lvl))
+  G = G or graphFor(ground, lvl, side, myRace, myClass, Travel.DangerHere(from.m, side, lvl))
   local risky, gated, idx = G.risky, G.gated, G.idx
   -- this trip's nodes: you, the target, the kept graph's, and your inn; the roads that join them are this trip's own
   -- (ext), searched along with the graph's
@@ -512,11 +559,9 @@ local function planTrip(from, to, opts)
       if N[2].w[3] == w[3] and N[2].m == inn.m then edge(h, 2, d(N[h], N[2]) * Travel.OFFNET / Travel.Speed(), "ride") end
     end
   end
-  -- Dijkstra, on the time you spend playing: a flight or a boat is time you can look away (the player: "flying is an
-  -- AFK activity vs walking requires being fully engaged AND has to navigate mobs and PvP"), so its seconds count at
+  -- Dijkstra, on the time you spend playing: a flight or a boat is time you can look away, so its seconds count at
   -- Travel.AFK_WEIGHT. secs: the real time, for the plan's clock; afk: the seconds of it on a flight or boat
-  -- (the next place to settle comes off a heap ordered by distance, then by node number: the order a plain scan over
-  -- all ~500 nodes took - the least distance, the first of equals - so ties come out the same, at a fraction of the cost)
+  -- (heap ordered by distance, then node number: ties break as a plain linear scan would, deterministically)
   local dist, prev, how, done, kindOf, secs, afk = {}, {}, {}, {}, {}, {}, {}
   for i = 1, #N do dist[i] = math.huge end
   dist[1], secs[1], afk[1] = 0, 0, 0
@@ -592,21 +637,17 @@ local function planTrip(from, to, opts)
       local short = #c.via == 0 and d(f, n) <= 2 * Travel.TOWN_WALK
       if not (nxt and (nxt.how == "fly" or nxt.how == "boat") and short) then
         -- point at the first crossing on the way: the arrow follows the road, not a line over the hills
-        -- the first waypoint that is really ahead: one right beside you (a city waypoint you're standing on) would read
-        -- "1 yd" and point at your feet - in Stormwind's Trade District it did, on the way to the harbor
+        -- - the first one beyond Travel.AHEAD_YD (a nearer one points at your feet)
         local first
-        -- (a border crossing or a gate, not a flight master or a pier the road happens to pass: riding from Southshore
-        -- to Alterac the arrow pointed at Southshore's flight master 70 yd away and read as "fly" - tester)
+        -- (preferably a border crossing or a gate, not a flight master or pier the road passes: that reads as "fly")
         for _, x in ipairs(c.via) do if x.w and f.w and (x.kind == "cross" or x.gate) and d(f, x) > Travel.AHEAD_YD then first = x; break end end
         if not first then for _, x in ipairs(c.via) do if x.w and f.w and d(f, x) > Travel.AHEAD_YD then first = x; break end end end
         -- the zones the ride passes through (a border crossing joins two: the ones neither where you start nor where you
-        -- go), and a gate by its name - not every border spelled out ("through the Duskwood - Westfall border, the
-        -- Duskwood - Stranglethorn Vale border" read as a puzzle - tester)
+        -- go), and a gate by its name - not every border spelled out
         local via, seenZ = {}, {}
-        -- (never the place you go to: a road that dips into it and out again named it as a zone on the way)
+        -- (never the place you go to, even when the road dips into it and out again)
         seenZ[placeName(n) or ""] = true; seenZ[to.name or ""] = true; seenZ[mapName(n.m)] = true; if to.m then seenZ[mapName(to.m)] = true end
-        -- (a zone you ride through is the one two crossings in a row share: "Barrens / Ashenvale" then "Ashenvale /
-        -- Stonetalon" pass Ashenvale - where you start and where you go fall out by themselves, whatever the map calls them)
+        -- (a zone you ride through is the one two crossings in a row share: "A / B" then "B / C" pass B)
         local prevSides
         for _, x in ipairs(c.via) do
           if x.gate then
@@ -619,12 +660,10 @@ local function planTrip(from, to, opts)
             prevSides = sides
           end
         end
-        -- the last leg inside the place you go to names who you go to (to.stop: the step's NPC), a walk when it is a
-        -- town walk: after "Fly to Stormwind City" it read "Ride to Stormwind" (a player at the Brigadier General)
+        -- the last leg inside the place you go to names who you go to (to.stop: the step's NPC), "Walk" for a town walk
         local inDest = n.id == "target" and to.stop and f.m == to.m
         local text
-        -- (to a flight master: the flight path's name, as the flight map has it - "Ride to Thyssiana" named someone the player
-        -- never heard of (user); who stands there goes under it on the card, small: leg.npc)
+        -- (to a flight master: the flight path's name, as the flight map has it; the NPC goes under it: leg.npc)
         local fm = not inDest and nxt and nxt.how == "fly" and n.name and taxiNames()[n.m .. ":" .. n.name] or nil
         local npc = fm and n.name or nil
         if inDest then text = ((#c.via == 0 and d(f, n) <= Travel.TOWN_WALK) and "Walk" or ns.RideWord()) .. " to " .. to.stop .. (#via > 0 and (" via " .. table.concat(via, ", ")) or "")
@@ -654,13 +693,11 @@ local function planTrip(from, to, opts)
       local t = (n.spellSay or "Cast your teleport") .. " (to " .. (n.zone or mapName(n.m)) .. ")"
       legs[#legs + 1] = { sm = n.m, sx = n.x, sy = n.y, how = "spell", text = t, say = t }
     elseif c.how == "fly" then
-      -- who you fly from, unless the leg before is the ride to them: "Ride to Gretchen Mayberry > Fly to Stormwind City
-      -- (Gretchen Mayberry)" read as if she stood in Stormwind
+      -- who you fly from, unless the leg before is the ride to them (else it reads as if they stood at the destination)
       local prevLeg = legs[#legs]
       local named = f.name and not (prevLeg and prevLeg.how == "ride" and prevLeg.toId == f.id)
-      -- (where you land: the flight path's own town, "Fly to Aerie Peak" - not the zone: "Fly to Feralas" left a player
-      -- with Thalanaar and Feathermoon to guess which (user), and "The Hinterlands" is not what the flight map lists -
-      -- players read the town on it (a player). The zone only when the flight path has no name we know)
+      -- (where you land: the flight path's own town as the flight map lists it, not the zone (a zone may have two);
+      -- the zone only when the flight path has no name we know)
       local toTaxi = n.name and taxiNames()[n.m .. ":" .. n.name] or nil
       local dest = mapName(n.m)
       if toTaxi then dest = toTaxi:match("^([^,]+)") or toTaxi end
@@ -670,7 +707,7 @@ local function planTrip(from, to, opts)
       legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "fly", m = f.m, x = f.x, y = f.y, toTaxi = toTaxi, npc = named and fromTaxi and f.name or nil,
         zone = toZone, from = named and fromTown or nil,
         text = named and ("Fly from " .. fromTown .. " to " .. dest) or ("Fly to " .. dest) }
-      -- (the card's headline: where you land, the town; under it, small, its zone and who you fly from - a player)
+      -- (the card's headline: the town you land in; under it, small, its zone and who you fly from)
       legs[#legs].say = "Fly to " .. dest
     elseif c.how == "boat" then
       -- what you actually do: which town and zone you sail to; in a town with two piers, which one
@@ -679,7 +716,7 @@ local function planTrip(from, to, opts)
       local tram = f.dock and f.dock:find("^tram")
       -- a crossing that is more than a boat (the skyship and portal off Zephras Isle) says what you do
       local say = type(f.say) == "table" and n.dock and f.say[n.dock]
-      -- a dock portal (Forever added them beside the boats and zeppelins): the dock's text may name the boat
+      -- a dock portal (beside the boats and zeppelins): the dock's text may name the boat
       if c.kind == "portal" and not (say and say:lower():find("portal", 1, true)) then say = "Take the portal to " .. (n.town or n.name) .. " (" .. (n.zone or mapName(n.m)) .. ")" end
       local text = say or tram and ("Take the Deeprun Tram to " .. (n.town or n.name)) or ((sameTown and ("In " .. f.town .. ", walk to " .. (f.pier or "the other pier") .. " and take the boat to ") or "Boat to ") .. (n.town or n.name) .. " (" .. (n.zone or mapName(n.m)) .. ")")
       -- (the card's headline says what you do: "Take the boat to Menethil Harbor (Wetlands)")
@@ -688,19 +725,30 @@ local function planTrip(from, to, opts)
   end
   -- (where each flight master is in the world: the same every trip)
   if flightWConv ~= HBD.GetWorldCoordinatesFromZone then flightW, flightWConv = setmetatable({}, { __mode = "k" }), HBD.GetWorldCoordinatesFromZone end
+  -- (knowsFPKept's answers are checked against the state now: the search may have paused over frames)
+  do
+    local L2, sd = UnitLevel and UnitLevel("player") or 60, Travel.Side()
+    local r2, c2 = myRaceClass()
+    local gen = envNow(net(), (BeelineDB and BeelineDB.docks) or {})
+    fpSync(L2, sd, r2, c2, Travel.Speed(), Travel.DangerHere(from.m, sd, L2), gen)
+  end
   -- flight paths you do not have yet, right where a leg starts (the dock you land at, a town you ride through): grab
-  -- them on the way - a minute now, flights later
+  -- them on the way - a minute now, flights later (the first one found per leg)
   for li, l in ipairs(legs) do
     local lw = world(l.sm or l.m, l.sx or l.x, l.sy or l.y) -- where the leg starts (the dock you step off at)
     if lw then
       for m, list in pairs(ns.FLIGHT or {}) do
+        if l.fp then break end
         for _, f in ipairs(list) do
-          if not knowsFP(m, f[3]) then
-            local fw = world(m, f[1], f[2])
+          if not knowsFPKept(m, f[3]) then
+            local fw = flightWorld(m, f)
             if fw and fw[3] == lw[3] then
               local dd = math.sqrt((fw[1] - lw[1]) ^ 2 + (fw[2] - lw[2]) ^ 2)
-              local zn = mapName(m)
-              if dd <= Travel.FP_NEAR and not l.fp then l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd, here = li == 1 or nil }; l.say = l.say or l.text; l.text = l.text .. Travel.FPNote(f[4] or zn, f[3], li == 1, ns.char and ns.char.taxiSeen) end
+              if dd <= Travel.FP_NEAR then
+                local zn = mapName(m)
+                l.fp = { m = m, x = f[1], y = f[2], npc = f[3], zone = zn, yd = dd, here = li == 1 or nil }; l.say = l.say or l.text; l.text = l.text .. Travel.FPNote(f[4] or zn, f[3], li == 1, ns.char and ns.char.taxiSeen)
+                break
+              end
             end
           end
         end
@@ -711,11 +759,9 @@ local function planTrip(from, to, opts)
   return legs, secs[2], afk[2], dist[2]
 end
 
--- the note on a leg for a flight path you don't have where it starts. The first leg starts where you stand: "before you
--- go" - "Run to Orgrimmar - get the The Barrens flight path from Devrak there first" read as being sent to Orgrimmar
--- for a flight path (a player, standing at Devrak in the Crossroads). Until a flight master's map was opened on this
--- character the addon does not know your flight paths (Forever's world map marks none undiscovered: State.ScanTaxi):
--- talking to him tells it, and the trip is planned again with the flights you have
+-- the note on a leg for a flight path you don't have where it starts (first leg: "before you go", it starts where you
+-- stand). Until a flight master's map was opened on this character the addon doesn't know your flight paths (the
+-- world map marks none undiscovered: State.ScanTaxi); talking to him tells it, and the trip is planned again
 function Travel.FPNote(node, npc, here, seen)
   local name = tostring(node or ""):match("^([^,]+)") or tostring(node)
   npc = npc or "the flight master"
@@ -724,12 +770,12 @@ function Travel.FPNote(node, npc, here, seen)
   return s
 end
 
--- The same trip asked again in the same frame is answered from that frame's first search: adding the stops of a zone
--- you picked in Where to? and the solve after it asked ~250 trips in one frame at level 50, a fifth of them twice.
--- Nothing a trip depends on changes within a frame but what the key holds (the graph it was searched on stands for
--- your level, faction, race, class, speed, flight paths and piers; the hearthstone's state is its own part). Callers
--- change the legs they get (the card's "- about 3 min quicker" is added to the first leg's text): each gets a copy.
+-- The same trip asked again in the same frame is answered from that frame's first search (perf: hundreds of trips a
+-- frame, many repeated). Nothing a trip depends on changes within a frame but what the key holds (the graph stands for
+-- level, faction, race, class, speed, flight paths and piers; the hearthstone's state is its own part). Callers
+-- change the legs they get (the card appends to the first leg's text): each gets a copy.
 local frameMemo, frameAt, frameInn = {}, nil, nil
+local planEnv = {}
 local function copyLegs(legs)
   if type(legs) ~= "table" then return legs end
   local out = {}
@@ -765,30 +811,35 @@ function Travel.Plan(from, to, opts)
     end
     inn = frameInn
   end
-  local key = table.concat({ tostring(from.m), tostring(from.x), tostring(from.y), tostring(to.m), tostring(to.x), tostring(to.y), tostring(to.name), tostring(to.stop),
-    tostring(ground), tostring(noHearth), tostring(G), inn, tostring(UnitLevel and UnitLevel("player")), tostring(Travel.SPELLS), tostring(ns.VENDORS),
-    tostring(Travel.HEARTH_CAST), tostring(Travel.HEARTH_VALUE), tostring(Travel.AFK_WEIGHT), tostring(Travel.OFFNET) }, "|")
+  -- (the part of the key the same for every trip of the moment: made again only when one of its values changed)
+  local P = planEnv
+  local lv = UnitLevel and UnitLevel("player")
+  if not (P[1] == ground and P[2] == noHearth and P[3] == G and P[4] == inn and P[5] == lv and P[6] == Travel.SPELLS and P[7] == ns.VENDORS
+    and P[8] == Travel.HEARTH_CAST and P[9] == Travel.HEARTH_VALUE and P[10] == Travel.AFK_WEIGHT and P[11] == Travel.OFFNET) then
+    P = { ground, noHearth, G, inn, lv, Travel.SPELLS, ns.VENDORS, Travel.HEARTH_CAST, Travel.HEARTH_VALUE, Travel.AFK_WEIGHT, Travel.OFFNET }
+    P.key = table.concat({ tostring(ground), tostring(noHearth), tostring(G), inn, tostring(lv), tostring(Travel.SPELLS), tostring(ns.VENDORS),
+      tostring(Travel.HEARTH_CAST), tostring(Travel.HEARTH_VALUE), tostring(Travel.AFK_WEIGHT), tostring(Travel.OFFNET) }, "|")
+    planEnv = P
+  end
+  local key = P.key .. "|" .. tostring(from.m) .. "|" .. tostring(from.x) .. "|" .. tostring(from.y) .. "|" .. tostring(to.m) .. "|" .. tostring(to.x)
+    .. "|" .. tostring(to.y) .. "|" .. tostring(to.name) .. "|" .. tostring(to.stop)
   local hit = frameMemo[key]
   if hit then
     from.w = from.w or world(from.m, from.x, from.y); to.w = to.w or world(to.m, to.x, to.y) -- (as the search leaves them)
     return copyLegs(hit[1]), hit[2], hit[3], hit[4]
   end
   Travel.searches = Travel.searches + 1
-  local legs, secs, afk, dist = planTrip(from, to, opts)
+  local legs, secs, afk, dist = planTrip(from, to, opts, G)
   frameMemo[key] = { copyLegs(legs), secs, afk, dist }
   return legs, secs, afk, dist
 end
 
 -- A trip inside one zone is a walk - unless a flight you know lands so much nearer the spot that flying is clearly
--- quicker: Darkshire to Sven's camp at the far west end of Duskwood is five minutes on foot, or a flight to Sentinel
--- Hill and a short walk back across the border. The same planner decides (your flight master, the take-off, the flight,
--- the walk from where you land - through the real crossings), against the same trip on foot, and the flight is offered
--- only when it wins by a margin: the times are estimates, and a coin flip is not worth a flight. Your hearthstone is
--- left out of it: the plan has its own hearth steps, and an hour's cooldown is not spent on a walk inside one zone.
+-- quicker. The trip planner decides against the same trip on foot, and the flight is offered only when it wins by a
+-- margin (the times are estimates). No hearthstone: the plan has its own hearth steps.
 -- -> legs, seconds, seconds on foot; nil = walk
--- Cheap, because the card asks on every refresh and most steps are in your zone: a short walk plans nothing; neither
--- does a walk no flight could beat (your nearest flight point is too far, or you know fewer than two); and what was
--- decided holds while you stay within SHORTCUT_CELL yards and nothing else changed.
+-- Cheap (perf: the card asks every refresh): a short walk plans nothing; neither does a walk no flight could beat
+-- (nearest flight point too far, or fewer than two known); a result holds within SHORTCUT_CELL yards until inputs change.
 Travel.AFK_WEIGHT = 0.35     -- a second on a flight or a boat, as time spent playing (taking off and landing need you)
 Travel.SHORTCUT_SLOWER = 0.2 -- a flight that means less time on foot may take this share longer than the walk
 Travel.SHORTCUT_MIN = 120    -- a walk shorter than this (seconds) is never worth a flight: nothing is planned at all
@@ -816,7 +867,7 @@ function Travel.Shortcut(from, to)
   end
   memo.key, memo.legs, memo.secs, memo.walk = key, nil, nil, nil
   -- the quickest a flight could be: the walk to your nearest flight point, the take-off, and a landing right on the spot
-  local letter = Travel.Side() == "horde" and "H" or "A"
+  local letter = ns.State.MyFaction() or "A"
   local near, count = nil, 0
   local function point(w) count = count + 1; local dd = math.sqrt((w[1] - from.w[1]) ^ 2 + (w[2] - from.w[2]) ^ 2); if not near or dd < near then near = dd end end
   if Travel.NET then
@@ -840,14 +891,14 @@ function Travel.Shortcut(from, to)
   local _, foot = Travel.Plan({ m = from.m, x = from.x, y = from.y, w = from.w }, { m = to.m, x = to.x, y = to.y, name = to.name, w = to.w }, { ground = true })
   if foot and foot < walk then walk = foot end
   -- the flight wins on time spent playing: its time on foot plus a share of its time in the air, by a margin, and not
-  -- much slower on the clock (a flight and a short walk beats walking the length of Stranglethorn: the player)
+  -- much slower on the clock
   local onFoot = secs - (afk or 0)
   local playing = onFoot + (afk or 0) * Travel.AFK_WEIGHT
   if playing > walk - margin(walk) or secs > walk * (1 + Travel.SHORTCUT_SLOWER) then return nil end
   -- said on the card and the arrow: why you are sent to a flight master for a step in your own zone
   local saved = math.max(1, math.floor((walk - onFoot) / 60 + 0.5))
   legs[1].say = legs[1].say or legs[1].text
-  -- (riding from level 40: "walking" and "on foot" read wrong to a mounted player - user)
+  -- ("riding" once mounted)
   local going = Travel.Speed() > (Travel.RIDE or 0) and "riding" or "walking"
   legs[1].gain = secs <= walk - margin(walk) and ("about " .. math.max(1, math.floor((walk - secs) / 60 + 0.5)) .. " min quicker than " .. going .. " there")
     or ("about as quick as " .. going .. " there, with " .. saved .. " min less " .. going)
@@ -856,11 +907,9 @@ function Travel.Shortcut(from, to)
   return legs, secs, walk
 end
 
--- A leg in a few words, for the card's headline: what you do now ("Fly to Westfall", "Run to Thorgrum Borrelson", "Take
--- the boat to Menethil Harbor (Wetlands)"), without the notes the leg's full text carries (a flight path to pick up, the
--- other faction's town on the way, the minutes a shortcut saves: Travel.LegExtra, and the card's own lines). A leg built
--- elsewhere (Engine.TravelFor's "On the boat to Auberdine - sit tight", "Fly to X - flight master Y") has no say: its
--- text up to the first " - " outside brackets ("(through the Darkshore - Ashenvale border)" is part of the leg)
+-- A leg in a few words, for the card's headline: what you do now ("Fly to Westfall"), without the notes the leg's
+-- full text carries (Travel.LegExtra). A leg built elsewhere (Engine.TravelFor) has no say: its text up to the first
+-- " - " outside brackets (a "(... - ... border)" is part of the leg)
 local function dash(t)
   local depth = 0
   for k = 1, #t - 2 do

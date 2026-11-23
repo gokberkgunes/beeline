@@ -1,10 +1,11 @@
--- "Where to?": a window with a rail of two tabs on its left.
+-- "Home base" (Paths internally): a window with a rail of three tabs on its left.
 --   Zones - the zones you could go to now (ns.ZoneChoices): the XP left there for you (and what share of your level
 --           that is), quests left, hand-ins waiting, your plan's next zone marked PLANNED NEXT. Picking one takes you there.
 --   Plan  - your plan as the zones ahead, each with its quests (read-only); a companion's other plans fold under it.
+--   Side trips - dungeons and special rewards (UI/Dungeons.lua draws them into a frame of this window).
 -- The window keeps its size and the list scrolls. Paths.Draw builds one state (Paths.State) and lays it out; each
 -- kind of row has one paint function for its looks (selected, hover, kind), so they never stack oddly. Opened from the
--- route list's "Where to?", the card's "Change zone" or "/bee paths".
+-- card's house, the route list's "Home base", /bee home (or /bee paths); the Side trips tab from FR_TOGGLE_DUNGEONS.
 local _, ns = ...
 local Style = ns.Style
 local C = Style.C
@@ -12,7 +13,6 @@ local Paths = {}
 ns.Paths = Paths
 
 local f
-local MEDIA = "Interface\\AddOns\\Beeline\\Media\\"
 local W, H, PAD = 470, 470, 14      -- content width, window height
 local RAIL = 64                     -- the tab rail
 local LEFT = RAIL + PAD
@@ -21,24 +21,15 @@ local ROW_H, ROW_GAP = 40, 4        -- a zone row
 local CARD_H = 96                   -- a path card
 local RIGHT_W = 120                 -- the numbers at a row's right
 
--- the two tabs: label, icon, colour, the window title and a line under it
+-- the tabs: label, icon, colour, the window title and a line under it
 local TABS = {
-  zones = { label = "Zones", icon = "icon-goto", color = C.gold, title = "Where to?", tip = "The zones you could go to now: pick one as your home base - you work from it until it runs out" },
+  zones = { label = "Zones", icon = "icon-goto", color = C.gold, title = "Home base", tip = "The zones you could go to now: pick one as your home base - you work from it until it runs out" },
   paths = { label = "Plan", icon = "btn-list", color = C.good, title = "Your plan", tip = "The zones ahead on your plan, with their quests" },
+  trips = { label = "Side trips", icon = "icon-kill", color = C.gold, title = "Side trips", tip = "Class quests, bonus items and dungeons: each a side trip that keeps your plan" },
 }
 Paths.tab = "zones"
 
 -- ---------------------------------------------------------------- looks
-
-local function paintTab(b)
-  local t = TABS[b.key]
-  local lit = b.on or b.hover
-  local col = lit and t.color or C.sub
-  b.icon:SetVertexColor(col[1], col[2], col[3]); b.icon:SetAlpha(lit and 1 or 0.65)
-  b.label:SetTextColor(col[1], col[2], col[3])
-  b.wash:SetVertexColor(t.color[1], t.color[2], t.color[3], 0.12); b.wash:SetShown(b.on)
-  b.bar:SetVertexColor(t.color[1], t.color[2], t.color[3]); b.bar:SetShown(b.on)
-end
 
 -- a zone row: its edge says what it is (best next gold, where you are green), hover lights it up
 local function paintRow(b)
@@ -62,19 +53,14 @@ end
 
 -- ---------------------------------------------------------------- widgets
 
+local function setScroll(v) f.setScroll(v) end
+
 local function tabButton(key, y)
-  local b = CreateFrame("Button", nil, f.rail)
-  b:SetSize(RAIL - 6, 48); b:SetPoint("TOP", f.rail, "TOP", 0, -y); b.key = key
-  b.wash = b:CreateTexture(nil, "BACKGROUND"); b.wash:SetTexture(Style.WHITE); b.wash:SetAllPoints()
-  b.bar = b:CreateTexture(nil, "ARTWORK"); b.bar:SetTexture(Style.WHITE); b.bar:SetWidth(3); b.bar:SetPoint("TOPLEFT", 0, -6); b.bar:SetPoint("BOTTOMLEFT", 0, 6)
-  b.icon = b:CreateTexture(nil, "ARTWORK"); b.icon:SetTexture(MEDIA .. TABS[key].icon); b.icon:SetSize(18, 18); b.icon:SetPoint("TOP", 0, -8)
-  b.label = Style.Text(b, 10, C.sub); b.label:SetPoint("TOP", b.icon, "BOTTOM", 0, -4); b.label:SetJustifyH("CENTER"); b.label:SetText(TABS[key].label)
-  b:SetScript("OnClick", function() Paths.tab = key; Paths.Draw() end)
-  b:SetScript("OnEnter", function(self)
-    hover(self, true, paintTab)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(TABS[key].tip, 1, 1, 1, 1, true); GameTooltip:Show()
-  end)
-  b:SetScript("OnLeave", function(self) hover(self, false, paintTab); GameTooltip:Hide() end)
+  local b = Style.RailTab(f.rail, TABS[key], y, function()
+    if key == "trips" and Paths.tab ~= key and ns.Dungeons then ns.Dungeons.Reset() end
+    Paths.tab = key; setScroll(0); Paths.Draw()
+  end, RAIL - 6)
+  b.key = key
   return b
 end
 
@@ -127,7 +113,7 @@ local function legsOf(r)
     z = Style.ShortZone((z:gsub("^%s+", ""):gsub("%s+$", "")))
     if z ~= "" and out[#out] ~= z then out[#out + 1] = z end
   end
-  -- (a stop in a capital on the way is not a zone you go to: "Ironforge > Desolace" read as a trip to Ironforge)
+  -- (a stop in a capital on the way is not a zone you go to)
   do local kept = {}; for _, z in ipairs(out) do if not (ns.IsCapital and ns.IsCapital(z)) and kept[#kept] ~= z then kept[#kept + 1] = z end end; if #kept > 0 then out = kept end end
   return out
 end
@@ -182,17 +168,6 @@ end
 
 -- ---------------------------------------------------------------- the window
 
-local function setScroll(v)
-  local max = math.max(0, f.content:GetHeight() - f.scroll:GetHeight())
-  v = math.max(0, math.min(max, v)); f.scroll:SetVerticalScroll(v)
-  local th = f.track:GetHeight() or 0
-  f.thumb:SetShown(max > 0); f.track:SetShown(max > 0); f.grip:SetShown(max > 0)
-  if max > 0 and th > 0 then
-    local h = math.max(20, th * f.scroll:GetHeight() / f.content:GetHeight())
-    f.thumb:SetHeight(h); f.thumb:ClearAllPoints(); f.thumb:SetPoint("TOP", f.track, "TOP", 0, -(th - h) * v / max)
-  end
-end
-
 local function build()
   f = CreateFrame("Frame", "BeelinePaths", UIParent)
   f:SetSize(W + RAIL, H); f:SetPoint("CENTER", 0, 40)
@@ -201,20 +176,18 @@ local function build()
   f.rail = CreateFrame("Frame", nil, f)
   f.rail:SetPoint("TOPLEFT", 4, -4); f.rail:SetPoint("BOTTOMLEFT", 4, 4); f.rail:SetWidth(RAIL - 6)
   f.rail.bg = f.rail:CreateTexture(nil, "BACKGROUND"); f.rail.bg:SetAllPoints(); f.rail.bg:SetColorTexture(0, 0, 0, 0.28)
-  f.tabs = { tabButton("zones", 8), tabButton("paths", 60) }
+  f.tabs = { tabButton("zones", 8), tabButton("paths", 60), tabButton("trips", 112) }
   -- the top: title, one line under it, close
   f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", LEFT, -12)
   local close = Style.CloseButton(f)
   f.intro = Style.Text(f, 10, C.sub); f.intro:SetPoint("TOPLEFT", LEFT, -34); f.intro:SetPoint("RIGHT", f, "RIGHT", -PAD, 0); f.intro:SetWordWrap(false)
   -- the list: scrolls inside a window that keeps its size
-  f.scroll = CreateFrame("ScrollFrame", nil, f); f.scroll:EnableMouseWheel(true)
+  Style.ScrollList(f, W - 2 * PAD, 60)
   f.scroll:SetPoint("TOPLEFT", LEFT, -TOP); f.scroll:SetPoint("BOTTOMRIGHT", -PAD - 8, 34)
-  f.content = CreateFrame("Frame", nil, f.scroll); f.content:SetSize(W - 2 * PAD, 10); f.scroll:SetScrollChild(f.content)
-  f.track = f:CreateTexture(nil, "ARTWORK"); f.track:SetTexture(Style.WHITE); f.track:SetVertexColor(1, 1, 1, 0.05); f.track:SetWidth(4)
   f.track:SetPoint("TOPRIGHT", -PAD + 2, -TOP); f.track:SetPoint("BOTTOMRIGHT", -PAD + 2, 34)
-  f.thumb = f:CreateTexture(nil, "OVERLAY"); f.thumb:SetTexture(Style.WHITE); f.thumb:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.6); f.thumb:SetWidth(4)
-  f.scroll:SetScript("OnMouseWheel", function(self, d) setScroll(self:GetVerticalScroll() - d * 60) end)
-  f.grip = Style.ScrollGrip(f, f.track, f.thumb, function(fr) setScroll(fr * math.max(0, f.content:GetHeight() - f.scroll:GetHeight())) end)
+  -- the Side trips tab: UI/Dungeons.lua draws into this
+  f.trips = CreateFrame("Frame", nil, f.content); f.trips:SetPoint("TOPLEFT", 0, 0); f.trips:SetSize(W - 2 * PAD - 8, 10); f.trips:Hide()
+  if ns.Dungeons then ns.Dungeons.Attach(f.trips, W - 2 * PAD - 8) end
   -- the bottom: one line (a zone you asked for, or how many more zones there are)
   f.foot = Style.Text(f, 10, C.sub); f.foot:SetPoint("BOTTOMLEFT", LEFT, 12); f.foot:SetPoint("RIGHT", f, "RIGHT", -PAD, 0); f.foot:SetWordWrap(false)
   f:Hide()
@@ -239,6 +212,14 @@ function Paths.Levels(xp)
   end
   return out
 end
+-- the level xp more takes you to ("to 36.4"), or nil when that is under a twentieth of a level
+function Paths.ReachText(xp)
+  local lv = Paths.Levels(xp)
+  if lv < 0.05 then return nil end
+  local L, m = (UnitLevel and UnitLevel("player")) or 1, (UnitXPMax and UnitXPMax("player")) or 0
+  local at = L + (m > 0 and ((UnitXP and UnitXP("player")) or 0) / m or 0) + lv
+  return string.format("to %.1f", math.min(60, math.floor(at * 10) / 10))
+end
 -- seconds -> "here", "2 min away", "1 h 10 away"
 function Paths.Away(secs)
   local m = math.floor((secs or 0) / 60 + 0.5)
@@ -260,16 +241,14 @@ function Paths.Pick(row)
     if onZone or (BeelineData and BeelineData.dungeon) then return Paths.Request(Paths.PLANNED) end
     if f then f:Hide() end; return -- (on your planned route already)
   end
-  -- (the zone you stand in, not the route you are on: pick it to stay - its tooltip said "click to go there" and the
-  -- click only closed the window - state map)
+  -- (the zone you stand in, not the route you are on: pick it to stay)
   if row.here and (not row.route or row.route == BeelineData) then if f then f:Hide() end; return end
   -- (no ready route: without the companion nothing can plan one - the row says "no route yet" and does nothing)
   if not row.route and not (ns.HasCompanion and ns.HasCompanion()) then return end
   return Paths.Request(row.zone, row.route)
 end
--- route: the row's own route (a row is keyed by the zone its route works in - Shen'dralas's route all in Desolace is the
--- Desolace row - so the zone's name can find another route than the one the row counted: the hopper picked Redridge
--- and got an empty one)
+-- route: the row's own route (a row is keyed by the zone its route works in, so the zone's name can find another
+-- route than the one the row counted)
 function Paths.Request(zone, route)
   ns.char.requestZone = zone; ns.char.requestHandled = nil
   -- a ready-made route into that zone: go now (the next replan builds your whole path from there, and the addon moves
@@ -283,7 +262,7 @@ function Paths.Request(zone, route)
   if zr then
     ns.Engine.Switch(function() ns.EnterZoneRoute(zr.id); ns.Fire("FR_ROUTE_CHANGED") end)
     if ns.Why then ns.Why("path", "home base: " .. zone .. " - on its ready-made route now, with the quests you carry there; your next plan starts there") end
-    ns.Print("Home base: " .. zone .. ". \"Back to plan\" in Where to? returns you to your plan.")
+    ns.Print("Home base: " .. zone .. ". The house on the card takes you back to your plan.")
   else
     ns.Print(zone and ("Asked for a path starting in " .. zone .. ". /reload to send it to the planner, then /reload once more to get it.") or "Cleared your zone request.")
   end
@@ -349,14 +328,12 @@ local function layoutZones(st)
     b.row = z
     b.name:SetText(Style.ShortZone(z.zone) .. (z.also and (" + " .. Style.ShortZone(z.also)) or ""))
     -- the XP left there for you, and how many levels that is from where you are: finish this zone, or go where there is
-    -- more ("106%" of a level read as nonsense with 40k to go - tester; the quest count went to the tooltip, it was cut off)
+    -- more (levels, not a percent of one; the quest count is in the tooltip)
     local right = ""
     if z.xpLeft and z.xpLeft > 0 then
       -- (and the level that gets you to: "to 36.4" says at once whether the zone gets you your next level)
-      local lv = Paths.Levels(z.xpLeft)
-      local L, m = (UnitLevel and UnitLevel("player")) or 1, (UnitXPMax and UnitXPMax("player")) or 0
-      local at = L + (m > 0 and ((UnitXP and UnitXP("player")) or 0) / m or 0) + lv
-      right = "~" .. Paths.Short(z.xpLeft) .. " XP" .. (lv >= 0.05 and string.format("  ·  to %.1f", math.min(60, math.floor(at * 10) / 10)) or "")
+      local reach = Paths.ReachText(z.xpLeft)
+      right = "~" .. Paths.Short(z.xpLeft) .. " XP" .. (reach and ("  ·  " .. reach) or "")
       -- (and how far: the trip there, once the background has priced it)
       if z.tripSecs and not z.here then right = right .. "  ·  " .. Paths.Away(z.tripSecs) end
     end
@@ -483,11 +460,14 @@ local function layoutPlan(st)
   return y
 end
 
+local tripsUp -- (the Side trips tab is what the window shows now: Paths.DrawTrips)
 function Paths.Draw()
   if not f or not f:IsShown() then return end
+  if Paths.tab == "trips" then return Paths.DrawTrips() end
+  tripsUp = false; f.trips:Hide()
   local st = Paths.State()
   local zones = st.tab ~= "paths"
-  for _, b in ipairs(f.tabs) do b.on = (b.key == "zones") == zones; paintTab(b) end
+  for _, b in ipairs(f.tabs) do b.on = b.key == (zones and "zones" or "paths"); Style.PaintTab(b) end
   f.tabs[2].label:SetText("Plan")
   f.title:SetText(TABS[zones and "zones" or "paths"].title)
   f.intro:SetText(zones and (string.format("Level %d", st.level) .. (function() local m, h = UnitXPMax and UnitXPMax("player") or 0, UnitXP and UnitXP("player") or 0; return m > 0 and ("  ·  " .. Paths.Short(m - h) .. " XP to " .. (st.level + 1)) or "" end)() .. "  ·  pick a zone as your home base") or "The zones ahead on your plan, and the quests in each")
@@ -500,7 +480,7 @@ function Paths.Draw()
   f.content:SetHeight(math.max(h, 1))
   local foot
   if zones then
-    -- (by name: "+3 more zones" said there were more without saying which - tester)
+    -- (by name, not just "+3 more zones")
     -- (a chain you carry here turning gray soon: said here, not only in a row's tooltip)
     local risk = ns.ChainsAtRisk and ns.ChainsAtRisk()[1]
     foot = st.help or (risk and risk.line and ("|cffff7359Leaving now: " .. risk.line .. "|r")) or (st.more > 0 and ("Also at your level, no route yet: " .. table.concat(st.moreNames, ", "))) or nil
@@ -509,10 +489,38 @@ function Paths.Draw()
   setScroll(f.scroll:GetVerticalScroll())
 end
 
-function Paths.Show(tab) if not f then return end; if tab then Paths.tab = tab end; f:Show(); setScroll(0); Paths.Draw() end
-function Paths.Toggle()
-  if f:IsShown() then f:Hide(); return end
+-- the Side trips tab: the list UI/Dungeons.lua draws (no zone state worked out for it). The other tabs' rows are
+-- hidden once when it comes up, not on each redraw (a kill redraws it)
+function Paths.DrawTrips()
+  if not tripsUp then
+    tripsUp = true
+    for _, b in ipairs(f.tabs) do b.on = b.key == "trips"; Style.PaintTab(b) end
+    f.title:SetText(TABS.trips.title)
+    f.intro:SetText("A group's going? Pick its dungeon: its quests, the run, the hand-ins. Your plan waits.")
+    for _, b in pairs(rows) do b:Hide() end
+    for _, c in pairs(cards) do c:Hide() end
+    for _, b in pairs(planRows) do b:Hide() end
+    if f.others then f.others:Hide() end
+    f.trips:Show()
+  end
+  local h = ns.Dungeons and ns.Dungeons.Draw() or 0
+  f.trips:SetHeight(math.max(h, 1)); f.content:SetHeight(math.max(h, 1))
+  f.foot:SetText(""); f.foot:Hide()
+  setScroll(f.scroll:GetVerticalScroll())
+end
+
+function Paths.Show(tab)
+  if not f then return end
+  if tab then Paths.tab = tab end
   f:Show(); setScroll(0); Paths.Draw()
+end
+function Paths.Hide() if f then f:Hide() end end
+-- open (on that tab, when one is given)
+function Paths.IsShown(tab) return f and f:IsShown() and (tab == nil or Paths.tab == tab) or false end
+function Paths.Toggle()
+  if not f then return end -- (a key pressed while loading)
+  if f:IsShown() then f:Hide(); return end
+  Paths.Show("zones") -- (opened: Zones, as the house; Side trips has its own toggle)
 end
 
 ns.On("FR_LOADED", build)

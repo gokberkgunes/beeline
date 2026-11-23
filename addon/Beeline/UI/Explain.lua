@@ -1,5 +1,5 @@
 -- Why the card sends you where it does, in plain words: the card's "?" (Card.lua) and the one line under a trip that
--- leaves your zone. Players don't read paragraphs ("assume no one reads all of this"), so it leads with one line that
+-- leaves your zone. Players don't read paragraphs, so it leads with one line that
 -- says it's the quickest way and why, backed by a number where the engine has one (minutes saved, XP), and "the fastest
 -- route the planner found" where it has none - never a made-up number. The facts follow on a second line; a trip's
 -- legs, in full, after that.
@@ -66,9 +66,9 @@ local function leaves(i)
 end
 
 -- A trip out of the zone you picked that the planner kept because it pays (tools/zone-confine.js marks it: detour = giver,
--- hand-in or work, with the quest, the zone, the work that stays here and a quest of this zone it goes alongside). The
--- user: "this seems weird but it actually is the most efficient" - so the "?" leads with that and the reason, and the
--- card's one line says what the trip is for. -> the marked step (this one, or the step the flight goes to), or nil
+-- hand-in or work, with the quest, the zone, the work that stays here and a quest of this zone it goes alongside). It
+-- looks odd but pays, so the "?" leads with that and the reason, and the card's one line says what the trip is for.
+-- -> the marked step (this one, or the step the flight goes to), or nil
 local function detourOf(i)
   local list = steps()
   local s = list[i]
@@ -81,7 +81,6 @@ local function detourOf(i)
     end
   end
 end
-Explain.DetourOf = detourOf
 -- "Badlands" reads "the Badlands" in a sentence
 local THE = { ["Badlands"] = true, ["Hinterlands"] = true, ["Barrens"] = true, ["Western Plaguelands"] = true, ["Eastern Plaguelands"] = true }
 local function inZone(z) local n = ns.Style.ShortZone(z or "") return (THE[n] and "the " or "") .. n end

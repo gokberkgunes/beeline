@@ -13,8 +13,7 @@ Style.C = {
   edge = { 1, 1, 1, 0.07 },
   gold = { 1.0, 0.82, 0.36 },
   text = { 0.95, 0.95, 0.97 },
-  -- secondary text. On the panel fill (bg) sub is about 10:1 and dim about 7:1; dim used to be 0.42/0.45/0.52,
-  -- about 4:1, which is under the 4.5:1 that small text needs and vanished first on small or dense screens
+  -- secondary text. On the panel fill (bg) sub is about 10:1 and dim about 7:1 (small text needs at least 4.5:1)
   sub = { 0.72, 0.76, 0.84 },
   dim = { 0.56, 0.60, 0.68 },
   good = { 0.36, 0.86, 0.48 },
@@ -51,7 +50,7 @@ end
 
 local fontPath = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 local fonts = {}
--- no text of ours under MIN_FONT (9 was the smallest: 9 px tall on a screen whose UI scale is one pixel per unit).
+-- no text of ours under MIN_FONT.
 -- tiny = true skips the floor: the numbers inside the small map pins
 Style.MIN_FONT = 10
 function Style.Font(size, flags, tiny)
@@ -118,6 +117,24 @@ function Style.Scaled(frame, key, fit)
   return frame
 end
 function Style.ApplyScale() for frame, o in pairs(scaled) do applyScale(frame, o) end end
+-- A dragged frame's place, kept as ns.db[key] = { "ABS", x, y }: its point ("TOPLEFT" or "CENTER") in UIParent units,
+-- never in its own scaled ones (the game multiplies offsets by the frame's scale, so those move with the scale)
+function Style.SavePos(frame, key, point)
+  local x, y
+  if point == "CENTER" then x, y = frame:GetCenter() else x, y = frame:GetLeft(), frame:GetTop() end
+  if not (x and y) then return false end
+  local s = frame:GetScale() or 1
+  ns.db[key] = { "ABS", x * s, y * s }
+  return true
+end
+-- sets the frame at its kept place for its current scale; false when none is kept
+function Style.PlaceSaved(frame, key, point)
+  local p = ns.db[key]
+  if not (type(p) == "table" and p[1] == "ABS" and tonumber(p[2]) and tonumber(p[3])) then return false end
+  local s = frame:GetScale() or 1
+  frame:SetPoint(point, UIParent, "BOTTOMLEFT", p[2] / s, p[3] / s)
+  return true
+end
 -- "/bee scale": what the screen and our scale come to; "/bee scale 1.3" sets it, "/bee scale auto" takes the suggestion
 function Style.ScaleInfo()
   local pw, ph = GetPhysicalScreenSize()
@@ -129,16 +146,18 @@ function Style.ScaleInfo()
 end
 function Style.SetUIScale(v)
   ns.db.uiScale = math.max(Style.SCALE_MIN, math.min(Style.SCALE_MAX, v))
-  ns.Fire("FR_SETTINGS")
+  ns.Fire("FR_SETTINGS", "uiScale")
 end
 function Style.SlashScale(arg)
   arg = (arg or ""):gsub("^%s+", "")
   if arg == "auto" then Style.SetUIScale(Style.SuggestScale() or 1)
-  elseif arg == "reset" then ns.db.uiScale = nil; ns.Fire("FR_SETTINGS")
+  elseif arg == "reset" then ns.db.uiScale = nil; ns.Fire("FR_SETTINGS", "uiScale")
   elseif tonumber(arg) then Style.SetUIScale(tonumber(arg))
   elseif arg ~= "" then ns.Print("/bee scale  (shows it)  -  /bee scale 1.3  -  /bee scale auto  -  /bee scale reset"); return end
   ns.Print(Style.ScaleInfo())
 end
+-- FR_SETTINGS(key): the setting that changed (nil: any or several). Each listener redoes only what that key touches;
+-- the scale is applied here, once, before the card's and the arrow's listeners run
 ns.On("FR_SETTINGS", function() Style.ApplyScale() end)
 ns.On("UI_SCALE_CHANGED", function() Style.ApplyScale() end)
 ns.On("DISPLAY_SIZE_CHANGED", function() Style.ApplyScale() end)
@@ -209,23 +228,25 @@ function Style.IconButton(parent, glyph, size, onClick, tip, color)
   return b
 end
 
--- small flat button with hover highlight
-function Style.Button(parent, label, w, h, onClick, tip)
+-- small flat button with hover highlight; rest: the label's colour off hover (default sub), size: its font size
+function Style.Button(parent, label, w, h, onClick, tip, rest, size)
   local b = CreateFrame("Button", nil, parent)
   b:SetSize(w, h)
   local bg = b:CreateTexture(nil, "BACKGROUND"); bg:SetTexture(Style.WHITE); bg:SetAllPoints(); bg:SetVertexColor(1, 1, 1, 0.05)
   local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetAllPoints(); hl:SetVertexColor(1, 0.82, 0.36, 0.14)
   b.label = Style.Text(b, 11, Style.C.sub); b.label:SetPoint("CENTER"); b.label:SetJustifyH("CENTER"); b.label:SetText(label)
+  if size then b.label:SetFontObject(Style.Font(size)) end
+  b.rest = rest or Style.C.sub
+  if rest then b.label:SetTextColor(rest[1], rest[2], rest[3]) end
   b:SetScript("OnClick", onClick)
   b:SetScript("OnEnter", function(self) self.label:SetTextColor(1, 0.86, 0.5); if tip then GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText(tip, 1, 1, 1, 1, true); GameTooltip:Show() end end)
-  b:SetScript("OnLeave", function(self) local c = Style.C.sub; self.label:SetTextColor(c[1], c[2], c[3]); GameTooltip:Hide() end)
+  b:SetScript("OnLeave", function(self) local c = self.rest; self.label:SetTextColor(c[1], c[2], c[3]); GameTooltip:Hide() end)
   return b
 end
 
 -- A scrollbar you can use: a strip over the (thin, drawn) track that takes the mouse - drag the thumb, or click
 -- anywhere on the strip to jump there. The track and thumb stay plain textures the list draws; setFraction(0..1)
--- scrolls the list. (The route list's and the quest log check's bars were drawings only: "this scroll bar isn't
--- clickable".) Returns the strip.
+-- scrolls the list. Returns the strip.
 Style.GRIP_W = 14
 function Style.ScrollGrip(parent, track, thumb, setFraction)
   local grip = CreateFrame("Button", nil, parent)
@@ -255,6 +276,90 @@ function Style.ScrollGrip(parent, track, thumb, setFraction)
   return grip
 end
 
+-- the slim bars under the card (what's new, a hint, a scale offer): a line of text and "x"; Style.CardBarButton adds
+-- a button left of the "x". They stack under the card in order (1 first), the shown ones only: Style.StackCardBars
+local cardBars = {}
+function Style.CardBar(name, order, color, onX, xTip)
+  local card = BeelineCard
+  if not card then return nil end
+  local b = CreateFrame("Frame", name, card)
+  b:SetHeight(22)
+  Style.Panel(b, Style.C.bg2)
+  b.text = Style.Text(b, 11, color); b.text:SetPoint("LEFT", 10, 0); b.text:SetWordWrap(false)
+  b.x = Style.Button(b, "x", 18, 18, onX, xTip); b.x:SetPoint("RIGHT", -3, 0)
+  b.text:SetPoint("RIGHT", b.x, "LEFT", -6, 0)
+  cardBars[order] = b
+  return b
+end
+function Style.CardBarButton(b, label, w, onClick, tip)
+  local go = Style.Button(b, label, w, 18, onClick, tip)
+  go:SetPoint("RIGHT", b.x, "LEFT", -4, 0)
+  b.text:SetPoint("RIGHT", go, "LEFT", -6, 0)
+  return go
+end
+function Style.StackCardBars()
+  local above = BeelineCard
+  for k = 1, 3 do
+    local b = cardBars[k]
+    if b and b:IsShown() then
+      b:ClearAllPoints(); b:SetPoint("TOPLEFT", above, "BOTTOMLEFT", 0, -4); b:SetPoint("TOPRIGHT", above, "BOTTOMRIGHT", 0, -4)
+      above = b
+    end
+  end
+end
+
+-- a window's tab rail: a tab button (t = { label, icon, color, tip? }), w wide, at y under the rail's top; b.on marks
+-- the open one (then Style.PaintTab(b))
+function Style.PaintTab(b)
+  local t = b.t
+  local lit = b.on or b.hover
+  local col = lit and t.color or Style.C.sub
+  b.icon:SetVertexColor(col[1], col[2], col[3]); b.icon:SetAlpha(lit and 1 or 0.65)
+  b.label:SetTextColor(col[1], col[2], col[3])
+  b.wash:SetVertexColor(t.color[1], t.color[2], t.color[3], 0.12); b.wash:SetShown(b.on)
+  b.bar:SetVertexColor(t.color[1], t.color[2], t.color[3]); b.bar:SetShown(b.on)
+end
+function Style.RailTab(rail, t, y, onClick, w)
+  local b = CreateFrame("Button", nil, rail)
+  b:SetSize(w, 48); b:SetPoint("TOP", rail, "TOP", 0, -y); b.t = t
+  b.wash = b:CreateTexture(nil, "BACKGROUND"); b.wash:SetTexture(Style.WHITE); b.wash:SetAllPoints()
+  b.bar = b:CreateTexture(nil, "ARTWORK"); b.bar:SetTexture(Style.WHITE); b.bar:SetWidth(3); b.bar:SetPoint("TOPLEFT", 0, -6); b.bar:SetPoint("BOTTOMLEFT", 0, 6)
+  b.icon = b:CreateTexture(nil, "ARTWORK"); b.icon:SetTexture(MEDIA .. t.icon); b.icon:SetSize(18, 18); b.icon:SetPoint("TOP", 0, -8)
+  b.label = Style.Text(b, 10, Style.C.sub); b.label:SetPoint("TOP", b.icon, "BOTTOM", 0, -4); b.label:SetJustifyH("CENTER"); b.label:SetText(t.label)
+  b:SetScript("OnClick", onClick)
+  b:SetScript("OnEnter", function(self)
+    self.hover = true; Style.PaintTab(self)
+    if t.tip then GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(t.tip, 1, 1, 1, 1, true); GameTooltip:Show() end
+  end)
+  b:SetScript("OnLeave", function(self) self.hover = false; Style.PaintTab(self); if t.tip then GameTooltip:Hide() end end)
+  return b
+end
+
+-- A window's scrolling list: f.scroll (place it), f.content (contentW wide; set its height), a track and thumb (place
+-- f.track beside the list) with a grip to drag, the mouse wheel (step: px a notch). Returns f.setScroll(v), which
+-- clamps v and redraws the thumb; call it after a layout.
+function Style.ScrollList(f, contentW, step)
+  local gold = Style.C.gold
+  f.scroll = CreateFrame("ScrollFrame", nil, f); f.scroll:EnableMouseWheel(true)
+  f.content = CreateFrame("Frame", nil, f.scroll); f.content:SetSize(contentW, 10); f.scroll:SetScrollChild(f.content)
+  f.track = f:CreateTexture(nil, "ARTWORK"); f.track:SetTexture(Style.WHITE); f.track:SetVertexColor(1, 1, 1, 0.05); f.track:SetWidth(4)
+  f.thumb = f:CreateTexture(nil, "OVERLAY"); f.thumb:SetTexture(Style.WHITE); f.thumb:SetVertexColor(gold[1], gold[2], gold[3], 0.6); f.thumb:SetWidth(4)
+  local function setScroll(v)
+    local max = math.max(0, f.content:GetHeight() - f.scroll:GetHeight())
+    v = math.max(0, math.min(max, v)); f.scroll:SetVerticalScroll(v)
+    local th = f.track:GetHeight() or 0
+    f.thumb:SetShown(max > 0); f.track:SetShown(max > 0); f.grip:SetShown(max > 0)
+    if max > 0 and th > 0 then
+      local h = math.max(20, th * f.scroll:GetHeight() / f.content:GetHeight())
+      f.thumb:SetHeight(h); f.thumb:ClearAllPoints(); f.thumb:SetPoint("TOP", f.track, "TOP", 0, -(th - h) * v / max)
+    end
+  end
+  f.setScroll = setScroll
+  f.scroll:SetScript("OnMouseWheel", function(self, d) setScroll(self:GetVerticalScroll() - d * (step or 60)) end)
+  f.grip = Style.ScrollGrip(f, f.track, f.thumb, function(fr) setScroll(fr * math.max(0, f.content:GetHeight() - f.scroll:GetHeight())) end)
+  return setScroll
+end
+
 -- progress bar with label
 function Style.Bar(parent, h)
   local f = CreateFrame("Frame", nil, parent); f:SetHeight(18)
@@ -274,16 +379,17 @@ function Style.Bar(parent, h)
     self.fill:SetVertexColor(c[1], c[2], c[3], 0.95)
     self.label:SetText(label or ""); self.value:SetText(done and "|cff5cdc7adone|r" or (value or ""))
     self.label:SetTextColor(done and 0.6 or 0.92, done and 0.65 or 0.93, done and 0.7 or 0.96)
+    self:SetScript("OnUpdate", self.step) -- (it runs only while the fill moves toward its target)
   end
-  f:SetScript("OnUpdate", function(self, el)
+  function f.step(self, el)
     local w = self.track:GetWidth(); if w <= 0 then return end
     self.cur = self.cur or 0
     local t = self.target or 0
-    if math.abs(t - self.cur) < 0.001 then return end
+    if math.abs(t - self.cur) < 0.001 then self:SetScript("OnUpdate", nil); return end
     self.cur = self.cur + (t - self.cur) * math.min(1, el * 8)
     self.fill:SetWidth(math.max(0.001, w * self.cur))
     self.fill:SetShown(self.cur > 0.004)
-  end)
+  end
   return f
 end
 

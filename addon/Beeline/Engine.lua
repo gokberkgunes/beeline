@@ -11,15 +11,19 @@ Engine.view = nil     -- an earlier/later step being looked at (Back, list); nev
 local quiet = true    -- no completion animation for the catch-up refresh at login
 
 local function steps() return BeelineData and BeelineData.steps or {} end
+-- One generation per step list (list._gen): Engine.StepsChanged(list) after a stop is inserted or removed. Every cache
+-- built from a list keeps the generation it was built at (c.gen) and is built again when it differs.
+function Engine.StepsChanged(list) if list then list._gen = (list._gen or 0) + 1 end end
+-- (tools/replay.js edits a list in place and clears its key cache: that is a change of the list)
+Engine._keyCache = setmetatable({}, { __newindex = function(_, list) Engine.StepsChanged(list) end })
 -- Ticks and skips are stored against the step itself, not its number: kind + quest + what it targets, plus which
 -- occurrence it is. Regenerating the route shifts step numbers; these keys stay on the same step.
 local keyCache = setmetatable({}, { __mode = "k" })
-Engine._keyCache = keyCache -- (Engine/Inserts.lua)
 function Engine.Key(i)
   local list = steps()
   local c = keyCache[list]
-  if not c then
-    c = {}; local seen = {}
+  if not c or c.gen ~= (list._gen or 0) then
+    c = { gen = list._gen or 0 }; local seen = {}
     for j, s in ipairs(list) do
       local base = (s.k or "?") .. ":" .. tostring(s.q or "") .. ":" .. tostring(s.match or s.text or s.dest or s.name or s.npc or s.fp or s.bind or "")
       seen[base] = (seen[base] or 0) + 1
@@ -31,14 +35,15 @@ function Engine.Key(i)
 end
 local function key(i) return Engine.Key(i) end
 
+local wordsOf, wordsCache, wordsN -- (below Engine.Words)
 -- noElim: without the elimination pass (it asks about the quest's other steps, which would ask about this one)
 function Engine.ObjectiveFor(step, noElim)
   local q = State.Quest(step.q)
   if not q or not q.on then return nil end
   if step.unknown then return nil end -- (the quest's own words, no objective's: the card shows all of the quest's lines)
   if step.match then
-    -- the exact name first ("Murloc slain" for "Murloc"), then any objective containing it: "Murloc" alone matched
-    -- "Murloc Streamrunner slain" and the card waited on the wrong objective
+    -- the exact name first ("Murloc slain" for "Murloc"), then any objective containing it: a loose-only match
+    -- could pick "Murloc Streamrunner slain"
     local m = step.match:lower()
     local loose
     for _, o in ipairs(q.objectives) do
@@ -49,27 +54,25 @@ function Engine.ObjectiveFor(step, noElim)
     if loose then return loose end
   end
   if step.o and q.objectives[step.o] then return q.objectives[step.o] end
-  -- no match word from the planner (objects to use, places to explore: the quest data has no text the game shows for
-  -- them): the objective sharing the most distinctive words with the step ("Read the Lay of Ameth'Aran" -> "Lay of
-  -- Ameth'Aran read"), when exactly one does best. Otherwise the card couldn't tell that objective was done and sat on
-  -- it until the whole quest was (you ticked it by hand).
+  -- no match word from the planner (objects to use, places to explore): the objective sharing the most distinctive
+  -- words with the step ("Read the Lay of Ameth'Aran" -> "Lay of Ameth'Aran read"), when exactly one does best
   if not step.match and step.text then
-    local want = Engine.Words(step.text)
+    local want = wordsOf(step.text)
     local best, bestN, tie = nil, 0, false
     for _, o in ipairs(q.objectives) do
       local n = 0
-      for w in pairs(Engine.Words(o.text)) do if want[w] then n = n + 1 end end
+      for w in pairs(wordsOf(o.text)) do if want[w] then n = n + 1 end end
       if n > bestN then best, bestN, tie = o, n, false elseif n == bestN and n > 0 then tie = true end
     end
     if best and not tie then return best end
   end
   if not noElim and not step.match and step.text then
-    -- by elimination: every other objective of the quest belongs to another step of the route ("Explore" says
-    -- nothing; Alther's Mill's other objective is "Use Tarantula Egg"): the one left is this step's
+    -- by elimination: every other objective of the quest belongs to another step of the route: the one left is
+    -- this step's
     local claimed, list = {}, steps()
     for _, j in ipairs(Engine.ObjStepsOf(step.q)) do
       local t = list[j]
-      if t ~= step then local o2 = (t.match or Engine.Words(t.text) and next(Engine.Words(t.text))) and Engine.ObjectiveFor(t, true) or nil; if o2 then claimed[o2] = true end end
+      if t ~= step then local o2 = (t.match or next(wordsOf(t.text))) and Engine.ObjectiveFor(t, true) or nil; if o2 then claimed[o2] = true end end
     end
     local left
     for _, o in ipairs(q.objectives) do if not claimed[o] then if left then return nil end; left = o end end
@@ -85,28 +88,38 @@ function Engine.Words(t)
   for w in t:lower():gmatch("[%a'][%a']+") do if #w > 2 and not COMMON[w] then out[w] = true end end
   return out
 end
+-- (ObjectiveFor's: kept per text, read only; emptied past WORDS_KEEP texts - objective texts carry counts)
+local WORDS_KEEP, NOWORDS = 2000, {}
+wordsCache, wordsN = {}, 0
+function wordsOf(t)
+  if type(t) ~= "string" then return NOWORDS end
+  local w = wordsCache[t]
+  if w then return w end
+  if wordsN >= WORDS_KEEP then wordsCache, wordsN = {}, 0 end
+  w = Engine.Words(t)
+  wordsCache[t], wordsN = w, wordsN + 1
+  return w
+end
 
 -- dungeons: a "Run <X> with a group" step and the objective steps done inside ("Collect 10 Twilight Pendant (in
 -- Blackfathom Deeps)"). Once you've been inside (any visit is your run - ns.char.dungeonsVisited) or skipped the run,
--- what's left inside waits ("later") instead of holding up the card: half a run (drops that didn't drop), skipping
--- dungeons, or running one twice all leave the route moving. Back inside, it's current again.
+-- what's left inside waits ("later") instead of holding up the card. Back inside, it's current again.
 function Engine.RunDungeon(s) return s and s.k == "goto" and (s.dungeon or tostring(s.text or ""):match("^Run (.-) with a group") or tostring(s.text or ""):match("^Run (.+)$")) or nil end
 function Engine.InsideOf(s) return s and s.k == "obj" and tostring(s.text or ""):match("%(in (.-)%)$") or nil end
--- each quest's objective steps, by index - built once per step list (a hand-in's check scanned the whole plan for
--- every unfinished hand-in: on a 2300-step plan that was most of a refresh)
-local objIndex, objIndexFor, objIndexN = nil, nil, 0
+-- each quest's objective steps, by index - built once per step list (scanning the plan per hand-in was most of a
+-- refresh on a long plan)
+local objIndex, objIndexFor, objIndexGen = nil, nil, 0
 function Engine.ObjStepsOf(q)
   local list = steps()
-  if objIndexFor ~= list or objIndexN ~= #list then
-    objIndex, objIndexFor, objIndexN = {}, list, #list
+  if objIndexFor ~= list or objIndexGen ~= (list._gen or 0) then
+    objIndex, objIndexFor, objIndexGen = {}, list, list._gen or 0
     for j, t in ipairs(list) do if t.k == "obj" and t.q then local l = objIndex[t.q]; if not l then l = {}; objIndex[t.q] = l end; l[#l + 1] = j end end
   end
   return objIndex[q] or {}
 end
 -- a visit marks one Run step (ns.char.ranRun[key]): the first one of that dungeon not run or skipped yet - a second
--- planned run of the same dungeon later on the route stays to do
--- the mark is for the plan you were on (its stamp): a new plan made after the run (the planner saw drops still missing -
--- 5 of 8 brain stems - and planned another run) has a run of its own to do
+-- planned run of the same dungeon later stays to do. The mark carries the plan's stamp: a new plan made after the
+-- run (drops still missing) has a run of its own to do
 local function planStamp() return (BeelinePlan and BeelinePlan.generated) or (BeelineData and BeelineData.id) or 0 end
 local function ran(i) local v = ns.char.ranRun and ns.char.ranRun[key(i)]; return v ~= nil and v == planStamp() end
 -- the Run step an inside objective belongs to: the nearest one before it for that dungeon
@@ -123,8 +136,8 @@ end
 local function recordDungeon()
   local name = ns.Dungeon.Here() -- which dungeon, by its instance id or the game's name for it (Dungeon.lua)
   if not name then return end
-  -- the run the card shows, if it's this dungeon's; else the first of its runs not done yet (one already passed - you
-  -- went ahead of it - is not the run you're starting: marking it once took the card back to two old runs)
+  -- the run the card shows, if it's this dungeon's; else the first of its runs not done yet (one you went ahead of
+  -- is not the run you're starting)
   ns.char.ranRun = ns.char.ranRun or {}
   local shown = Engine.Shown and Engine.Shown()
   local list = steps()
@@ -139,9 +152,7 @@ local function recordDungeon()
     end
   end
 end
-Engine.RecordDungeon = recordDungeon
-ns.On("ZONE_CHANGED_NEW_AREA", function() pcall(recordDungeon) end)
-ns.On("PLAYER_ENTERING_WORLD", function() pcall(recordDungeon) end)
+local function dungeonSeen() pcall(recordDungeon) end -- (PLAYER_ENTERING_WORLD, ZONE_CHANGED_NEW_AREA: the end of this file)
 
 -- status: "done", "todo", "blocked" (quest not in log), "wait" (level too low), "full" (a pick-up with your quest log
 -- full: passed over like "wait", so the card goes to hand-ins and objectives first), "notready" (turn-in with objectives left),
@@ -150,14 +161,11 @@ ns.On("PLAYER_ENTERING_WORLD", function() pcall(recordDungeon) end)
 -- minQuestLevel = level - 6 (it never sends you to one), and the route in game drops the same ones
 Engine.OUTLEVEL = 6
 -- the game's gray line: a quest this level or lower gives (next to) no XP at level L - 5 below you early on, 6-12
--- below later (the client's GetQuestGreenRange table). A fixed 6 kept a level 1 quest on the route of a level 7.
+-- below later (the client's GetQuestGreenRange table)
 local grayMemo = {}
 function Engine.GrayAt(L)
-  -- (your own level: the game's own number, GetQuestGreenRange - the levels below you a quest is still green -
-  -- so the gray line is the one the quest log colours by; the table below for other levels and where it's missing)
-  -- (worked out once a level and kept until you level: GrayAt runs for most steps on every look at the route, and
-  -- asking the game your level and its green range each time made the route window and a refresh from the plan's
-  -- start 3-5x slower - perf gate, 2.4.1)
+  -- (your own level: the game's GetQuestGreenRange, so the gray line matches the quest log's colours; the table below
+  -- for other levels. Memoized per level until you level: GrayAt runs for most steps on every look at the route)
   local v = grayMemo[L]
   if v then return v end
   v = L - (L < 6 and L or L < 40 and (math.floor(L / 10) + 5) or (math.floor(L / 5) + 1))
@@ -168,14 +176,11 @@ function Engine.GrayAt(L)
   grayMemo[L] = v
   return v
 end
-function Engine.GrayForget() wipe(grayMemo) end
-ns.On("PLAYER_LEVEL_UP", Engine.GrayForget)
--- The game's red line: a quest 5 or more levels above you is red ("impossible"). Its work waits until you are within 4
--- levels of it - and so do its pick-up and its unfinished hand-in, as the planner's own gate (+2, +3 from 20) keeps it
--- out of reach until then. A pick-up with nothing to fight (a delivery: no objective on the route) is still taken when
--- the plan has it, unless the step has no level the game asks for (minLevel) - then red is all we know, and a class
--- quest of level 10 is not offered at 3. Only a player behind the plan's levels meets it: the live solve gave them
--- red pick-ups from the plan's later visits (a level 31 took Worth Its Weight in Gold, 36; mutate sweeps).
+ns.On("PLAYER_LEVEL_UP", function() Engine.GrayForget() end)
+-- The game's red line: a quest 5 or more levels above you is red. Its work waits until you are within 4 levels of
+-- it - and so do its pick-up and unfinished hand-in, as the planner's own gate keeps it out of reach until then. A
+-- pick-up with nothing to fight (a delivery: no objective on the route) is still taken when the plan has it, unless
+-- the step has no minLevel - then red is all we know. Only a player behind the plan's levels meets it.
 -- -> the level it comes back at, or nil
 function Engine.TooHigh(s, L)
   local ql = s and s.q and tonumber(s.level)
@@ -195,11 +200,10 @@ function Engine.BoundAt(s, b)
   local at = ns.char and ns.char.boundAt
   return at and at.name == b and at.m == s.m or false
 end
--- Is your hearthstone set on map m, going by the name the game gives your bind (b)? The game names the place - the
--- town or inn ("Darkshire", "Menethil Harbor"), a capital by its own name ("Stormwind City") - never the map, so:
--- where you set it while the addon watched (ns.char.boundAt: that name on that map, and then no other map), else the
--- names this map's inn goes by: the step's own, the zone's, a bind stop of the plan there, the flight point's town
--- ("Darkshire, Duskwood"). No match is "not there": a hearth that isn't yours is never offered.
+-- Is your hearthstone set on map m, going by the name the game gives your bind (b)? The game names the town, inn or
+-- capital, never the map, so: where you set it while the addon watched (ns.char.boundAt: that name on that map, and
+-- then no other map), else the names this map's inn goes by: the step's own, the zone's, a bind stop of the plan
+-- there, the flight point's town. No match is "not there": a hearth that isn't yours is never offered.
 function Engine.BoundOn(m, b, s)
   if not (m and type(b) == "string" and b ~= "") then return false end
   local at = ns.char and ns.char.boundAt
@@ -214,9 +218,8 @@ function Engine.BoundOn(m, b, s)
   return false
 end
 -- Can you take this hearth step? Only when the game says so: your hearthstone is set where the step goes (the plan
--- only assumed you set it at its bind stop - a level 31 was told "Hearth to Darkshire" while bound in Stormwind) and it
--- is off cooldown. Otherwise the step is passed and the way to the stops after it is planned like any other trip
--- (Engine.TravelFor). -> true, or false and why
+-- only assumed you set it at its bind stop) and it is off cooldown. Otherwise the step is passed and the way to the
+-- stops after it is planned like any other trip (Engine.TravelFor). -> true, or false and why
 local hearthMemo = setmetatable({}, { __mode = "k" })
 function Engine.HearthUsable(i)
   local list = steps()
@@ -257,10 +260,8 @@ function Engine.TrainLevel(s)
   return best
 end
 -- Your XP per second at a level: Forever's pace, as the planner measured it - the median XP an hour of the plan's zone
--- routes for that level (ns.ZoneRoutesAt; ~25k an hour at 38, where a level is 80.8k: over 3 hours). Every price of
--- time against XP goes through this (the solve's stops, a leftover's trip, a hand-in now or later): they had fixed
--- "a level every 1.5 h" and "every 2 h" - double Forever's pace in the 30s, and not its curve (tester). Without zone
--- routes (an old plan): a level every 1.5 h, as before.
+-- routes for that level (ns.ZoneRoutesAt). Every price of time against XP goes through this (the solve's stops, a
+-- leftover's trip, a hand-in now or later). Without zone routes (an old plan): a level every 1.5 h.
 local paceMemo = {}
 function Engine.XpPerSec(L)
   L = L or (UnitLevel and UnitLevel("player")) or 1
@@ -284,54 +285,26 @@ end
 -- shut by an exclusive quest you have or did (ns.QUEST_EX), and not one another way in already opened. The
 -- follow-up's own level decides: the plan's level for it, else the quest data's. One the plan has with no level
 -- anywhere counts (the chain goes on past what we know); one only the quest data has, with no level, does not.
--- (The route kept a gray quest in your log, every step of it, while the quest log check said to drop it. User's rule:
--- "grey in log should drop unless part of chain that leads to yellow+ quests".)
--- What a follow-up must be to keep its chain: "yellow" = the game's yellow and up (2 or fewer levels below you, the
--- user's rule: a chain of gray and green quests goes); "gray" = anything above the gray line. The same line decides what a
--- chain is worth on Where to? (Engine.LeadsToWorth): a level 57 was offered The Barrens for Ignition (18), whose
--- follow-up, off the plan, counted as worth it (mutate seed 2)
-Engine.CHAIN_WORTH = "yellow"
-local function worthAt(L, lvl)
-  if Engine.CHAIN_WORTH == "yellow" then return L >= lvl - 2 end
-  return L > Engine.GrayAt(lvl)
-end
-local levelOfQ, levelSrc = {}, nil
+-- What a follow-up must be to keep its chain: the game's yellow and up (2 or fewer levels below you). The same line
+-- decides what a chain is worth on Where to? (Engine.LeadsToWorth).
+local function worthAt(L, lvl) return L >= lvl - 2 end
+local levelOfQ, levelSrc, levelGen = {}, nil, 0
 local function planLevel(q)
   local list = steps()
-  if levelSrc ~= list then
-    levelOfQ, levelSrc = {}, list
+  if levelSrc ~= list or levelGen ~= (list._gen or 0) then
+    levelOfQ, levelSrc, levelGen = {}, list, list._gen or 0
     for _, t in ipairs(list) do if t.q and tonumber(t.level) and t.level > 0 and not levelOfQ[t.q] then levelOfQ[t.q] = t.level end end
   end
   return levelOfQ[q]
 end
--- the quests that list q among their prerequisites (ns.QUEST_PRE turned around), built once
-local neededBy
-local function needersOf(q)
-  local P = ns.QUEST_PRE
-  if not P then return nil end
-  if not neededBy or neededBy.src ~= P then
-    neededBy = { src = P }
-    for d, pre in pairs(P) do
-      for _, p in ipairs(pre.g or {}) do local t = neededBy[p]; if not t then t = {}; neededBy[p] = t end; t[#t + 1] = d end
-      for _, p in ipairs(pre.s or {}) do local t = neededBy[p]; if not t then t = {}; neededBy[p] = t end; t[#t + 1] = d end
-    end
-  end
-  return neededBy[q]
-end
+local needersOf = State.NeedersOf
 -- can you take follow-up d (reached from quest from), whatever its level?
-local mySide, myClass
 local function takeable(d, from)
   if State.IsCompleted(d) or ns.Nope(d) then return false end
   local who = ns.QUEST_FOR and ns.QUEST_FOR[d]
   if who then
-    if mySide == nil then
-      local f = UnitFactionGroup and UnitFactionGroup("player")
-      mySide = f == "Horde" and "H" or f == "Alliance" and "A" or false
-      myClass = (UnitClass and select(2, UnitClass("player"))) or false
-    end
     local sd, cl = who:match("^(%a?):?(.*)$")
-    if sd ~= "" and mySide and sd ~= mySide then return false end
-    if cl ~= "" and myClass and not ("," .. cl .. ","):find("," .. myClass .. ",", 1, true) then return false end
+    if not State.ForMe(sd ~= "" and sd or nil, cl ~= "" and cl or nil) then return false end
   end
   for _, x in ipairs((ns.QUEST_EX and ns.QUEST_EX[d]) or {}) do if State.IsCompleted(x) or State.InLog(x) then return false end end
   -- (one of several ways in, and another one is done: it is open without from - from leads nowhere new)
@@ -344,12 +317,12 @@ local function takeable(d, from)
   return true
 end
 -- the highest level anything down q's chain has, whoever can take it (math.huge: a quest the plan has with no level):
--- fixed for a plan, so worked out once per quest. A chain whose best is gray to you leads nowhere, and the walk below
--- (your quests, your faction) is not needed - most gray quests of a plan from level 1, asked about on every refresh
+-- fixed for a plan, so memoized per quest. A chain whose best is gray to you leads nowhere, and the costlier walk
+-- below (your quests, your faction) is skipped
 local bestMemo = {}
 local function chainBest(q)
   local list, unl = steps(), BeelineUnlocks
-  if bestMemo.list ~= list or bestMemo.unl ~= unl or bestMemo.pre ~= ns.QUEST_PRE then bestMemo = { list = list, unl = unl, pre = ns.QUEST_PRE } end
+  if bestMemo.list ~= list or bestMemo.gen ~= (list._gen or 0) or bestMemo.unl ~= unl or bestMemo.pre ~= ns.QUEST_PRE then bestMemo = { list = list, gen = list._gen or 0, unl = unl, pre = ns.QUEST_PRE } end
   local b = bestMemo[q]
   if b then return b end
   b = 0
@@ -375,16 +348,16 @@ end
 -- log): the route asks about every gray step on every refresh
 local leadsMemo = { lvl = -1, gen = -1 }
 Engine.grayGen = 0
-function Engine.GrayForget() Engine.grayGen = Engine.grayGen + 1 end
+-- (also drops each level's gray line: Engine.GrayAt)
+function Engine.GrayForget() Engine.grayGen = Engine.grayGen + 1; wipe(grayMemo) end
 -- -> the quest q's chain leads to that is still worth XP to you at level lvl (the nearest such), or nil
 function Engine.LeadsTo(q, lvl)
   if not q then return nil end
   lvl = lvl or (UnitLevel and UnitLevel("player")) or 1
   local list = steps()
   local m = leadsMemo
-  if m.lvl ~= lvl or m.gen ~= Engine.grayGen or m.list ~= list then
-    m = { lvl = lvl, gen = Engine.grayGen, list = list }; leadsMemo = m
-    mySide = nil
+  if m.lvl ~= lvl or m.gen ~= Engine.grayGen or m.list ~= list or m.listGen ~= (list._gen or 0) then
+    m = { lvl = lvl, gen = Engine.grayGen, list = list, listGen = list._gen or 0 }; leadsMemo = m
   end
   local hit = m[q]
   if hit ~= nil then return hit or nil end
@@ -426,14 +399,13 @@ function Engine.Outlevelled(s)
   if not (s and s.q and tonumber(s.level) and s.level > 0) then return false end
   local lvl = UnitLevel("player") or 1
   if s.level > Engine.GrayAt(lvl) or State.IsCompleted(s.q) then return false end
-  -- a gray quest is never picked up: not for the chain it opens either (a player: "we should NEVER offer to pick up
-  -- grey quests"). One already in your log keeps its objectives and hand-in while its chain is worth it (GrayDrop)
-  -- (and not in your log, none of its steps either: its objectives and hand-in stood on the card with the pick-up gone,
-  -- steps you can never take - On Guard in Stonetalon at 28, full sweep 2.4.1)
+  -- a gray quest is never picked up, not even for the chain it opens; and when it isn't in your log, none of its
+  -- steps count either. One already in your log keeps its objectives and hand-in while its chain is worth it (GrayDrop)
   if not State.OnQuest(s.q) then return true end
   return Engine.GrayDrop(s.q, lvl, s.level) == true
 end
--- a finished hand-in the gray rule took off (Messenger to Westfall at 26: 250 XP): Outlevelled, said apart in reports
+-- a finished hand-in the gray rule took off: Outlevelled, said apart in reports (only true where Outlevelled is:
+-- statusRaw asks Outlevelled alone)
 function Engine.GrayHandIn(s)
   if not (s and s.k == "turnin" and s.q and tonumber(s.level) and s.level > 0) then return false end
   if not State.QuestReady(s.q) then return false end
@@ -453,19 +425,18 @@ end
 -- A quest goes as a whole: with its pick-up behind you (and the quest not yours), its other steps are too; a pick-up
 -- that needs a quest whose hand-in is behind you is not offered; and a quest in your log goes when something still to
 -- do for it lies before the trip you joined at. Your own plan (the companion's) is made from your save: none of this.
--- (A level 30 trying the addon was sent to Redridge for a flight path, to Elwynn for errands, then through Duskwood
--- and Ashenvale: travel steps carried no level, and quests in the log pulled the card back to each of those zones.)
 Engine.JOIN_GAP = 3
 local planCache = setmetatable({}, { __mode = "k" })
-local function isTrip(s) return s.k == "fly" or s.k == "hearth" or s.k == "boat" end
+-- is this step a trip (a flight - boats are k="fly", boat=true - or a hearth)? It ends a stretch of the plan
+function Engine.IsTrip(s) return s.k == "fly" or s.k == "hearth" end
+local isTrip = Engine.IsTrip
 local function planIndex()
   local list = steps()
   local c = planCache[list]
-  if c and c.n == #list then return c, list end
-  -- (binds: the bind stops in order; trainAfter[i]: the lowest level a training stop after step i is for - statusRaw
-  -- walked the rest of the plan for each, on every refresh; trainLo[i]: the lowest level training stop i names - "level
-  -- 34/36" is 34 - read from its text once, not on every status)
-  c = { n = #list, idx = {}, eff = {}, accept = {}, turnin = {}, at = {}, binds = {}, trainAfter = {}, trainLo = {} }
+  if c and c.gen == (list._gen or 0) then return c, list end
+  -- (binds: the bind stops in order; trainAfter[i]: the lowest level a training stop after step i is for;
+  -- trainLo[i]: the lowest level training stop i names ("level 34/36" is 34) - read once, not on every status)
+  c = { gen = list._gen or 0, idx = {}, eff = {}, accept = {}, turnin = {}, at = {}, binds = {}, trainAfter = {}, trainLo = {} }
   local nxt, train
   for i = #list, 1, -1 do
     local s = list[i]
@@ -488,6 +459,7 @@ local function planIndex()
   planCache[list] = c
   return c, list
 end
+Engine._planIndex = planIndex -- (Engine/Trips.lua)
 -- the level the plan has you at, at step i (nil on a plan without levels)
 function Engine.PlanLevel(i) return (planIndex()).eff[i] end
 -- the level training stop i is for: the lowest its text names ("Train level 34/36 spells": 34), or its until_ when higher -
@@ -525,15 +497,13 @@ function Engine.Place()
   if Engine.noPlace or not (j and j.plan == key and tonumber(j.level) and j.level > 1) then return nil end
   return j.level, joinStep(j.level)
 end
--- Where you start. The trip you join at is the plan at your level; but the plan's stretches of the JOIN_GAP levels
--- before it are still good for you, and one of them may be worth more than that trip from where you stand: someone
--- who meets the plan at 30 in Darkshire has Duskwood's level 27-31 stretch around them, and the plan's own next
--- stretch a flight away. So when you join, each of those stretches (a stretch: the steps between two trips) is priced
--- like the planner prices a zone - the XP of the quests you can still do in it, over the time they take plus the trip
--- there from where you stand - and the best one is where you start (ns.char.join.first), before the trip you joined
--- at. Value decides, not distance: staying put wins only if its quests beat the alternative with its trip.
--- The numbers are rough and say so: quest XP from the quest's level (less for one far below you), a pick-up or hand-in
--- 10 s, an objective 2 min, the walk between steps at running or riding speed, the trip from Travel.Plan.
+-- Where you start. The trip you join at is the plan at your level, but the plan's stretches of the JOIN_GAP levels
+-- before it are still good for you, and one may be worth more from where you stand. So when you join, each of those
+-- stretches (the steps between two trips) is priced like the planner prices a zone - the XP of the quests you can
+-- still do in it, over the time they take plus the trip there - and the best one is where you start
+-- (ns.char.join.first), before the trip you joined at. Value decides, not distance.
+-- Rough numbers: quest XP from the quest's level (less far below you), a pick-up or hand-in 10 s, an objective 2 min,
+-- the walk between steps at running or riding speed, the trip from Travel.Plan.
 Engine.START_HORIZON = 3600 -- stretches are compared by the XP they bring in this many seconds (a short one, then the plan)
 Engine.START_MIN_TURNINS = 5 -- a stretch with fewer hand-ins is no place to start (the planner's own floor for a zone)
 local function firstTrip(c, list)
@@ -594,8 +564,8 @@ function Engine.StretchWorth(from, to)
           spot = spot or (s.m and s.x and not s.unknown and s) or nil
           secs = secs + (tonumber(s.walk) or 80) / speed + (s.k == "obj" and 120 or 10)
           if s.k == "turnin" and tonumber(s.level) and s.level > 0 then xp = xp + questXP(s.level, L); n = n + 1
-          -- (a quest picked up here and handed in after the stretch: its XP counts here too - its work here was counted
-          -- and its XP was not, so a zone whose quests end in town after a trip read as all work and no XP)
+          -- (a quest picked up here and handed in after the stretch: its XP counts here too, else a zone whose quests
+          -- end in town after a trip read as all work and no XP)
           elseif s.k == "accept" and tonumber(s.level) and s.level > 0 and (c.turnin[q] or 0) > to then xp = xp + questXP(s.level, L); n = n + 1 end
         end
       end
@@ -605,11 +575,9 @@ function Engine.StretchWorth(from, to)
 end
 -- the stretch to start in, for someone joining at this level: its first step's key (nil: the trip you joined at), and
 -- the stretches priced { from, to, zone, xph, extra (s of travel it adds), work (s), turnins, plan }, best first.
--- Priced: the plan's trip at your level (its XP over its work and the trip there), and every other stretch the plan
--- has within reach of your level - from OUTLEVEL levels below you (the planner's own line for a quest worth doing) up
--- to your level - with START_MIN_TURNINS hand-ins you can still do: its XP over its work and the travel it ADDS (the
--- trip there, then on to the plan's trip, less the trip you'd make anyway). So a stretch around you costs nothing to
--- reach, and one across the world has to be worth the detour.
+-- Priced: the plan's trip at your level (its XP over its work and the trip there), and every other stretch within
+-- reach of your level (OUTLEVEL below you up to your level) with START_MIN_TURNINS hand-ins you can still do: its XP
+-- over its work and the travel it ADDS (there, then on to the plan's trip, less the trip you'd make anyway).
 function Engine.ChooseStart(level)
   local c, list = planIndex()
   local at = joinStep(level)
@@ -623,9 +591,8 @@ function Engine.ChooseStart(level)
   local me = { m = m, x = x, y = y }
   local priced = {}
   -- what the plan's stretches in the zone you stand in hold for you, from step 'from' on: the plan comes back to a zone
-  -- after a trip (training in the capital, a hand-in in town), and one stretch of it alone undersold staying - an Undead
-  -- at 16 in the Barrens had 4 hand-ins in the stretch at hand and the rest of the zone's quests uncounted, and was sent
-  -- to Silverpine. Only stretches up to JOIN_GAP levels above you, while their work fits START_HORIZON
+  -- after a trip (training, a hand-in in town), and one stretch alone undersold staying. Only stretches up to JOIN_GAP
+  -- levels above you, while their work fits START_HORIZON
   local function worth(from, last)
     local xp, work, n, spot = Engine.StretchWorth(from, last)
     if not (spot and spot.m == m) then return xp, work, n, spot end
@@ -642,9 +609,8 @@ function Engine.ChooseStart(level)
   -- the plan's trip at your level
   local to = stretchEnd(list, at)
   local xpD, workD, nD, spotD = worth(at, to)
-  -- (nothing left for you in that stretch - its quests done, gray, or picked up before it: the plan goes on to the next
-  -- one with something, and that is what the stretches around you are weighed against. It gave up here: "nothing to
-  -- price", and an Undead at 16 in the Barrens was sent to Silverpine, where the plan's trip at 16 had nothing left)
+  -- (nothing left for you in that stretch - its quests done, gray, or picked up before it: the plan goes on to the
+  -- next one with something, and that is what the stretches around you are weighed against)
   for _ = 1, 8 do
     if spotD or to >= #list or (c.eff[to + 1] or 0) > L + Engine.JOIN_GAP then break end
     local nx = to + 1
@@ -664,16 +630,14 @@ function Engine.ChooseStart(level)
     priced[#priced + 1] = { from = from, to = last, zone = spot.zone or list[from].dest or "?", xph = math.floor(xp / (work + extra) * 3600), extra = math.floor(extra), work = math.floor(work), turnins = n }
   end
   -- (and a stretch in the zone you stand in that the plan does up to JOIN_GAP levels above you: its quests are at your
-  -- level too - an Undead at 14 in the Barrens, which the plan does at 16, had nothing else priced and was sent by
-  -- zeppelin to Silverpine: "over an hour of wasted running that could have been leveling in the area I was already in")
+  -- level too)
   for j = 1, #list do
     local e = c.eff[j] or 0
     if j > at and e > L + Engine.JOIN_GAP then break end
     if j ~= at and (j == 1 or isTrip(list[j])) and e >= L - Engine.OUTLEVEL and (e <= L or Engine.StretchOn(j, m)) then price(j) end
   end
   -- compared over the same time (START_HORIZON): a stretch shorter than that is followed by the plan at the plan's own
-  -- rate. Rates alone over-praised tiny stretches - five errands in 7 minutes scored 168k XP/h and would beat a real
-  -- zone, though they are over before the hour is
+  -- rate. Rates alone over-praised tiny stretches that are over before the hour is
   local planRate = priced[1].xph / 3600
   local H = Engine.START_HORIZON
   for _, p in ipairs(priced) do
@@ -721,9 +685,9 @@ end
 -- The part of the built-in plan behind you, by the place of a step alone: -> before(j), low(j) for this moment, and
 -- the step you joined at
 local passedPartFresh
--- (memoized on the plan's index: Engine.BehindYou asks for every step of the plan on every refresh, and the answer only
--- moves with your level, where you joined the plan and the stretch you start in - Place, FirstStretch and a 40-step scan
--- for each of ~2700 steps was most of a refresh in the simulator. The functions themselves are in the key: a test stubs them)
+-- (memoized on the plan's index: Engine.BehindYou asks for every step on every refresh, and the answer only moves
+-- with your level, where you joined and the stretch you start in. The functions themselves are in the key: tests
+-- stub them)
 local function passedPart(c, list)
   local L = UnitLevel("player") or 1
   local j = ns.char and ns.char.join
@@ -741,15 +705,11 @@ function passedPartFresh(c, list, L)
   local _, at = Engine.Place()
   local f1, f2 = nil, nil
   if at then f1, f2 = Engine.FirstStretch() end
-  -- before the trip you joined at, and not in the stretch you start in - nor a quest in the zone you joined in, at your
-  -- level: the card sent a tester to Riverglades and the first half of its quests (Gnoll Infestation, 36, at 37, from
-  -- the giver he stood at) were behind him, because the plan reached his level at step 1132; offered back one by one as
-  -- extras, the nearest few changed as he walked and the card jumped between them
-  -- (the zone of your place: the first step there with one - you join at a trip, and a trip has none)
-  -- (the stretch you start in, when one was chosen after the trip you joined at: that is where you joined - not the zone
-  -- of that trip, which you skip for now. An Undead at 16 starting in the Barrens, which the plan does after Silverpine,
-  -- had Silverpine's quests at his level kept as "the zone you joined", and the card sent him there through Orgrimmar and
-  -- the Undercity. A stretch chosen before the trip keeps the trip's zone: the plan goes there next)
+  -- before the trip you joined at, and not in the stretch you start in - nor a quest in the zone you joined in, at
+  -- your level (else that zone's quests sat behind you and came back one by one as extras, the card jumping between them)
+  -- (the zone of your place: the first step there with one - you join at a trip, and a trip has none. A stretch
+  -- chosen after the trip you joined at is where you joined, not the trip's zone, which you skip for now; a stretch
+  -- chosen before the trip keeps the trip's zone: the plan goes there next)
   local atZone
   local z0 = (f1 and at and f1 > at) and f1 or at
   if z0 then for k = z0, math.min(#list, z0 + 40) do if list[k].zone then atZone = list[k].zone; break end end end
@@ -772,9 +732,8 @@ function passedPartFresh(c, list, L)
   return before, low, at
 end
 -- Is step j in the part of the plan behind you by its place alone, whatever its quest's state? Engine.BehindYou says
--- no for a quest you completed (its steps are done anyway), and Engine.InsertStop priced the gap between two such done
--- steps as "the route passes by": a hand-in went into the passed part of Feralas, the plan's next step, and the card sent
--- a level 51 from Tanaris across Kalimdor for it (mutate, Zapped Giants). -> a function of j for this moment, or nil
+-- no for a quest you completed (its steps are done anyway), so InsertStop needs this to not price the gap between two
+-- such done steps as "the route passes by". -> a function of j for this moment, or nil
 function Engine.PassedFn()
   if Engine.noPlace or not (ns.planKey and ns.planKey.starter) then return nil end
   if BeelineData and BeelineData.zoneRoute then return nil end
@@ -784,11 +743,9 @@ function Engine.PassedFn()
 end
 -- planOnly: as the plan sees it, without the live solve's pick-up from behind you (Next.taken) - Engine.Compute
 -- (each answer is kept for the rest of the outermost call: a step asks its pick-up, which asks the hand-in of every
--- earlier quest of its chain, each of which asks its own pick-up and chain again - 4.1M calls for 350k statuses over a
--- long play, most of a refresh. Nothing it reads changes during one call)
--- Inside a refresh (or a route job's pass) the answers are kept as long as its statuses are (Engine.Status's batch:
--- wiped when something changes) - for the same live pick-up from behind you, zone and place.
--- (the memos are kept tables, wiped for reuse: a new one for each call left ~100 KB of garbage a refresh - perf gate)
+-- earlier quest of its chain, and so on - millions of calls over a long play otherwise. Nothing it reads changes
+-- during one call.) Inside a refresh (or a route job's pass) the answers are kept as long as Engine.Status's batch
+-- is, for the same live pick-up, zone and place. The memos are kept tables, wiped for reuse: no garbage per call.
 local behindYouRaw, bmemo
 local batch -- (Engine.Status's, below)
 local CALL = { p = {}, n = {} }
@@ -804,6 +761,8 @@ function Engine.BehindYou(s, planOnly)
       m.owner, m.taken, m.L, m.here, m.noPlace = batch, taken, L, Engine.here, Engine.noPlace
       batch.by = true -- (gone when the batch is wiped: the memo goes with it)
     end
+    local hit = (planOnly and m.p or m.n)[s]
+    if hit ~= nil then return hit end
     bmemo = m
     local ok, v = pcall(Engine.BehindYou, s, planOnly)
     bmemo = nil
@@ -871,7 +830,7 @@ function behindYouRaw(s, planOnly)
     local had = at and ns.char.join and ns.char.join.had
     if s.k == "accept" or s.inserted or not (had and had[q]) then return false end -- (a stop added for it is on your way)
     -- yours from before you joined: on the plan if what is left of it is ahead of you - or it is finished and its
-    -- hand-in is in the zone you are in (handed in first: The Night Watch, 19 yd from a level 30 in Darkshire)
+    -- hand-in is in the zone you are in (handed in first)
     local n = nextStep(q, c, list)
     if not n then return before(i) end
     if not before(n) then return false end
@@ -894,8 +853,7 @@ function behindYouRaw(s, planOnly)
   end
   return false
 end
--- a breadcrumb whose quest is already yours (in your log or done): the game no longer offers it - The Corruption
--- Abroad from Argos Nightwhisper, with Researching the Corruption in your log (ns.BREADCRUMBS, Breadcrumbs.lua)
+-- a breadcrumb whose quest is already yours (in your log or done): the game no longer offers it (ns.BREADCRUMBS)
 -- a quest some other quest you took or did shuts (its breadcrumb's target, or an exclusive alternative): passed over
 local function shutBy(tbl, s)
   local others = s and s.q and tbl and tbl[s.q]
@@ -905,63 +863,60 @@ local function shutBy(tbl, s)
 end
 function Engine.Breadcrumbed(s) return shutBy(ns.BREADCRUMBS, s) end
 -- a quest one of whose alternatives is yours (in your log or done): one quest given in several towns, and you took it
--- in another - the game no longer offers this one, so none of its steps is left to do (ns.QUEST_EX, QuestData.lua).
--- A warlock who had taken In Search of Menara Voidrender from Demisette Cloyce in Stormwind was sent to Briarthorn
--- in Ironforge for it (tester)
+-- in another - the game no longer offers this one, so none of its steps is left to do (ns.QUEST_EX, QuestData.lua)
 function Engine.Excluded(s) return shutBy(ns.QUEST_EX, s) end
 -- a quest whose earlier chain quest you skipped (Skip on its pick-up), or said you're not doing, or that is itself cut
 -- so: the game will never offer it. By the quest data's prerequisites (ns.QUEST_PRE: all of g, one of s - every one of
--- s cut), not BeelineUnlocks (it mixes "any one of" with "all of"). A player who skipped Samophlange's third part
--- was shown the fourth part's pick-up, "needs Samophlange handed in first", for the rest of the zone (mutate --play)
--- (deep: Call of Water is eight quests long - a cut at its third part cut the last one only at depth 5)
+-- s cut), not BeelineUnlocks (it mixes "any one of" with "all of"). Deep: chains run to eight quests and more.
 local function cutQuest(q, depth)
   if State.IsCompleted(q) then return false end
-  -- (the other faction's copy of a quest - ns.QUEST_SIDE - is never yours: one of several prerequisites only it was kept
-  -- the follow-ups of a pick-up you skipped offered. Welcome to Shen'dar Village skipped, The Criminal Element and five
-  -- more were dead ends on the card, 93461 the Alliance Skyborne's copy - mutate --play 7)
+  -- (the other faction's copy of a quest - ns.QUEST_SIDE - is never yours, so it cuts what needs it)
   local side = ns.QUEST_SIDE and ns.QUEST_SIDE[q]
-  if side and side ~= (ns.Travel.Side() == "horde" and "H" or "A") then return true end
-  -- (a gray quest the gray rule drops, in your log or not, cuts what needs it: the chain goes as a whole. Its follow-ups
-  -- keep it only when one is yellow to you, Engine.LeadsTo - so a green one after it goes too, rather than being the
-  -- step you can never take: Harmony in Balance, level 1, dropped at 8 with its level 4 follow-ups on the card - mutate)
-  -- (a quest your plan has, at its level there: one the plan doesn't have is left to the rules below)
+  if side and side ~= (State.MyFaction() or "A") then return true end
+  -- (a gray quest the gray rule drops, in your log or not, cuts what needs it: the chain goes as a whole, kept only
+  -- when a follow-up is yellow to you, Engine.LeadsTo. Only a quest your plan has, at its level there: one the plan
+  -- doesn't have is left to the rules below)
   local L = planLevel(q)
   if L and Engine.GrayDrop(q, nil, L) == true then return true end
   if State.OnQuest(q) then return false end
   -- (and a gray quest not in your log is never picked up, whatever it leads to - Engine.Outlevelled - so what needs it
-  -- can't be had either: the yellow follow-up of a gray start stood on the card as a step you could never take)
+  -- can't be had either)
   if L and L <= Engine.GrayAt((UnitLevel and UnitLevel("player")) or 1) then return true end
   if ns.Nope(q) then return true end
-  -- (an exclusive alternative of it you have or did shuts it, so what needs it goes too: Ends Meet needs the Praise
-  -- that 93551, the other Praise, shuts - shown after 93551 was handed in, a dead end: full sweep, 2.3.1)
+  -- (an exclusive alternative of it you have or did shuts it, so what needs it goes too)
   local ex = ns.QUEST_EX and ns.QUEST_EX[q]
   if ex then for k = 1, #ex do if State.IsCompleted(ex[k]) or State.OnQuest(ex[k]) then return true end end end
   local a = (planIndex()).accept[q]
   if a and ns.char.skipped[key(a)] then return true end
   return depth < 12 and Engine.ChainCut(q, depth + 1) or false
 end
--- (a quest the game showed you on offer - a giver listed it, or the map's "!" - is offered whatever the quest data says it
--- needs, as on a zone route's prerequisites below)
--- (counted loops, no "pre.g or {}": statusRaw asks this of most steps on every look at the route - 13,600 times opening
--- the route window at 12 - and a table, or an ipairs iterator, per ask was half its garbage: perf gate)
+-- (a quest the game showed you on offer - a giver listed it, or the map's "!" - is offered whatever the quest data says
+-- it needs.) Counted loops, no "pre.g or {}": statusRaw asks this of most steps on every look at the route, and a
+-- table or ipairs iterator per ask was half its garbage.
 function Engine.ChainCut(q, depth)
   local pre = q and ns.QUEST_PRE and ns.QUEST_PRE[q]
   if not pre then return false end
   local av = ns.char and ns.char.avail
   if av and av.seen and av.seen[q] then return false end
   depth = depth or 0
+  -- (kept with the batch's statuses, by quest and depth: a shared prerequisite is walked once per batch)
+  local memo = batch and batch.cut
+  if batch and not memo then memo = {}; batch.cut = memo end
+  local mk = q * 16 + depth
+  if memo then local v = memo[mk]; if v ~= nil then return v end end
+  local v = false
   local g, s = pre.g, pre.s
-  if g then for k = 1, #g do if cutQuest(g[k], depth) then return true end end end
-  if s and #s > 0 then
-    for k = 1, #s do if not cutQuest(s[k], depth) then return false end end
-    return true
+  if g then for k = 1, #g do if cutQuest(g[k], depth) then v = true; break end end end
+  if not v and s and #s > 0 then
+    v = true
+    for k = 1, #s do if not cutQuest(s[k], depth) then v = false; break end end
   end
-  return false
+  if memo and batch and batch.cut == memo then memo[mk] = v end
+  return v
 end
 -- a quest whose prerequisites are not handed in, one of them (or one of theirs, up the chain) in your log unfinished:
--- the game offers it after that hand-in (ns.QUEST_PRE). Clerical Quarantine after Doctor's Orderly after Wound
--- Dressings, at 0/20 in your log: not offered, nor the one between
--- (counted loops, no table per ask: statusRaw asks it of every pick-up with a prerequisite - perf gate)
+-- the game offers it after that hand-in (ns.QUEST_PRE). Counted loops, no table per ask: statusRaw asks it of every
+-- pick-up with a prerequisite
 local function pendingPre(p, depth)
   return not State.IsCompleted(p) and (State.OnQuest(p) or (depth < 6 and Engine.WaitsOnLog(p, depth + 1)))
 end
@@ -981,15 +936,12 @@ function Engine.PreReachable(q)
 end
 -- on a zone you picked, a quest not in your log whose prerequisites are not met and can't be got on this route (none in
 -- your log, none handed in on it): the giver never has it for you here, so none of its steps is left - its pick-up, its
--- objectives, its hand-in, and the trips to them. The level 36 Dustwallow route has Lieutenant Paval Reethe, its James
--- Hyal and Smiling Jim on the level 32 one: a player who had done neither saw it as a dead end for the rest of the zone
--- (full sweep, 2.3.1). Cutting only the pick-up left Gyro... What?'s objective in Stranglethorn Vale on the level 39
--- Badlands route, Coolant Heads Prevail not on it, and the card flew there for a quest you can't have (sweep, 2.3.2).
+-- objectives, its hand-in, and the trips to them (cutting only the pick-up left trips to its objectives).
 -- (A quest the game showed on offer anyway - Availability - is taken as offered.)
 function Engine.ZoneUnreachable(q)
-  if not (BeelineData and BeelineData.zoneRoute and ns.QUEST_PRE and ns.QUEST_PRE[q] and ns.PrereqsMet) then return false end
+  if not (BeelineData and BeelineData.zoneRoute and ns.QUEST_PRE and ns.QUEST_PRE[q]) then return false end
   if ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[q] then return false end
-  return not ns.PrereqsMet(q) and not Engine.PreReachable(q)
+  return not State.PrereqsMet(q) and not Engine.PreReachable(q)
 end
 function Engine.WaitsOnLog(q, depth)
   local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
@@ -1003,19 +955,18 @@ function Engine.WaitsOnLog(q, depth)
   end
   return false
 end
--- a pick-up that reads "wait" (statusRaw) for a quest in your log, not for your level: statusRaw's own order - the level
--- checks come first, and on a zone you picked the wait is ns.PrereqsMet's, as before. For the live solve, which takes it
--- as the not-offered pick-up it was before Engine.WaitsOnLog: its window ends there (Next.Pick), and a visit that hands
--- that quest in takes it after (Next.VisitHere). Skipped as a level wait, the window ran on past every chain's next
--- pick-up - twice the solve's time over a play, and its order changed (perf gate, 1.6.8). Asked only of a "wait"
+-- a pick-up that reads "wait" (statusRaw) for a quest in your log, not for your level: statusRaw's own order - the
+-- level checks come first, and on a zone you picked the wait is State.PrereqsMet's. For the live solve, which takes it
+-- as a not-offered pick-up: its window ends there (Next.Pick), and a visit that hands that quest in takes it after
+-- (Next.VisitHere). Skipped as a level wait, the window ran past every chain's next pick-up (2x solve time). Asked
+-- only of a "wait"
 function Engine.WaitsForHandIn(s)
   if not (s and s.k == "accept") or (BeelineData and BeelineData.zoneRoute) then return false end
   if s.minLevel and UnitLevel("player") < s.minLevel then return false end
   return not Engine.TooHigh(s)
 end
 local PVP = ns.PVP_QUESTS -- (PvpQuests.lua loads before this file: one table, read per step)
--- steps whose status was worked out, ever (the perf battery counts them per moment: a quest change that looks at the
--- whole plan shows here as thousands - tests/_perf.lua, "status")
+-- steps whose status was worked out, ever (the perf battery counts them per moment, tests/_perf.lua "status")
 Engine.statusN = 0
 local function statusRaw(i)
   Engine.statusN = Engine.statusN + 1
@@ -1027,9 +978,8 @@ local function statusRaw(i)
   if s.side and s.away and s.k == "accept" then return "done" end -- a side quest offered at its giver, and you walked on (Engine.SideOffer)
   -- the game did not offer it to you (Availability.lua): off the route until you level up or it is offered
   if s.q and ns.Avail and ns.Avail.Unavailable(s.q) and not State.OnQuest(s.q) and not State.IsCompleted(s.q) then return "done" end
-  -- (one in your log that needs a profession you don't have - its ore is mined, its herb picked: its work and its hand-in
-  -- are off your route until it's finished (bought the ore). Favor for Krazek, taken in Booty Bay without Mining, sent a
-  -- gnome warlock all the way to Arathi for Lesser Bloodstone Ore - user)
+  -- (one in your log that needs a profession you don't have - ore to mine, a herb to pick: its work and its hand-in
+  -- are off your route until it's finished, e.g. you bought the ore)
   if s.q and (s.k == "obj" or s.k == "turnin") and ns.Avail and ns.Avail.Needs and State.OnQuest(s.q) and not State.QuestReady(s.q)
     and ns.Avail.Needs(s.q) then return "done" end
   -- a battleground quest (Avail.Pvp: its marks come from PvP matches): not its pick-up, its objectives or a trip to its
@@ -1041,7 +991,7 @@ local function statusRaw(i)
   if Engine.finishNow then
     -- (finishing your quests at 60: the objectives and hand-ins of the quests you hold, gray or behind you, nothing else)
     if not (s.q and s.q > 0 and s.k ~= "accept" and State.OnQuest(s.q)) then return "done" end
-  elseif Engine.Outlevelled(s) or Engine.GrayHandIn(s) or Engine.Breadcrumbed(s) or Engine.Excluded(s) or (Engine.asTaken ~= s and Engine.BehindYou(s)) then return "done" end
+  elseif Engine.Outlevelled(s) or Engine.Breadcrumbed(s) or Engine.Excluded(s) or (Engine.asTaken ~= s and Engine.BehindYou(s)) then return "done" end
   -- its earlier chain quest you skipped or said you're not doing: the game never offers it, so none of its steps is
   -- left (the ones of a quest you have are yours to do)
   if s.q and s.q > 0 and not State.OnQuest(s.q) and not State.IsCompleted(s.q) and (Engine.ChainCut(s.q) or Engine.ZoneUnreachable(s.q)) then return "done" end
@@ -1055,18 +1005,17 @@ local function statusRaw(i)
     if s.minLevel and UnitLevel("player") < s.minLevel then return "wait" end
     if Engine.TooHigh(s) then return "wait" end -- (red: the game's own colour, Engine.TooHigh)
     -- on a zone you picked, its prerequisites not handed in (ns.QUEST_PRE): it waits, like a level - the giver would
-    -- have nothing for you (a zone route is planned from the main route's progress, which a player who hops zones may not
-    -- have). Your own plan has its prerequisites earlier in it. A quest the game showed on offer anyway (Availability: a
-    -- giver listed it, or the map's "!") is taken as offered
-    -- On any plan, one whose prerequisite is in your log, not handed in, waits for that hand-in ("Needs ... handed in
-    -- first"): the plan has the hand-in before it, but a hand-in can wait (its objective in the part of the plan your
-    -- place skips, Engine.Compute) - and the card went on to Doctor's Orderly with Wound Dressings at 0/20, then to
-    -- Clerical Quarantine after it (mutate sweep). Up the chain: Engine.WaitsOnLog
+    -- have nothing for you (a zone route is planned from the main route's progress, which a zone hopper may not have).
+    -- Your own plan has its prerequisites earlier in it. A quest the game showed on offer anyway (Availability) is
+    -- taken as offered.
+    -- On any plan, one whose prerequisite is in your log, not handed in, waits for that hand-in: the plan has the
+    -- hand-in before it, but a hand-in can wait (its objective in the part your place skips, Engine.Compute). Up the
+    -- chain: Engine.WaitsOnLog
     local pre = ns.QUEST_PRE and ns.QUEST_PRE[s.q]
-    if pre and ns.PrereqsMet and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then
+    if pre and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then
       if BeelineData and BeelineData.zoneRoute then
         -- (one whose prerequisites can't be got here at all is cut above, every step of it: Engine.ZoneUnreachable)
-        if not ns.PrereqsMet(s.q) then return "wait" end
+        if not State.PrereqsMet(s.q) then return "wait" end
       elseif Engine.WaitsOnLog(s.q) then return "wait" end
     end
     if State.LogFull and State.LogFull() then return "full" end
@@ -1110,14 +1059,12 @@ local function statusRaw(i)
     return "todo"
   elseif k == "fp" then
     if s.fp and State.knownTaxi[s.fp] then return "done" end
-    -- (this flight master's own point, by its flight-map name - not "a point whose name has the zone's first word": in a
-    -- zone with two points for you, the other one counted as this one)
+    -- (this flight master's own point, by its flight-map name - not a name match on the zone: a zone can have two)
     if Engine.KnowsThisFlightPoint(s) then return "done" end
   elseif k == "bind" then
     local b = GetBindLocation and GetBindLocation()
     if Engine.BoundAt(s, b) then return "done" end
-    -- bound at a later bind stop of the route: that one replaced this one - never back to rebind here (binding in
-    -- Menethil once sent you back across the sea to Auberdine's inn, and from there back to Menethil's)
+    -- bound at a later bind stop of the route: that one replaced this one - never back to rebind here
     local c, list = planIndex()
     for _, j in ipairs(c.binds) do if j > i and Engine.BoundAt(list[j], b) then return "done" end end
   elseif k == "bonus" then
@@ -1127,14 +1074,12 @@ local function statusRaw(i)
     if s.book and type(found) == "table" and found[s.book] then return "done" end
   elseif k == "train" then
     if s.until_ and UnitLevel("player") < s.until_ then return "wait" end
-    -- a later training stop on the route is already due at your level: that visit covers this one (a plan made for
-    -- someone lower lists every stop from level 2)
+    -- a later training stop on the route is already due at your level: that visit covers this one
     local lvl = UnitLevel("player") or 1
     local c = planIndex()
     local L = c.trainAfter[i]
     if L and L <= lvl then return "done" end
-    -- nothing to learn yet: the trainer has no spell of the stop's lowest level for you ("train level 46 spells" at 35
-    -- sent a level 35 to Stormwind - mutate --play; "level 34/36" is for 34; planIndex reads it from the text once)
+    -- nothing to learn yet: the trainer has no spell of the stop's lowest level for you ("level 34/36" is for 34)
     local lo = c.trainLo[i]
     if lo and lo > lvl then return "wait" end
   end
@@ -1143,7 +1088,7 @@ local function statusRaw(i)
   if k == "goto" and s.text then
     local dname = Engine.RunDungeon(s)
     -- inside: the run you're on is done - the first of that dungeon's runs not run yet; a second and third XP run
-    -- stay to do (all of them read done while inside, so the card ran ahead to the next zone mid-run)
+    -- stay to do (else all read done inside and the card ran ahead mid-run)
     if dname and Engine.InDungeon(dname) then
       -- the run you're on is the one going in marked (recordDungeon); none marked yet (you were inside when the plan
       -- loaded): the first of that dungeon's runs not run yet
@@ -1169,10 +1114,8 @@ local function statusRaw(i)
   end
   -- goto / fly / hearth / note: completed by events, arrival or a click, or passed: if the next few quest steps
   -- after it are already done (you went ahead, or did things in another order), the travel was clearly made
-  -- (a step that reads to do only through the live solve's pick-up from behind you, Next.taken - the rest of that quest
-  -- - is passed as the plan sees it: Reading Room taken up again in Stormwind made its hand-in to do, the training
-  -- before that hand-in was no longer passed and became the plan's step, the solve kept it and let the pick-up go, and
-  -- the card flipped to the flight out while you stood still - mutate sweep)
+  -- (a step that reads to do only through the live solve's pick-up from behind you, Next.taken, is passed as the
+  -- plan sees it: otherwise the travel before it stopped being passed and the card flipped while you stood still)
   local tk = ns.Next and ns.Next.taken
   local function passed(j, t)
     if Engine.Status(j) == "done" then return true end
@@ -1190,14 +1133,13 @@ local function statusRaw(i)
     end
     if seen >= 2 and done == seen then return "done" end
   end
-  -- a flight (or hearth) to nothing: every step from it to the next travel is already done - the safety-net pick-up of
-  -- a quest you already have (ensure-steps) sat in the Wetlands between two Stormwind stops, and the list read "Fly to
-  -- Wetlands, Fly to Stormwind" twice over
-  if (k == "fly" or k == "hearth" or k == "boat") and not (ns.ChoiceFor and ns.ChoiceFor(i)) then
+  -- a flight (or hearth) to nothing: every step from it to the next travel is already done (else a stray safety-net
+  -- pick-up between two trips made a pointless there-and-back)
+  if isTrip(s) and not (ns.ChoiceFor and ns.ChoiceFor(i)) then
     local list, any = steps(), false
     for j = i + 1, math.min(#list, i + 40) do
       local t = list[j]
-      if t.k == "fly" or t.k == "hearth" or t.k == "boat" then break end
+      if isTrip(t) then break end
       any = true
       if not passed(j, t) then any = nil; break end
     end
@@ -1214,9 +1156,8 @@ function Engine.Status(i)
   return st
 end
 -- a look over the route that changes nothing (the route window drawn): each step's status worked out once for it, as
--- in a refresh. Opening the route window asked most steps' status three times (the list, the done count, the zones
--- ahead) - 8,300 at level 12, each one asking the chain-cut walk too: 77 -> 38 ms at orc 12, 94 -> 45 ms at paladin 12
--- (perf gate). Inside a refresh, or a route job's slice (its statuses are the job's), fn just runs.
+-- in a refresh (the route window asked most statuses three times: ~2x slower). Inside a refresh, or a route job's
+-- slice (its statuses are the job's), fn just runs.
 function Engine.ReadPass(fn)
   if batch or (ns.sliceCo and coroutine.running() == ns.sliceCo) then return fn() end
   batch = {}
@@ -1226,8 +1167,7 @@ function Engine.ReadPass(fn)
 end
 function Engine.IsDone(i) return Engine.Status(i) == "done" end
 -- would step i be to do if the live solve took it up from behind you (Next.taken)? Behind you is the only thing taking
--- it lifts: a breadcrumb whose quest is yours, a quest not offered, one you said you're not doing stay done. The solve
--- offered Raven Hill from behind you with Worgen in the Woods done, and the card showed it "done" (mutate sweep)
+-- it lifts: a breadcrumb whose quest is yours, a quest not offered, one you said you're not doing stay done
 function Engine.TodoIfTaken(i)
   local s = steps()[i]
   if not s then return false end
@@ -1267,7 +1207,7 @@ function Engine.JoinHad()
   j.had = had
 end
 function Engine.FindPlace(force)
-  Engine.ForgetDone()
+  Engine.StateChanged()
   if force then Engine.ResetFloor() end -- (a rejoin: your place in the plan starts again from where you join)
   local key = ns.planKey and ns.planKey.starter
   if not (key and ns.char) then return nil end
@@ -1283,10 +1223,9 @@ function Engine.FindPlace(force)
     -- within JOIN_GAP levels of where the plan stands for you, or the plan reaches your level in its first stretch
     -- (you are still in the start zone): you are following it
     local at = joinStep(L)
-    -- (the first time you meet the plan, its first step left to do must also be on your continent: the quests before it
-    -- may be gray only because you levelled elsewhere - an Undead at 16 who levelled in Durotar and the Barrens read as
-    -- "following" the plan in Silverpine, and the card sent him from the Barrens to Silverpine through Orgrimmar and
-    -- the Undercity; joining, the stretch around you is priced against it - Engine.ChooseStart)
+    -- (the first time you meet the plan, its first step left to do must also be on your continent: the quests before
+    -- it may be gray only because you levelled elsewhere; joining, the stretch around you is priced against it -
+    -- Engine.ChooseStart)
     local away = false
     local here = not old and first and L > 5 and Engine.HereMap() or nil
     if here then
@@ -1330,11 +1269,9 @@ function Engine.FindPlace(force)
   return level
 end
 -- Ahead of the plan on a trip out: the plan's next step is in another zone, and the plan gets there AHEAD_GAP or more
--- levels below you - you levelled past it (rested XP, a dungeon, a zone you liked). Following it on, the card sent a
--- gnome warlock 46 who had finished Riverglades by boat and flight to Dustwallow Marsh for Stinky's Escape, a level 37
--- escort the plan does at 43 (a player: "super bad"); joining there afresh starts in Tanaris. Within JOIN_GAP levels
--- the plan's place held (Engine.PlaceDue), and the trip out is where that costs: your place is weighed again as joining
--- weighs it (Engine.FindPlace: the stretches near your level priced by XP an hour from where you stand), once a step.
+-- levels below you - you levelled past it (rested XP, a dungeon, a zone you liked). Within JOIN_GAP levels the plan's
+-- place held (Engine.PlaceDue), and the trip out is where that costs: your place is weighed again as joining weighs it
+-- (Engine.FindPlace: the stretches near your level priced by XP an hour from where you stand), once a step.
 -- -> true when your place moved
 Engine.AHEAD_GAP = 2
 Engine.AHEAD_QUEST = 6
@@ -1354,8 +1291,7 @@ function Engine.AheadCheck(i)
   if not (here and to and to ~= here) then return false end
   if ns.Dungeon and ns.Dungeon.Inside and ns.Dungeon.Inside() then return false end
   -- (and what it goes out for is far below you: the first quest of that trip AHEAD_QUEST levels or more under your
-  -- level - Stinky's Escape, 37 at 46. Up to JOIN_GAP levels ahead you follow the plan as before, its quests at about
-  -- your level: only a trip out for low quests is weighed)
+  -- level. Up to JOIN_GAP levels ahead you follow the plan as before: only a trip out for low quests is weighed)
   local list, ql = steps(), nil
   for j = i, math.min(#list, i + 12) do
     local t = list[j]
@@ -1370,7 +1306,6 @@ function Engine.AheadCheck(i)
   return not (old and now and old.first == now.first and old.level == now.level)
 end
 function Engine.Rejoin()
-  Engine.ForgetDone()
   if not (ns.planKey and ns.planKey.starter) then ns.Print("Only on the built-in plan: a plan of your own is made from your save and starts where you are."); return end
   Engine.FindPlace(true)
   Engine.Refresh()
@@ -1381,55 +1316,52 @@ ns.On("PLAYER_LEVEL_UP", function(level)
   if j and ns.planKey and j.plan == ns.planKey.starter then j.seen = tonumber(level) or UnitLevel("player") or j.seen end
 end)
 -- not before you are in the world: the quest log and the quests you have done are known from then on
-ns.On("PLAYER_ENTERING_WORLD", function() Engine.placeReady = true end)
+local function worldReady() Engine.placeReady = true end -- (PLAYER_ENTERING_WORLD)
 
--- The run of done steps from the plan's start, remembered (Engine.Compute): at level 50 that is ~2000 steps, each
--- worked out again on every refresh (7-8 ms, the perf battery). A done step comes back only through what resets it
--- here (Engine.ForgetDone: undo, back, a skip or jump, a quest dropped, a level, a bind, a dungeon, another route or
--- place in the plan) - and for anything else, the run is checked again in the background after each refresh that used
--- it (a slice a frame); a step found not done there resets it and refreshes.
+-- The run of done steps from the plan's start, remembered (Engine.Compute): ~2000 steps at level 50, otherwise worked
+-- out again on every refresh (7-8 ms). A done step comes back only through what resets it here (Engine.StateChanged:
+-- undo, back, a skip or jump, a quest dropped, a level, a bind, a dungeon, another route or place in the plan) - and
+-- for anything else, the run is checked again in the background after each refresh that used it (a slice a frame); a
+-- step found not done there resets it and refreshes.
 local doneRun = { list = nil, k = 0, step = nil, key = nil }
 Engine.doneRunMiss = 0 -- (the simulator: times the check found the run wrong)
-function Engine.ForgetDone() doneRun.list = nil; doneRun.k = 0 end
+-- One generation for your route state (Engine.stateGen): Engine.StateChanged() after anything that can make a done step
+-- not done (a skip or tick taken back, a quest back from "not doing", a route or place change). The done run is kept
+-- for one generation (doneKey).
+Engine.stateGen = 0
+function Engine.StateChanged() Engine.stateGen = Engine.stateGen + 1; doneRun.list = nil; doneRun.k = 0 end
+Engine.ForgetDone = Engine.StateChanged -- (callers outside the engine, tests and tools)
 -- quests gone from your log since the last look (QUEST_REMOVED, further down): one not handed in forgets the run
 local removed = {}
 local function settleRemoved()
   for id in pairs(removed) do
-    if not State.IsCompleted(id) then Engine.ForgetDone(); break end
+    if not State.IsCompleted(id) then Engine.StateChanged(); break end
   end
   wipe(removed)
 end
 local function doneKey(skipFrom, skipTo)
   local c = ns.char or {}
   local j = c.join
-  return table.concat({ tostring(c.manualDone), tostring(c.skipped), tostring(c.nope), tostring(j), j and tostring(j.level) or "", j and tostring(j.first) or "",
+  return table.concat({ Engine.stateGen, tostring(c.manualDone), tostring(c.skipped), tostring(c.nope), tostring(j), j and tostring(j.level) or "", j and tostring(j.first) or "",
     tostring(UnitLevel and UnitLevel("player")), tostring(skipFrom), tostring(skipTo), tostring(BeelineData) }, "|")
 end
-local verify -- the background check: { co }
-local vdriver = CreateFrame and CreateFrame("Frame") or nil
-local function verifyStep()
-  local v = verify
-  if not v then if vdriver then vdriver:Hide() end return end
-  if ns.Jobs.Busy("route") then return end -- (one slicer a frame: a route change's passes first)
-  ns.sliceCo, ns.sliceT0, ns.sliceBudget = v.co, debugprofilestop(), 0.5
-  local ok, wrong = coroutine.resume(v.co)
-  ns.sliceCo = nil
-  if verify ~= v then return end
-  if not ok or coroutine.status(v.co) == "dead" then
-    verify = nil; if vdriver then vdriver:Hide() end
-    if not ok then if ns.LogError then ns.LogError("donerun", wrong) end; Engine.ForgetDone(); return end
-    if wrong then
-      Engine.doneRunMiss = Engine.doneRunMiss + 1
-      if ns.Why then ns.Why("donerun", "step " .. wrong .. " is not done after all: the plan is looked at from its start again") end
-      Engine.ForgetDone(); Engine.RefreshBg()
-    end
-  end
+-- the background check: a job of ns.Jobs (kind "verify": after route changes and solves), one at a time
+local verify -- the job, while it runs
+local settling -- (Engine.SettleDone: a step not done forgets the run, without a refresh)
+local function verifyDone(wrong)
+  verify = nil
+  if not wrong then return end
+  Engine.doneRunMiss = Engine.doneRunMiss + 1
+  if not settling and ns.Why then ns.Why("donerun", "step " .. wrong .. " is not done after all: the plan is looked at from its start again") end
+  Engine.StateChanged()
+  if not settling then Engine.RefreshBg() end
 end
-if vdriver then vdriver:Hide(); vdriver:SetScript("OnUpdate", function() local ok, err = pcall(verifyStep); if not ok then verify = nil; vdriver:Hide(); if ns.LogError then ns.LogError("donerun", err) end end end) end
-Engine._verifyDriver = vdriver -- (the perf battery ticks it)
+local function verifyFail() verify = nil; if settling then Engine.doneRunMiss = Engine.doneRunMiss + 1 end; Engine.StateChanged() end
+local function verifyAbort(job) if verify == job then verify = nil end end
 local function checkRun(list, k)
   local key = doneRun.key
-  verify = { co = coroutine.create(function()
+  if verify then ns.Jobs.Cancel("verify") end
+  verify = ns.Jobs.Post("verify", function()
     for j = 1, k do
       if j % 16 == 0 then ns.MaybeYield() end
       if doneRun.list ~= list or doneRun.key ~= key then return nil end -- (reset meanwhile)
@@ -1437,14 +1369,12 @@ local function checkRun(list, k)
       elseif Engine.Status(j) ~= "done" then return j end
     end
     return nil
-  end) }
-  if vdriver then vdriver:Show() end
+  end, { budget = 0.5, logAs = "donerun", done = verifyDone, fail = verifyFail, abort = verifyAbort })
 end
--- The run is kept from one login to the next (ns.char.doneRun: its last step's key, at the level, plan and addon version
--- it was found at): a login looked at the whole plan from its start again - ~1,600 statuses at level 45, most of a
--- 315 ms refresh on the user's PC (/bee report perf). Taken back only where its last step still stands in the plan (a
--- stop added at login moves it: looked up near where it was), and then checked in the background like any other run
--- (checkRun): a step not done after all looks at the plan from its start again, as now
+-- The run is kept from one login to the next (ns.char.doneRun: its last step's key, at the level, plan and addon
+-- version it was found at): otherwise a login looked at the whole plan from its start again (most of a 300 ms
+-- refresh). Taken back only where its last step still stands in the plan (looked up near where it was), and then
+-- checked in the background like any other run (checkRun)
 local function runStamp() return tostring(ns.VERSION) .. ":" .. tostring(BeelineData and (BeelineData.id or BeelineData.title)) .. ":" .. #steps() end
 function Engine.DoneRunSave()
   if not ns.char then return end
@@ -1469,12 +1399,12 @@ end
 ns.On("PLAYER_LOGOUT", function() pcall(Engine.DoneRunSave) end)
 -- (tests and the simulator: the run checked at once, every time it is used)
 Engine.CHECK_RUN_NOW = false
-function Engine.SettleDone() while verify do local v = verify; ns.sliceCo, ns.sliceT0, ns.sliceBudget = v.co, debugprofilestop(), math.huge; local ok, wrong = coroutine.resume(v.co); ns.sliceCo = nil; if verify == v and (not ok or coroutine.status(v.co) == "dead") then verify = nil; if wrong or not ok then Engine.doneRunMiss = Engine.doneRunMiss + 1; Engine.ForgetDone() end end end end
+function Engine.SettleDone() settling = true; local ok, e = pcall(ns.Jobs.Settle, "verify"); settling = nil; if not ok then error(e, 0) end end
 -- Your place in the plan only moves forward: the floor, the furthest step of the plan the card has had as yours
 -- (kept per route by step key in ns.char.floor). A quest from the part of the plan you passed - one you took up again
--- there, a pick-up that came back - no longer pulls your place back: Next offers its steps as extras when they are
--- near and worth it (Engine.BelowFloor). It pulled the Base, the zones ahead and the solve's window back to Wetlands
--- while the player was in Riverglades (code review). /bee undo, a rejoin or another place in the plan reset it.
+-- there, a pick-up that came back - no longer pulls your place (Base, zones ahead, the solve's window) back: Next offers
+-- its steps as extras when they are near and worth it (Engine.BelowFloor). /bee undo, a rejoin or another place in
+-- the plan reset it.
 local function floorIndex(list)
   local d = BeelineData
   if not d or d.dungeon or d.special or Engine.noPlace or not ns.char then return nil end
@@ -1512,12 +1442,12 @@ function Engine.BelowFloor(planned, n)
   end
   return out
 end
--- Level 60 on the plan: no more questing, the route is done whatever plan steps are left - the card celebrates (the
--- user, 1.6.7). Not a zone, dungeon, special or branch route: those you picked are yours to finish. One level check -
--- nothing is worked out per refresh for a 60 (no scan, no solve, no trips). Unless you ask to finish the quests you
--- hold ("Finish my quests" on the card, ns.char.finish60, kept per character): then the plan is only their objectives
--- and hand-ins (Engine.finishNow, statusRaw) - nothing new picked up, no travel steps (the card's live trip gets you
--- there), no place or floor in the plan (the quests you hold are wherever the plan passed them)
+-- Level 60 on the plan: no more questing, the route is done whatever plan steps are left - the card celebrates. Not
+-- a zone, dungeon, special or branch route: those you picked are yours to finish. One level check - nothing is worked
+-- out per refresh for a 60 (no scan, no solve, no trips). Unless you ask to finish the quests you hold ("Finish my
+-- quests" on the card, ns.char.finish60, per character): then the plan is only their objectives and hand-ins
+-- (Engine.finishNow, statusRaw) - nothing new picked up, no travel steps (the card's live trip gets you there), no
+-- place or floor in the plan (the quests you hold are wherever the plan passed them)
 Engine.MAX_LEVEL = 60
 local function atCap()
   local d = BeelineData
@@ -1531,7 +1461,7 @@ function Engine.SetFinishing(on)
   ns.char.finish60 = on and true or nil
   Engine.finishNow = Engine.Finishing()
   Engine.view = nil
-  Engine.ForgetDone()
+  Engine.StateChanged()
   Engine.Refresh()
 end
 -- (how many times the plan was worked out, and how many of those from its first step: ns.Mark keeps them for a slow moment)
@@ -1545,17 +1475,12 @@ function Engine.Compute()
   -- the first step you can act on now. A step that needs a higher level ("wait") or a quest that isn't in your log
   -- ("blocked") doesn't hold up the route: it is passed over and comes back as soon as it can be done.
   local list, fallback = steps(), nil
-  -- (firstFull: the first pick-up waiting for room in your log; firstHigh: the first quest step waiting for your level -
-  -- red to you, or below its level. The guards below hold the plan on them, not on whichever wait came first)
-  local firstFull, firstHigh
+  -- (firstFull: the first pick-up waiting for room in your log; the guard below holds the plan on it)
+  local firstFull
   local lvlNow = (UnitLevel and UnitLevel("player")) or 1
-  local function held(i, st)
+  local function passedOver(i, st)
     fallback = fallback or i
-    if st == "full" then firstFull = firstFull or i
-    elseif st == "wait" and not firstHigh then
-      local t = list[i]
-      if t.q and t.q > 0 and (Engine.TooHigh(t) or (t.minLevel and lvlNow < t.minLevel)) then firstHigh = i end
-    end
+    if st == "full" then firstFull = firstFull or i end
   end
   local skipFrom, skipTo = nil, nil
   if not finishing then
@@ -1563,12 +1488,9 @@ function Engine.Compute()
     local f1, f2 = Engine.FirstStretch()
     if at and f1 and f1 > at then
       -- (a hand-in not ready whose objective step is in the part skipped is no work of the stretch: it waits, as look()
-      -- reads it below - "later". Counted as work, it kept the skip on with nothing else to do in the stretch: a night
-      -- elf rogue 57 placed in Mount Hyjal's last stretch was shown its blocked hand-ins, "Route done for now", while
-      -- Avalanche of Corruption, Rubble Rummage and Cleansing Winds waited 200-900 yd away in the part skipped - their
-      -- giver right there; Windswept Wards' 16 Enchanted Harpy Amulets were the "work" - mutate --play 7)
-      -- (only while the part skipped has work in the zone you stand in: a zone route's last hand-in waiting on tar from
-      -- Un'Goro, the part skipped, is "done for now" - the test - not a trip back for it)
+      -- reads it below - "later". Counted as work, it kept the skip on with nothing else to do in the stretch, hiding
+      -- the skipped part's quests nearby. Only while the part skipped has work in the zone you stand in: otherwise
+      -- "done for now", not a trip back for it)
       local workHere
       local function skippedWorkHere()
         if workHere == nil then
@@ -1595,8 +1517,8 @@ function Engine.Compute()
   if doneRun.list == nil and not Engine.noPlace and ns.char and ns.char.doneRun then doneRunLoad(list, key) end -- (the last login's: checked below like any)
   local use = not Engine.noPlace and doneRun.list == list and doneRun.key == key and doneRun.k > 0 and list[doneRun.k] == doneRun.step
   if use then start = doneRun.k + 1 end
-  -- (Engine.CHECK_RUN_EVERY: every n-th use only - the simulated player's whole-plan runs: checking ~2,000 done steps on
-  -- every refresh was a third of a persona's time, and a run that stays wrong is still caught)
+  -- (Engine.CHECK_RUN_EVERY: every n-th use only - the sim's whole-plan runs: checking ~2,000 done steps every refresh
+  -- was a third of its time, and a run that stays wrong is still caught)
   Engine.checkRunN = (Engine.checkRunN or 0) + 1
   if use and Engine.CHECK_RUN_NOW and Engine.checkRunN % (Engine.CHECK_RUN_EVERY or 1) == 0 then
     for j = 1, doneRun.k do
@@ -1610,22 +1532,19 @@ function Engine.Compute()
     end
   end
   Engine.computeN = Engine.computeN + 1; if start == 1 then Engine.walkN = Engine.walkN + 1 end -- (ns.Mark: a slow moment's walks of the plan)
-  local run = start - 1
+  local runLen = start - 1
   local found, sawExtra
   -- (the live solve's pick-up from behind you, Next.taken, reads "todo" only while it is the solve's pick: it is an
-  -- extra, never the plan's own step - as that it became Engine.planned, the solve moved on, it read "done" again and
-  -- the card showed a done step: a level 19 joining Darkshore, mutate sweep). Nor what reads "todo" only through it: the
-  -- rest of its quest, and a pick-up it unlocks - with Return to Verner's pick-up taken, A Baying of Gnolls (its
-  -- follow-up, behind you) became the plan's step, and the card showed it done once the solve moved on (mutate sweep)
+  -- extra, never the plan's own step - as that, once the solve moved on it read "done" again and the card showed a done
+  -- step. Nor what reads "todo" only through it: the rest of its quest, and a pick-up it unlocks)
   local taken = ns.Next and ns.Next.taken
   if taken ~= nil and not Engine.BehindYou(taken, true) then taken = nil end
   local function extra(i) return taken ~= nil and (list[i] == taken or Engine.BehindYou(list[i], true)) end
   -- a step as the plan's look reads it: the part of the plan your place skips (the plan before the stretch you joined
   -- at) done - and a hand-in whose objective step is there, still to do, waits with it ("later": passed over, like a
-  -- dungeon's). You start in that stretch, and the work you skip is not where you are: joining Riverglades at 39 with
-  -- Wound Dressings in the log, the card showed its hand-in "Not finished" in red, and going back for its objective
-  -- would fly you to the Badlands for cloth. The hand-in comes back once the quest is ready (the cloth drops anywhere);
-  -- the objective is the live solve's to offer, as any step of a quest in your log behind your place (Engine.BelowFloor)
+  -- dungeon's). You start in that stretch, and the work you skip is not where you are. The hand-in comes back once the
+  -- quest is ready; the objective is the live solve's to offer, as any step of a quest in your log behind your place
+  -- (Engine.BelowFloor)
   local function look(i)
     if skipFrom and i >= skipFrom and i <= skipTo then return "done" end
     local st = Engine.Status(i)
@@ -1639,9 +1558,8 @@ function Engine.Compute()
     end
     return st
   end
-  -- (a flight path the addon put in close to a trip is the card's step only when the plan's own next step after it can be
-  -- done: it rides along with that trip. With every step there waiting - a full log, hand-ins of quests not in it - the
-  -- card sent a level 27 from Thousand Needles to Thunder Bluff for Tal's flight path alone, 4,900 yd (mutate seed 4))
+  -- (a flight path the addon put in close to a trip is the card's step only when the plan's own next step after it
+  -- can be done: it rides along with that trip. With every step there waiting, it alone was a long detour)
   local function waits(st) return st == "wait" or st == "full" or st == "blocked" or st == "later" end
   local function ridesAlong(i)
     for j = i + 1, #list do
@@ -1655,39 +1573,35 @@ function Engine.Compute()
     if st ~= "done" and extra(i) then st = "extra" end
     if st == "extra" then sawExtra = true
     elseif st ~= "done" then
-      if waits(st) then held(i, st)
+      if waits(st) then passedOver(i, st)
       elseif list[i].added and list[i].k == "fp" and not ridesAlong(i) then -- (left for its trip: see above)
       else found = i; break end
-    elseif run == i - 1 then run = i end
+    elseif runLen == i - 1 then runLen = i end
   end
-  -- (not below your place in the plan: the floor. Only a step of a quest in your log is kept out down there - one you took
-  -- up again from the part you passed: a pick-up waiting for a level or room in your log, a hand-in waiting for its
-  -- quest, a quest you abandoned - those come back as they always did, and hold the floor)
+  -- (not below your place in the plan: the floor. Only a step of a quest in your log is kept out down there - one you
+  -- took up again from the part you passed. A pick-up waiting for a level or room in your log, a hand-in waiting for
+  -- its quest, a quest you abandoned come back as before, and hold the floor)
   local F = not finishing and floorIndex(list) or nil
   local function below(i) local t = list[i]; return F and i < F and t.q and t.q > 0 and not t.added and State.OnQuest(t.q) end
   -- (but not a step of the quest the plan lands on: its hand-in or later objective above the floor keeps the quest's
-  -- steps passed below it on the card - the floor stood past a kill objective, and the card sent a tester to hand in
-  -- the quest at 0/12, "Not finished" in red)
+  -- steps passed below it on the card)
   if found and below(found) then
     local f2
     for i = found + 1, #list do
       local st = look(i)
       if st ~= "done" and not extra(i) then
         if st == "todo" and below(i) then -- (passed below the floor)
-        elseif st == "wait" or st == "full" or st == "blocked" or st == "later" then held(i, st) else f2 = i; break end
+        elseif st == "wait" or st == "full" or st == "blocked" or st == "later" then passedOver(i, st) else f2 = i; break end
       end
     end
-    -- (nothing left to do above the floor: the quests you hold below it are the plan's work now, not a finished plan.
-    -- A level 59 that had joined past the Burning Steppes did the plan's last hand-in in Azshara with four of its quests
-    -- finished in the log - FIFTY! YEP!, The Good Stuff, Mayara Brightwing, A Donation of Mageweave - and the card said
-    -- "Route complete": the live solve offers those only near you - mutate --play 7/8)
+    -- (nothing left to do above the floor: the quests you hold below it are the plan's work now, not a finished
+    -- plan - the live solve offers those only near you)
     found = f2 or found
   end
   -- A hand-in not ready, with an objective step of its quest still to do before it (passed below the floor, above, or
-  -- however else the look came past it): that objective is the step, not the hand-in "Not finished" in red - the floor
-  -- stood past a kill objective, and the card sent a tester to hand in Preventative Measures at 0/12 (1.6.5)
-  -- (only for a hand-in: a later objective of the same quest is work to do as it is, and going back for the passed one
-  -- moved the card - and its pins - on every objective done, twice the time of one; the perf gate, orc @25)
+  -- however else the look came past it): that objective is the step, not the hand-in "Not finished" in red.
+  -- (Only for a hand-in: a later objective of the same quest is work to do as it is; going back for the passed one
+  -- moved the card and its pins on every objective done - 2x the time)
   if found and list[found].k == "turnin" and list[found].q and Engine.Status(found) == "notready" then
     local objs = Engine.ObjStepsOf(list[found].q)
     for n = 1, #objs do
@@ -1697,20 +1611,14 @@ function Engine.Compute()
     end
   end
   -- (a full log: the plan's pick-ups wait for room, but the plan does not run on without them through the trips and
-  -- training meant for levels above you - with 36 other quests in the log, a level 35 was flown through a dozen zones to
-  -- "train level 46 spells" (mutate --play). The pick-up stays on the card: "Quest log full - hand in or abandon")
-  -- (the first full pick-up, not the first wait of any kind: a red pick-up, a hand-in not in your log or a dungeon's
-  -- "later" before it let the plan run on as before - code review)
-  -- The same for quests waiting for your level: a player 2-3 levels behind the plan finds a hub's top quests red, and
-  -- the plan flew on to the next zone's trips; at the level-up those quests woke behind the card and pulled the plan's
-  -- step back to the old zone (code review). What is left here is to do here: the card says the level it needs.
-  -- ("Here": no trip between the waiting quest and that step - one in a zone the plan has left is not held for)
+  -- training meant for levels above you. The pick-up stays on the card: "Quest log full - hand in or abandon". The
+  -- first full pick-up, not the first wait of any kind: a red pick-up, a hand-in not in your log or a dungeon's
+  -- "later" before it lets the plan run on as before)
   local hold
-  if found and not list[found].q and (firstFull or firstHigh) then
+  if found and not list[found].q and firstFull then
     local pl = Engine.PlanLevel(found)
     if pl and pl > lvlNow + 2 then
-      local function here(w) for j = w + 1, found - 1 do if isTrip(list[j]) then return false end end return true end
-      if firstFull and firstFull < found then hold = firstFull end
+      if firstFull < found then hold = firstFull end
       if hold then Engine.levelHold = list[found]; found = nil end
     end
   end
@@ -1719,13 +1627,12 @@ function Engine.Compute()
   local first = (found and fallback) and math.min(found, fallback) or found or fallback
   if first and not finishing and not below(first) then raiseFloor(list, first) end
   if not Engine.noPlace then
-    doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, key, run, list[run]
+    doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, key, runLen, list[runLen]
     doneRun.skipFrom0, doneRun.skipTo0 = skipFrom or 0, skipTo or -1
-    if use and run > 0 and not Engine.CHECK_RUN_NOW then checkRun(list, start - 1) end
+    if use and runLen > 0 and not Engine.CHECK_RUN_NOW then checkRun(list, start - 1) end
   end
   -- (nothing on the route to do now, only steps that wait - for your level, an earlier quest: done for now. The card
-  -- says so and offers your next home bases, rather than a step you can't do - a level 59 at the plan's last training,
-  -- "Nothing to learn until level 60", with three zones' quests open - mutate --play)
+  -- says so and offers your next home bases, rather than a step you can't do)
   Engine.forNow = not found and not hold and fallback ~= nil
   -- (and nothing left at all: every step done, none waiting, none held back as the live solve's pick-up - the plan is
   -- finished. The card says so - your next home bases - not a bare "Route complete" with no next step. At 60: Capped)
@@ -1743,13 +1650,13 @@ function Engine.SamePlace(a, b)
   local A, B = norm(a), norm(b)
   return A == B or A:find(B, 1, true) ~= nil or B:find(A, 1, true) ~= nil
 end
--- a known flight path in this zone: node names look like "Sentinel Hill, Westfall" / "Lakeshire, Redridge"
 -- the flight point of an "fp" step: by the flight master (Travel.KnowsFlightPoint: the flight map's own names); a step
 -- without one, by its zone's name as before
 function Engine.KnowsThisFlightPoint(s)
   if s.m and s.npc and ns.Travel and ns.Travel.KnowsFlightPoint then return ns.Travel.KnowsFlightPoint(s.m, s.npc) and true or false end
   return s.zone and Engine.KnowsFlightIn(s.zone) or false
 end
+-- a known flight path in this zone: node names look like "Sentinel Hill, Westfall" / "Lakeshire, Redridge"
 function Engine.KnowsFlightIn(zone)
   local z = norm(zone); local first = z:match("^(%S+)")
   for name in pairs(State.knownTaxi or {}) do
@@ -1779,8 +1686,7 @@ end
 function Engine.Shown() return Engine.view or Engine.CardAt() end
 -- progress through the zone you're in: the stretch between the travel steps around the shown step
 -- where you are on your plan: its own step, not a stop shown ahead of it (a hand-in you chose with "Do it now", the
--- solve's pick) - the card's "Base:" count and the zones ahead said Burning Steppes, level 59, while a Stormwind hand-in
--- filed there was on the card (tester)
+-- solve's pick) - else the card's "Base:" count and the zones ahead followed that stop's zone
 function Engine.PlanAt()
   local p, list = Engine.planned, steps()
   if p and list[p] and not Engine.view then return p end
@@ -1790,6 +1696,7 @@ function Engine.LegProgress(i)
   local list = steps(); i = i or Engine.PlanAt()
   if not i or not list[i] then return 0, 0, nil end
   local a, b = i, i
+  -- (flights only bound the stretch here, not hearths: not Engine.IsTrip)
   while a > 1 and list[a].k ~= "fly" do a = a - 1 end
   if list[a].k == "fly" and a < i then a = a + 1 end
   while b < #list and list[b + 1].k ~= "fly" do b = b + 1 end
@@ -1799,10 +1706,11 @@ function Engine.LegProgress(i)
   return done, b - a + 1, zone
 end
 
--- The zones ahead, from step i (default: where you are on the route) on, in order: { zone, quests = quests with something
--- still to do there on this visit (pick up, work or hand in), names = their quest names, first = its first step }. A zone you only pass through (no
--- hand-in, a flight path or two) is left out; travel steps belong to no zone. Up to n visits (default 8).
--- (the card's "why go there" line, the zones panel, the route list's chips - tester: they showed the plan from the start)
+-- The zones ahead, from step i (default: where you are on the route) on, in order: { zone, quests = quests with
+-- something still to do there on this visit (pick up, work or hand in), names = their quest names, first = its first
+-- step }. A zone you only pass through (no hand-in, a flight path or two) is left out; travel steps belong to no
+-- zone. Up to n visits (default 8). (The card's "why go there" line, the zones panel, the route list's chips)
+local NO_ZONE_WORK = { fly = true, hearth = true, fp = true, bind = true } -- (trips, and steps of no zone's quests)
 function Engine.ZonesAhead(i, n)
   local list, out = steps(), {}
   n = n or 8
@@ -1810,8 +1718,8 @@ function Engine.ZonesAhead(i, n)
   local cur
   local function close()
     if cur and (cur.quests > 0 or cur.grind) then
-      -- (a zone only passed through between two visits to one zone is left out: one visit then, not "Riverglades"
-      -- twice in a row - tester)
+      -- (a zone only passed through between two visits to one zone is left out: one visit then, not the same zone
+      -- twice in a row)
       local last = out[#out]
       if last and last.zone == cur.zone then
         for k, q in pairs(cur.seen) do if not last.seen[k] then last.seen[k] = true; last.quests = last.quests + 1; if type(q) == "string" then last.names[#last.names + 1] = q end end end
@@ -1820,10 +1728,9 @@ function Engine.ZonesAhead(i, n)
     end
     cur = nil
   end
-  local TRAVEL = { fly = true, hearth = true, boat = true, fp = true, bind = true }
   for j = i, #list do
     local s = list[j]
-    if not TRAVEL[s.k] and s.zone and not Engine.IsDone(j) then
+    if not NO_ZONE_WORK[s.k] and s.zone and not Engine.IsDone(j) then
       if not cur or cur.zone ~= s.zone then
         close()
         if #out >= n then break end
@@ -1857,23 +1764,23 @@ end
 -- - a refresh asked for from outside waits for the end (Engine.Refresh), as do the full look and a count moving
 --   (Engine.Announce: the strongest of them, once) and what acts on a step by its number (Engine.WhenIdle, Engine.Idle:
 --   landing, arriving, a hearth cast, a jump), and no background solve starts (Next.PickAsync);
--- - a newer route change wins: the run's jobs are dropped, and until the next route job the refreshes run (run.free).
+-- - a newer route change wins: the run's jobs are dropped, and until the next route job the refreshes run (lock.free).
 -- It ends when no route job is queued and no stage of the newest route change is to come: a refresh asked for meanwhile
 -- runs then as a route job of its own, then the actors run, the state is announced, and the card moves once.
 -- The run's own jobs work as they always did (none of this applies inside them). Under ns.Jobs.SYNC (tests, the
 -- simulated players, tools/replay.js) a route job runs to its end inside Post, and there is no run at all.
 Engine.routeGen = 0 -- (one more each route change: a job or a stage of an older one is dropped)
-local run -- nil, or { shown = the card's step (table), shownAt = its number, due, free, idle = { fn }, state }
+local lock -- nil, or { shown = the card's step (table), shownAt = its number, due, free, idle = { fn }, state }
 local pend = {} -- route change -> its stages (Engine.After) still to come
 local cancelling = false
 local switching -- (Engine.Switch: the refreshes its switch asks for are its own)
 local function insideRoute() return ns.Jobs.Inside("route") end
-function Engine.Busy() return run ~= nil and not run.free and not insideRoute() end
-Engine._Run = function() return run end -- (tests)
+function Engine.Busy() return lock ~= nil and not lock.free and not insideRoute() end
+Engine._Run = function() return lock end -- (tests)
 -- the card's step (not the one you look at): Engine.current, or the run's hold
 function Engine.CardAt()
   if Engine.cappedNow and Engine.Capped() then return nil end -- (a 60 on the plan: done, Engine.Capped - not a late solve's pick)
-  local r = run
+  local r = lock
   if not (r and r.shown) or insideRoute() then return Engine.current end
   local list = steps()
   if list[r.shownAt or 0] ~= r.shown then
@@ -1884,25 +1791,25 @@ function Engine.CardAt()
   return r.shownAt
 end
 -- a stop inserted at number at (Engine.InsertStop): the hold's number moves with it
-function Engine.RunShift(at) local r = run; if r and r.shownAt and r.shownAt >= at then r.shownAt = r.shownAt + 1 end end
+function Engine.RunShift(at) local r = lock; if r and r.shownAt and r.shownAt >= at then r.shownAt = r.shownAt + 1 end end
 -- fn now, or when the run ends
-function Engine.WhenIdle(fn) if Engine.Busy() then run.idle[#run.idle + 1] = fn; return true end; fn(); return false end
+function Engine.WhenIdle(fn) if Engine.Busy() then lock.idle[#lock.idle + 1] = fn; return true end; fn(); return false end
 -- a handler that acts on a step by its number: while a run is on, it runs when the run ends (with its arguments)
 function Engine.Idle(fn)
   return function(...)
     if not Engine.Busy() then return fn(...) end
     local n, a = select("#", ...), { ... }
-    run.idle[#run.idle + 1] = function() fn(unpack(a, 1, n)) end
+    lock.idle[#lock.idle + 1] = function() fn(unpack(a, 1, n)) end
   end
 end
 -- State's FR_STATE / FR_PROGRESS while a run is on: kept (the full look over a count), fired once when it ends -> true
 function Engine.Announce(ev)
   if not Engine.Busy() then return false end
-  if ev == "FR_STATE" or not run.state then run.state = ev end
+  if ev == "FR_STATE" or not lock.state then lock.state = ev end
   return true
 end
 -- a refresh asked for meanwhile (a background solve that did not start, ...): when the run ends
-function Engine.Due() if Engine.Busy() then run.due = true end end
+function Engine.Due() if Engine.Busy() then lock.due = true end end
 -- a route job's state of its own: the statuses its refresh reuses (Engine.Status), swapped out while it waits for its
 -- next frame - a status asked from outside meanwhile is neither served from it nor put in it
 -- where you are, for a route job: taken once when it starts (a pass spread over frames prices every gap from the same
@@ -1926,9 +1833,9 @@ function Engine.Post(name, fn, abort)
   return ns.Jobs.Post("route", fn, { gen = (not ns.Jobs.SYNC) and Engine.routeGen or nil, logAs = "route " .. name,
     enter = jobEnter, leave = jobLeave, abort = function(job) jobAbort(job); if abort then abort() end end })
 end
--- a route change's stage: fn at its time after the change, as a route job (C_Timer.After was the whole pass and its
--- refresh in one frame: ~1 s at level 50 for a zone picked in Where to?). The stages queue in the order of their times,
--- so each reads the step the one before it settled on; a newer route change drops the ones still to come.
+-- a route change's stage: fn at its time after the change, as a route job (not C_Timer.After: the whole pass and its
+-- refresh in one frame was ~1 s). The stages queue in the order of their times, so each reads the step the one before
+-- it settled on; a newer route change drops the ones still to come.
 function Engine.After(delay, name, fn)
   local gen, async = Engine.routeGen, not ns.Jobs.SYNC
   if async then pend[gen] = (pend[gen] or 0) + 1 end
@@ -1939,9 +1846,9 @@ function Engine.After(delay, name, fn)
   end)
 end
 -- A route switch you asked for (a zone picked in Where to?, back to your plan): fn switches; the card shows the new
--- route's plan step at once (no solve: Engine.noSolve), and the refresh with its solve is the first route job, spread over
--- frames before the switch's other stages - the card then moves once, when they are all done. It was the whole
--- refresh, twice, in the click's frame (~110 ms at level 50). Under ns.Jobs.SYNC: fn, then the refresh, as always.
+-- route's plan step at once (no solve: Engine.noSolve), and the refresh with its solve is the first route job, spread
+-- over frames before the switch's other stages - the card then moves once, when they are all done (not two full
+-- refreshes in the click's frame). Under ns.Jobs.SYNC: fn, then the refresh, as always.
 function Engine.Switch(fn)
   if ns.Jobs.SYNC then fn(); Engine.Refresh(); return end
   switching = true
@@ -1950,8 +1857,8 @@ function Engine.Switch(fn)
   Engine.noSolve = true
   local ok2, err2 = pcall(Engine.Refresh)
   Engine.noSolve = nil
-  -- (the card shows that step from the first job's first frames: its trip - a search across the world, ~70 ms at
-  -- level 50 - is worked out there, paused like the rest, and the card's fill finds it done)
+  -- (the card shows that step from the first job's first frames: its trip - a world-wide search, ~70 ms - is worked
+  -- out there, paused like the rest, and the card's fill finds it done)
   local s = steps()[Engine.current or 0]
   Engine.Post("refresh", function()
     if s and steps()[Engine.current or 0] == s then ns.Call(Engine.TravelFor, s); ns.Fire("FR_STEP", Engine.current) end
@@ -1961,24 +1868,24 @@ function Engine.Switch(fn)
   if not ok2 then error(err2, 0) end
 end
 local function startRun()
-  if run and not run.free then return end
-  run = run or { idle = {} }
-  run.free = nil
-  run.shown, run.shownAt = steps()[Engine.current or 0], Engine.current
-  Engine.holdShow = run
+  if lock and not lock.free then return end
+  lock = lock or { idle = {} }
+  lock.free = nil
+  lock.shown, lock.shownAt = steps()[Engine.current or 0], Engine.current
+  Engine.holdShow = lock
   -- (a trip asked again during the run is answered from its first search, as within one frame: Travel.Plan)
-  if ns.Travel and ns.Travel.PinMemo then ns.Travel.PinMemo(run) end
+  if ns.Travel and ns.Travel.PinMemo then ns.Travel.PinMemo(lock) end
   if ns.Next and ns.Next.Cancel then ns.Next.Cancel() end
 end
 function Engine.CheckIdle()
-  local r = run
+  local r = lock
   if not r or cancelling or ns.Jobs.Busy("route") or (pend[Engine.routeGen] or 0) > 0 then return end
   if r.due and not r.free then r.due = nil; Engine.Post("refresh", function() Engine.Refresh() end); return end
   -- (the card's step at the end: its trip worked out in a job of its own, paused like the rest - the card's fill
   -- below finds it done)
   local s = not r.free and steps()[Engine.current or 0]
   if s and r.warmed ~= s then r.warmed = s; Engine.Post("trip", function() ns.Call(Engine.TravelFor, s) end); return end
-  run = nil
+  lock = nil
   if Engine.holdShow == r then Engine.holdShow = nil end
   if ns.Travel and ns.Travel.UnpinMemo then ns.Travel.UnpinMemo(r) end
   for _, fn in ipairs(r.idle) do local ok, e = pcall(fn); if not ok and ns.LogError then ns.LogError("idle", e) end end
@@ -1991,12 +1898,12 @@ ns.Jobs.ended = function(job) if job.kind == "route" then Engine.CheckIdle() end
 -- not held - the switch's refresh shows the new route's step
 ns.On("FR_ROUTE_CHANGED", function()
   Engine.routeGen = Engine.routeGen + 1
-  if run then
+  if lock then
     cancelling = true
     ns.Jobs.Cancel("route")
     cancelling = false
-    run.free, run.shown, run.shownAt = true, nil, nil
-    if Engine.holdShow == run then Engine.holdShow = nil end
+    lock.free, lock.shown, lock.shownAt = true, nil, nil
+    if Engine.holdShow == lock then Engine.holdShow = nil end
     -- (it ends once the new change's stages are done - or next frame, if it has none)
     if C_Timer and C_Timer.After then C_Timer.After(0, Engine.CheckIdle) end
   end
@@ -2004,35 +1911,33 @@ end)
 
 -- One refresh for one change: while the addon takes in a change (Engine.Coalesce: the log's full look, FR_STATE), the
 -- refreshes its parts ask for - the plan's own, a hand-in added, a side trip's stop, a focus - are one, run when
--- they are all done. An objective finished ran three back to back (15 ms each at level 50: the perf battery).
+-- they are all done (an objective finished ran three back to back otherwise).
 -- Its solve runs in the background (a change the game told of), or with fg in that refresh (as an Engine.Refresh would);
 -- a change taken in inside another is part of it, and its refresh is the outer one's
-local held -- nil, or true while a change is taken in; "due" once a refresh was asked for
+local coalescing -- nil, or true while a change is taken in; "due" once a refresh was asked for
 function Engine.Coalesce(fn, fg, ...)
-  if held then return fn(...) end
-  held = true
+  if coalescing then return fn(...) end
+  coalescing = true
   local ok, err = pcall(fn, ...)
-  local due = held == "due"
-  held = nil
+  local due = coalescing == "due"
+  coalescing = nil
   if due then Engine.bgSolve = not fg or nil; local ok2, e2 = pcall(Engine.Refresh); Engine.bgSolve = nil; if not ok2 then error(e2, 0) end end
   if not ok then error(err, 0) end
 end
 -- FR_STATE (the full look) is one change whoever fires it: its listeners - the plan's refresh, a hand-in added
--- (Inserts.lua), a side quest's stop (Side.lua), a count that moved (Focus.lua), a quest back from "not doing" - ask for
--- one refresh, run after them all. A flight path found or a bonus item in your bags (State.Announce without the
--- log's coalescing) ran the plan's refresh first and then one per stop added, the first on the route about to change
+-- (Inserts.lua), a side quest's stop (Side.lua), a count that moved (Focus.lua), a quest back from "not doing" - ask
+-- for one refresh, run after them all (also for State.Announce without the log's coalescing)
 ns.Around("FR_STATE", function(dispatch, ...) Engine.Coalesce(dispatch, true, ...) end)
-for _, e in ipairs({ "HEARTHSTONE_BOUND", "PLAYER_ENTERING_WORLD", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
-  ns.On(e, function() Engine.ForgetDone() end)
+for _, e in ipairs({ "HEARTHSTONE_BOUND", "FR_ROUTE_CHANGED", "FR_NOPE" }) do
+  ns.On(e, function() Engine.StateChanged() end)
 end
--- A quest gone from your log: dropped, its steps come back (forget the run) - or handed in, which only makes steps done.
--- The game fires QUEST_REMOVED for a hand-in too, and forgetting there made every hand-in look at the plan from its
--- start: 1,546 statuses and ~8 ms at level 38, 1,991 at 51 (the perf battery's "status"; an optimized fork of 1.6.8
--- pointed at the whole-plan look). Which it was is settled at the next refresh, after both events, whatever their order
-ns.On("QUEST_REMOVED", function(id) if id then removed[id] = true else Engine.ForgetDone() end end)
+-- A quest gone from your log: dropped, its steps come back (forget the run) - or handed in, which only makes steps
+-- done. The game fires QUEST_REMOVED for a hand-in too, and forgetting there made every hand-in look at the plan from
+-- its start (~2000 statuses). Which it was is settled at the next refresh, after both events, whatever their order
+ns.On("QUEST_REMOVED", function(id) if id then removed[id] = true else Engine.StateChanged() end end)
 -- (a new zone matters only going into or out of a dungeon: a run there is done while you are inside)
 local wasInside
-ns.On("ZONE_CHANGED_NEW_AREA", function() local inside = ns.Is(IsInInstance); if inside ~= wasInside then wasInside = inside; Engine.ForgetDone() end end)
+local function insideChanged() local inside = ns.Is(IsInInstance); if inside ~= wasInside then wasInside = inside; Engine.StateChanged() end end -- (ZONE_CHANGED_NEW_AREA)
 -- what you're plainly doing holds the card: a step you chose (Do it now), or one your kills count for (for
 -- PROGRESS_HOLD seconds after the last one). anyStatus: the hold whatever the step's status (the refresh checks it itself)
 function Engine.Holding(anyStatus)
@@ -2045,29 +1950,31 @@ function Engine.RefreshBg() Engine.Coalesce(Engine.Refresh) end
 -- remove the steps pred says from the route (inserted stops only): numbers, keys and the remembered run follow
 function Engine.RemoveSteps(pred)
   local list = steps()
+  local d = BeelineData
+  local choices = d and list == d.steps and d.choices -- (kept by position: InsertStop shifts them on)
   local n = 0
   for j = #list, 1, -1 do
     if list[j].inserted and pred(list[j]) then
       table.remove(list, j); n = n + 1
+      if choices then for _, c in ipairs(choices) do if c.at and c.at > j then c.at = c.at - 1 end end end
       if Engine.current and Engine.current > j then Engine.current = Engine.current - 1 end
       if Engine.planned and Engine.planned > j then Engine.planned = Engine.planned - 1 end
     end
   end
   if n == 0 then return 0 end
   for j = 1, #list do list[j].id = j end
-  keyCache[list] = nil
+  Engine.StepsChanged(list)
   Engine.focus, Engine.focusWhy, Engine.view = nil, nil, nil
-  if Engine.ForgetDone then Engine.ForgetDone() end
+  Engine.StateChanged()
   return n
 end
 -- a background solve's pick on the card (no rescan of the plan: nothing but the order changed)
--- (a pick not to do is not shown - skipped, ticked, not offered meanwhile - except the plan's own step when the card's is
--- no longer to do either: a solve that let go the quest it had taken from behind you (Next.taken) gives back the plan's
--- step, and when that was a hand-in not finished yet the card stayed on the pick-up, now read "done" - mutate seed 3)
+-- (a pick not to do is not shown - skipped, ticked, not offered meanwhile - except the plan's own step when the card's
+-- is no longer to do either: a solve that let go the quest it had taken from behind you (Next.taken) gives back the
+-- plan's step, which may be a hand-in not finished yet)
 function Engine.ShowPick(pick)
   if not pick or pick == Engine.current then return end
   if Engine.Status(pick) ~= "todo" and not (pick == Engine.planned and not (Engine.current and Engine.Status(Engine.current) == "todo")) then return end
-  local fi, why = Engine.focus, Engine.focusWhy
   if Engine.Holding() then return end
   Engine.focus = nil
   Engine.current = pick
@@ -2075,9 +1982,9 @@ function Engine.ShowPick(pick)
   ns.Fire("FR_STEP", Engine.Shown())
 end
 function Engine.Refresh()
-  if held then held = "due"; return end
+  if coalescing then coalescing = "due"; return end
   if switching then return end -- (a route switch's own refreshes: Engine.Switch does them)
-  if Engine.Busy() then run.due = true; return end -- (while a route change's passes run: when they end)
+  if Engine.Busy() then lock.due = true; return end -- (while a route change's passes run: when they end)
   local outer = batch == nil
   if outer then batch = {} else wipe(batch) end -- a nested refresh follows a change: start the reuse over
   if Engine.CHECK_RUN_NOW then Engine.GrayForget() end -- (tests change quests without the game's events)
@@ -2104,7 +2011,7 @@ function Engine.RefreshInner()
   local before = Engine.current
   local beforeStep = before and steps()[before]
   -- (a refresh you asked for shows at once: no hold from a solve before it - but a route change's run holds the card)
-  if not Engine.bgSolve and not (run and Engine.holdShow == run) then Engine.holdShow = nil end
+  if not Engine.bgSolve and not (lock and Engine.holdShow == lock) then Engine.holdShow = nil end
   local tc = debugprofilestop and debugprofilestop()
   Engine.current = Engine.Compute()
   if tc and ns.Time then ns.Time("compute", debugprofilestop() - tc) end
@@ -2126,14 +2033,12 @@ function Engine.RefreshInner()
   -- or, with it off, the old reordering - a later step you're working on or standing at (Engine.UpdateFocus)
   Engine.planned = Engine.current
   -- On a flight nothing on the ground is in reach: the step you took off with holds until you land, instead of the
-  -- card re-picking as you pass over zones - a hand-in in Elwynn came up while flying over Stranglethorn (tester:
-  -- "it can be a bit confusing to see it constantly updating"). Kept by the step itself (a stop inserted meanwhile
-  -- moves its number). Landing plans again from where you are
+  -- card re-picking as you pass over zones. Kept by the step itself (a stop inserted meanwhile moves its number).
+  -- Landing plans again from where you are
   local aloft = ns.Is and UnitOnTaxi and ns.Is(UnitOnTaxi, "player")
   local holdAt
   -- (only a step the card chose: logged in or reloaded on a flight, no solve has run yet and the card's step is the
-  -- plan's - on a zone home base its trip out of the zone, "Fly to Badlands" for Pearl Diving with Stranglethorn's
-  -- quests left, held the whole flight (tester). Until a solve has picked, the card picks as on the ground; then it holds)
+  -- plan's, which may be a stale trip out. Until a solve has picked, the card picks as on the ground; then it holds)
   if aloft then
     if Engine.taxiHold and not planIndex().idx[Engine.taxiHold] then Engine.taxiHold = nil end -- (another route since)
     if not Engine.taxiHold and before and (Engine.picked == steps() or not (ns.Next and ns.Next.Enabled())) then Engine.taxiHold = steps()[before] end
@@ -2149,36 +2054,36 @@ function Engine.RefreshInner()
   elseif ns.Next and ns.Next.Enabled() then
     -- what you're plainly doing wins over any solve: a step your kills count for (for Engine.PROGRESS_HOLD seconds
     -- after the last one), or one you chose (Do it now)
-    local fi, why = Engine.focus, Engine.focusWhy
-    local held = Engine.Holding(true)
-    if held and Engine.Status(fi) == "todo" then
+    local fi = Engine.focus
+    local holding = Engine.Holding(true)
+    if holding and Engine.Status(fi) == "todo" then
       Engine.current = fi
     elseif Engine.RecentProgress(Engine.current) then
       Engine.focus = nil -- (farming the plan's own step: your kills count for it - it stays, whatever circle you wander into)
     else
       Engine.focus = nil
       if Engine.bgSolve and ns.Next.PickAsync then
-        -- taking in a change from the game (Engine.Coalesce): the solve runs in the background (it was 20-40 ms of a
-        -- 50 ms refresh at level 50); meanwhile the card keeps the last pick while it is still to do, else the plan's
-        -- step, and moves only if the solve picks another (Engine.ShowPick)
+        -- taking in a change from the game (Engine.Coalesce): the solve runs in the background (20-40 ms of a 50 ms
+        -- refresh); meanwhile the card keeps the last pick while it is still to do, else the plan's step, and moves
+        -- only if the solve picks another (Engine.ShowPick)
         local keep = ns.Next.LastPick()
         local planned, list = Engine.current, steps()
         if keep then Engine.current = keep end
-        -- the card holds while the solve settles (at most Engine.HOLD_SECS): it showed the plan's step, then a moment
-        -- later the solve's pick - two slides for one hand-in (persona review). Only when the card would change at all
+        -- the card holds while the solve settles (at most Engine.HOLD_SECS): else it showed the plan's step, then a
+        -- moment later the solve's pick - two slides for one hand-in. Only when the card would change at all
         local token = {}
         if beforeStep and steps()[Engine.current] ~= beforeStep then
           Engine.holdShow = token
           if C_Timer and C_Timer.After then C_Timer.After(Engine.HOLD_SECS, function() if Engine.holdShow == token then Engine.holdShow = nil; ns.Fire("FR_STEP", Engine.Shown()) end end) end
         end
         ns.Next.PickAsync(planned, function(pick)
-          local held = Engine.holdShow == token
-          if held then Engine.holdShow = nil end
-          if Engine.planned ~= planned or steps() ~= list then if held then ns.Fire("FR_STEP", Engine.Shown()) end return end
+          local wasHeld = Engine.holdShow == token
+          if wasHeld then Engine.holdShow = nil end
+          if Engine.planned ~= planned or steps() ~= list then if wasHeld then ns.Fire("FR_STEP", Engine.Shown()) end return end
           local was = Engine.current
           if pick then Engine.picked = list end -- (a solve has chosen the card's step on this route: a flight may hold it)
           Engine.ShowPick(pick or planned)
-          if held and Engine.current == was then ns.Fire("FR_STEP", Engine.Shown()) end
+          if wasHeld and Engine.current == was then ns.Fire("FR_STEP", Engine.Shown()) end
         end)
       else
         local ok, pick = ns.Call(ns.Next.Pick, Engine.current)
@@ -2211,7 +2116,7 @@ Engine.HOLD_SECS = 0.3
 
 -- Look at step i (a click on its row in the card, the route window, a map pin or the zones tab): right-click shows it
 -- on the map, shift-click jumps there (noJump: not from here), a click looks at it - the step you are on ends looking.
--- One rule for every row (the card's used to differ from the route window's - code review)
+-- One rule for every row
 function Engine.Look(i, btn, noJump)
   if not i then return end
   if btn == "RightButton" then ns.ShowOnMap(i) return end
@@ -2222,6 +2127,11 @@ end
 -- history entries let Undo restore accidental skips/dones; one entry may cover several steps
 local function remember(kind, ids) table.insert(ns.char.history, { kind = kind, ids = ids }); if #ns.char.history > 50 then table.remove(ns.char.history, 1) end end
 Engine._remember = remember -- (Engine/Worth.lua)
+-- the writers of your route state: a skip, a tick or a skip taken back, a quest back from "not doing" (a tick only
+-- adds a done step: no new generation)
+function Engine.SetSkipped(id) ns.char.skipped[id] = true; Engine.StateChanged() end
+function Engine.Untick(id) ns.char.skipped[id] = nil; ns.char.manualDone[id] = nil; Engine.StateChanged() end
+function Engine.BringBack(q) if ns.char.nope then ns.char.nope[q] = nil end; Engine.GrayForget(); Engine.StateChanged() end
 
 local function markDone(i)
   i = i or Engine.Shown(); local id = key(i); if not id then return end
@@ -2233,16 +2143,15 @@ end
 -- you clicked done (the card's check, a slash command): Learn.lua records it as "ticked by hand"
 function Engine.MarkDone(i) return markDone(i) end
 -- the game told us (you arrived, landed, set your hearth, took the flight, trained): the same tick, not a hand tick -
--- through MarkDone these went into the learning data as things the route got wrong
+-- through MarkDone these would go into the learning data as things the route got wrong
 function Engine.AutoDone(i) return markDone(i) end
 function Engine.Skip(i)
-  Engine.ForgetDone()
   i = i or Engine.Shown(); local s = steps()[i]; if not s then return end
   local ids = { key(i) }
-  ns.char.skipped[key(i)] = true
+  Engine.SetSkipped(key(i))
   -- skipping a quest you don't have: its later objective / turn-in steps go too
   if s.q and (s.k == "accept" or not State.OnQuest(s.q)) and not State.IsCompleted(s.q) then
-    for j = i + 1, #steps() do local t = steps()[j]; if t.q == s.q and not ns.char.skipped[key(j)] then ns.char.skipped[key(j)] = true; ids[#ids + 1] = key(j) end end
+    for j = i + 1, #steps() do local t = steps()[j]; if t.q == s.q and not ns.char.skipped[key(j)] then Engine.SetSkipped(key(j)); ids[#ids + 1] = key(j) end end
   end
   remember("skip", ids)
   Engine.view = nil
@@ -2250,13 +2159,11 @@ function Engine.Skip(i)
   Engine.Refresh()
 end
 function Engine.Undo()
-  Engine.ForgetDone()
   local h = table.remove(ns.char.history)
   if not h then ns.Print("nothing to undo."); return end
-  for _, id in ipairs(h.ids) do ns.char.skipped[id] = nil; ns.char.manualDone[id] = nil end
+  for _, id in ipairs(h.ids) do Engine.Untick(id) end
   Engine.ResetFloor() -- (what you undid may be behind your place in the plan: it is yours again)
-  for _, q in ipairs(h.nope or {}) do if ns.char.nope then ns.char.nope[q] = nil end end
-  if h.nope then Engine.GrayForget() end
+  for _, q in ipairs(h.nope or {}) do Engine.BringBack(q) end
   Engine.view = nil
   if ns.ZoneCountsChanged then ns.ZoneCountsChanged() end -- (Where to?'s counts: what you undid counts again)
   Engine.Refresh()
@@ -2264,7 +2171,7 @@ function Engine.Undo()
 end
 -- look at the previous step (view only; progress is unchanged)
 function Engine.Back()
-  Engine.ForgetDone()
+  Engine.StateChanged()
   local cur = Engine.Shown() or (#steps() + 1)
   if cur <= 1 then return end
   Engine.view = cur - 1
@@ -2283,7 +2190,6 @@ function Engine.Jump(i)
     local s = steps()[i]
     return Engine.WhenIdle(function() local j = s and planIndex().idx[s]; if j then Engine.Jump(j) end end)
   end
-  Engine.ForgetDone()
   local list = steps()
   if not list[i] then return end
   if not Engine.current or i <= Engine.current then
@@ -2292,7 +2198,7 @@ function Engine.Jump(i)
     return
   end
   local ids = {}
-  for j = Engine.current, i - 1 do if not Engine.IsDone(j) then local id = key(j); ns.char.skipped[id] = true; ids[#ids + 1] = id end end
+  for j = Engine.current, i - 1 do if not Engine.IsDone(j) then local id = key(j); Engine.SetSkipped(id); ids[#ids + 1] = id end end
   remember("skip", ids)
   Engine.view = nil
   if ns.ZoneCountsChanged then ns.ZoneCountsChanged() end -- (Where to?'s counts: a skipped pick-up cuts its chain)
@@ -2308,14 +2214,13 @@ end
 local function currentStep() local i = Engine.current; return i, i and steps()[i] end
 local function nearCurrent(kind, within)
   -- the first not-done step of this kind among the next few (lets you do things a little early) - counted from the
-  -- plan's place: with a quest from elsewhere on the card, training in town didn't tick the plan's train step (code review)
-  -- (but the card's own step first, when it is of this kind: what you did is what it showed. With the plan's place on a
-  -- stop added to the route that the solve passed, the card showed the trip after it - "Hearth to Darkshire" - and the
-  -- hearth, counted from the plan's place, never ticked: the card came back to it after every objective, simplay hopper)
+  -- plan's place, not the card's (a quest from elsewhere on the card must not stop the plan's step ticking)
+  -- (but the card's own step first, when it is of this kind: what you did is what it showed - else, with the plan's
+  -- place on a stop the solve passed, the card's step never ticked and kept coming back)
   local c = Engine.CardAt and Engine.CardAt()
   local cs = c and steps()[c]
   if cs and cs.k == kind and not Engine.IsDone(c) then return c end
-  local i = Engine.planned or Engine.current -- (not PlanAt: that is the step you look at while you browse the route - review)
+  local i = Engine.planned or Engine.current -- (not PlanAt: that is the step you look at while you browse the route)
   if not i then return nil end
   for j = i, math.min(#steps(), i + (within or 0)) do
     local s = steps()[j]
@@ -2326,17 +2231,17 @@ end
 ns.On("FR_STATE", function() Engine.Refresh() end)
 -- The passes that fit stops into the route after a login or a route change, in this order: the hand-ins of quests you
 -- finished (Inserts.lua), your side quests' objectives (Side.lua), side trips and flight paths on the way (Inserts.lua).
--- Each says whether it added a stop; the route is refreshed once after them all - a refresh after each was the same work
--- again, on a route the next pass was about to change
+-- Each says whether it added a stop; the route is refreshed once after them all (a refresh after each was the same
+-- work again, on a route the next pass was about to change)
 Engine.PASSES = { { "inserts", "ApplyInserts" }, { "side", "SideStops" }, { "merge", "MergeSideTrips" } }
 local function pass(p) local fn = Engine[p[2]]; return fn and fn() end
 -- A login's (or a /reload's) catch-up: a look 1 s after the world is there, and at 3 s the flight paths you know
--- (State.ScanTaxi) and the passes, with one refresh. They were timers of their own at 3, 3.2 and 3.5 s next to this
--- one, each with its refresh: up to five in a row at login. A loading screen later (an instance, a boat) has the looks only
+-- (State.ScanTaxi) and the passes, with one refresh (not a timer and refresh each). A loading screen later (an
+-- instance, a boat) has the looks only
 local loginDue
 function Engine.LoginDue() loginDue = true end -- (FR_LOADED: the next PLAYER_ENTERING_WORLD is a login)
 ns.On("FR_LOADED", Engine.LoginDue)
-ns.On("PLAYER_ENTERING_WORLD", function()
+local function loginCatchUp() -- (PLAYER_ENTERING_WORLD)
   quiet = true
   local login = loginDue
   loginDue = nil
@@ -2351,7 +2256,7 @@ ns.On("PLAYER_ENTERING_WORLD", function()
     end)
     quiet = false
   end)
-end)
+end
 -- a route change's passes: each a route job of its own at its time (one that fails doesn't stop the rest), and the
 -- refresh after the last when any added
 ns.On("FR_ROUTE_CHANGED", function()
@@ -2370,210 +2275,6 @@ local function inZone(to)
   end
   return false
 end
--- where a travel step without coordinates should point: the flight master in the zone you're in
-function Engine.TravelTarget(s)
-  if not s or s.x or s.k ~= "fly" then return nil end
-  local m, px, py = ns.State.Position()
-  local plan = Engine.TravelPlan(s)
-  if plan and (plan.ride or not plan.via or plan.via == m) then return plan.m, plan.x, plan.y, nil end
-  local list = m and ns.FLIGHT and ns.FLIGHT[m]
-  if not list then return nil end
-  local best, bd
-  for _, fm in ipairs(list) do
-    local d = (px and py) and ((fm[1] - px) ^ 2 + (fm[2] - py) ^ 2) or 0
-    if not bd or d < bd then best, bd = fm, d end
-  end
-  return m, best[1], best[2], best[3]
-end
--- how to get to a travel step's destination, from the flight paths you actually have. Aims at the first stop there
--- (where you're really going), and compares riding straight there with flying: walk to a flight master on your map,
--- the flight, then walk from where you land. nil = just fly as usual.
--- -> { ride = true (ride straight there) | via = uiMap to fly to first, viaName, m, x, y = where to go, stop = step }
-Engine.FLIGHT_YARDS = 700 -- a flight costs about this much walking (take-off, the flight, landing)
-local function stepIndex(s) if not s then return nil end return planIndex().idx[s] end
-local function firstStop(s)
-  if s._stop then return s._stop end
-  local i = stepIndex(s); if not i then return nil end
-  local list = steps()
-  for j = i + 1, #list do
-    local t = list[j]
-    if t.k == "fly" or t.k == "hearth" then return nil end
-    if t.m and t.x and not t.unknown and t.m == s.to then return t end
-  end
-end
-function Engine.TravelPlan(s)
-  local HBD = LibStub("HereBeDragons-2.0")
-  if not (s and s.k == "fly" and s.to and not s.boat and ns.FLIGHT and HBD) then return nil end
-  local destName = s.dest or s.text
-  if not destName then return nil end
-  local fm = ns.FLIGHT[s.to] and ns.FLIGHT[s.to][1]
-  local stop = firstStop(s)
-  local tx, ty = (stop and stop.x) or (fm and fm[1]) or 0.5, (stop and stop.y) or (fm and fm[2]) or 0.5
-  local wx, wy, inst = HBD:GetWorldCoordinatesFromZone(tx, ty, s.to)
-  if not wx then return nil end
-  local d = function(ax, ay, bx, by) return math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2) end
-  local pm, px, py = ns.State.Position()
-  local hx, hy, hinst
-  if pm and px then hx, hy, hinst = HBD:GetWorldCoordinatesFromZone(px, py, pm) end
-  local rideYd = (hx and hinst == inst) and d(hx, hy, wx, wy) or nil
-  -- the nearest flight master on your map (where a flight would start)
-  local startYd
-  for _, f in ipairs((pm and ns.FLIGHT[pm]) or {}) do
-    local fx, fy, finst = HBD:GetWorldCoordinatesFromZone(f[1], f[2], pm)
-    if fx and hx and finst == hinst then local dd = d(hx, hy, fx, fy); if not startYd or dd < startYd then startYd = dd end end
-  end
-  local plan = { m = s.to, x = tx, y = ty, stop = stop }
-  if Engine.KnowsFlightIn(destName) then
-    -- you can fly right there: only worth riding if the first stop is closer than the flight would make it
-    if not (rideYd and fm) then return nil end
-    local lx, ly = HBD:GetWorldCoordinatesFromZone(fm[1], fm[2], s.to)
-    local flyYd = (startYd or 0) + Engine.FLIGHT_YARDS + (lx and d(lx, ly, wx, wy) or 0)
-    if rideYd < flyYd then plan.ride = true; plan.yards = rideYd; return plan end
-    return nil
-  end
-  -- no flight path there: fly to the one you have that lands closest to the first stop, unless riding is shorter
-  local best
-  for m, list in pairs(ns.FLIGHT) do
-    local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(m)
-    if info and info.name and m ~= s.to and Engine.KnowsFlightIn(info.name) then
-      local fx, fy, finst = HBD:GetWorldCoordinatesFromZone(list[1][1], list[1][2], m)
-      if fx and finst == inst then
-        local dd = d(fx, fy, wx, wy)
-        if not best or dd < best.d then best = { d = dd, m = m, name = info.name } end
-      end
-    end
-  end
-  if best and best.m ~= pm and not (rideYd and rideYd <= (startYd or 0) + Engine.FLIGHT_YARDS + best.d) then plan.via, plan.viaName = best.m, best.name
-  else plan.ride = true; plan.yards = rideYd end
-  return plan
-end
-
--- any step: how to get there, when it is more than a walk.
--- -> nil (a walk in the zone you are in, or unknown), or { how = "fly" | "via" | "ride", m, x, y = where the arrow
---    points now, text = what to do, fm = flight master name when the arrow points at one }
--- One trip planner for every trip (ns.Travel): another zone or continent is always planned; a step in your own zone
--- is planned too when the walk is long, and comes back as a trip only when a flight you know is clearly quicker
--- (ns.Travel.Shortcut - shortcut = true on the trip: Darkshire to the west end of Duskwood by way of Sentinel Hill).
--- the same trip is asked for by the card, the arrow and the pins on every refresh: worked out once for the same step and
--- the same situation (where you are to a few yards, your level, the flight paths you know, flying or sailing, your
--- hearthstone, the trip you're on). A trip took ~15 ms; three of them made up most of a refresh on a long plan.
-local tripMemo = {}
-local function tripKey(s)
-  local pm, px, py = ns.State.Position()
-  local n = State.KnownTaxiCount()
-  local okB, b = pcall(GetBindLocation)
-  return table.concat({ tostring(pm), px and math.floor(px * 400) or "-", py and math.floor(py * 400) or "-", UnitLevel("player") or 0, n,
-    tostring(ns.Is(UnitOnTaxi, "player")), tostring(ns.Arrow and ns.Arrow.aboard), tostring(okB and b), tostring(Engine.lastTripStep == s), (ns.char and ns.char.boundAt and ns.char.boundAt.m) or "-",
-    tostring(ns.Next and ns.Next.rejoin and ns.Next.rejoin.trip ~= nil) }, "|")
-end
-function Engine.TravelFor(s)
-  if not s then return nil end
-  local k = tripKey(s)
-  local m = tripMemo[s]
-  if m and m.k == k then return m.v end
-  local v = Engine.TravelForUncached(s)
-  tripMemo[s] = { k = k, v = v }
-  return v
-end
-function Engine.TravelForUncached(s)
-  if not s or s.k == "hearth" or s.unknown then return nil end -- (no known place: no trip to plan)
-  -- on a flight the taxi is taking you: nothing to plan from the sky. (Crossing a zone mid-air would otherwise
-  -- plan a fresh trip from wherever you are above the ground - "Ride to Wetlands", an arrow at some town below.)
-  -- The way on is planned again when you land.
-  if ns.Is(UnitOnTaxi, "player") then
-    local l = { how = "onflight", text = "On the flight - sit tight, the way on is planned when you land" }
-    return { how = "aboard", text = l.text, legs = { l } }
-  end
-  if s.boat then
-    -- the route's own "Boat to X" step, once the ship has sailed: the pier is behind you, nothing to point at
-    -- until you land (the step ticks on arrival)
-    if ns.Arrow and ns.Arrow.aboard then
-      local l = { how = "aboard", text = "On the boat to " .. ((s.text or ""):match("^Boat to (.+)$") or s.dest or "the other side") .. " - sit tight" }
-      return { how = "aboard", text = l.text, legs = { l } }
-    end
-    -- not sailing yet: in the pier's zone the step's own pier is the target (nil below); from anywhere else, the
-    -- way to that pier is planned like any other stop (not a straight line from Goldshire or the tram)
-    if not (s.m and s.x) then return nil end
-  end
-  local pm, px, py = ns.State.Position()
-  -- another continent: boats, flights you know and rides, as one planned trip (ns.Travel)
-  local HBD = LibStub("HereBeDragons-2.0")
-  if pm and px and ns.Travel then
-    local tm, tx, ty, tname, tstop -- (tstop: who the trip ends at, the last leg in their zone names them)
-    if s.k == "fly" and s.to and not s.boat then
-      local st = firstStop(s); local fm = ns.FLIGHT and ns.FLIGHT[s.to] and ns.FLIGHT[s.to][1]
-      tm, tx, ty, tname = s.to, (st and st.x) or (fm and fm[1]) or 0.5, (st and st.y) or (fm and fm[2]) or 0.5, s.dest or s.text
-      tstop = st and st.npc
-    elseif s.m and s.x then tm, tx, ty, tname, tstop = s.m, s.x, s.y, s.zone, s.npc end
-    if tm then
-      local a1, a2, ai = HBD:GetWorldCoordinatesFromZone(px, py, pm)
-      local b1, b2, bi = HBD:GetWorldCoordinatesFromZone(tx, ty, tm)
-      -- somewhere no trip can start from (on the Deeprun Tram, in a dungeon) and the step is out in the world: the trip
-      -- you were on carries on (the tram leg is under way); with none, it is planned when you come out. A trip planned
-      -- from here would start from coordinates that mean nothing outside (it pointed "down 98 yd" from the tram).
-      if pm ~= tm and ns.Travel.OnNetwork and not ns.Travel.OnNetwork(pm, px, py) and not (a1 and b1 and ai == bi) then
-        local last = Engine.lastTripStep == s and Engine.lastTrip
-        if last and last[1] then
-          local legs = {}
-          for k, l in ipairs(last) do legs[k] = l end
-          if ns.Travel.IsTram(legs[1]) then legs[1] = { how = "aboard", text = (legs[1].text:gsub("^Take the", "On the")) .. " - sit tight" } end
-          return { how = "aboard", text = ns.Travel.Describe(legs), legs = legs }
-        end
-        local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(pm)
-        local l = { how = "aboard", text = "In " .. ((info and info.name) or "here") .. ": the way on is planned when you come out" }
-        return { how = "aboard", text = l.text, legs = { l } }
-      end
-      -- any other zone (or continent): the trip planner weighs riding, your flight paths and boats together.
-      -- Your own zone: the same planner, asked only whether something beats the walk by a margin (nil: walk)
-      if a1 and b1 then
-        local legs
-        local shortcut = ai == bi and pm == tm
-        if not shortcut then legs = ns.Travel.Plan({ m = pm, x = px, y = py }, { m = tm, x = tx, y = ty, name = tname, stop = tstop })
-        elseif s.k ~= "fly" and ns.Travel.Shortcut then
-          legs = ns.Travel.Shortcut({ m = pm, x = px, y = py }, { m = tm, x = tx, y = ty, name = s.npc or tname })
-          -- (not out of the zone while its quests come before the plan's trip - Next.rejoin: they come first only while you
-          -- are in it. Sent from Booty Bay to fly to Westfall and ride back in, the player landed in Westfall and the card
-          -- dropped Stranglethorn for the plan's trip to Arathi - user. The ride inside the zone keeps it)
-          if legs and ns.Next and ns.Next.rejoin and ns.Next.rejoin.trip then
-            for _, l in ipairs(legs) do if l.m and l.m ~= tm then legs = nil; break end end
-          end
-        end
-        if legs and legs[1] then
-          -- already on the boat of the first leg: that leg is done, sit tight
-          if legs[1].how == "boat" and ns.Arrow and ns.Arrow.aboard then
-            local dest = legs[1].text:match(".* to (.+)$") or "the other side" -- the last "to": the boat's destination
-            legs[1] = { how = "aboard", text = "On the boat to " .. dest .. " - sit tight" }
-            return { how = "aboard", text = ns.Travel.Describe(legs), legs = legs }
-          end
-          -- which step it is for: a trip worked out for a step you only looked at must not teach the boat's pier
-          Engine.lastTrip, Engine.lastTripStep = legs, s
-          local text = ns.Travel.Describe(legs)
-          if ns.Why then ns.Why("travel", "to " .. (tname or "another continent") .. ": " .. text) end
-          return { how = legs[1].how, m = legs[1].m, x = legs[1].x, y = legs[1].y, text = text, legs = legs, shortcut = shortcut or nil }
-        end
-      end
-    end
-  end
-  if not (s.m and s.x) or s.k == "fly" then return nil end
-  if not pm or pm == s.m then return nil end
-  local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(s.m)
-  local destName = (info and info.name) or s.zone or "there"
-  local plan = Engine.TravelPlan({ k = "fly", to = s.m, dest = destName, text = destName, _stop = s })
-  local function atFlightMaster(goal)
-    local list = ns.FLIGHT and ns.FLIGHT[pm]; if not list then return nil end
-    local best, bd; for _, f in ipairs(list) do local dd = (f[1] - px) ^ 2 + (f[2] - py) ^ 2; if not bd or dd < bd then best, bd = f, dd end end
-    local m, x, y, fm = pm, best[1], best[2], best[3]
-    return { how = "fly", m = m, x = x, y = y, fm = fm, text = "Fly to " .. goal .. (fm and (" - flight master " .. fm) or "") }
-  end
-  if not plan then return atFlightMaster(destName) end -- you have its flight path and flying is quicker
-  if plan.ride then return { how = "ride", m = s.m, x = s.x, y = s.y, text = ns.RideWord() .. " to " .. destName .. (plan.yards and (" - " .. ns.Style.Distance(plan.yards)) or "") } end
-  if plan.via and plan.via ~= pm then
-    local t = atFlightMaster(plan.viaName); if t then t.how = "via"; t.text = "No " .. destName .. " flight path yet: fly " .. (t.fm and ("from " .. t.fm .. " ") or "") .. "to " .. plan.viaName .. ", then ride" end
-    return t
-  end
-  return { how = "ride", m = s.m, x = s.x, y = s.y, text = ns.RideWord() .. " to " .. destName }
-end
-
 -- arriving in the destination zone completes a fly step, however you got there (flew, rode, or were already there)
 Engine.InZone = inZone
 local function travelDone()
@@ -2583,14 +2284,14 @@ end
 -- (what acts on the card's or the plan's step by its number waits while a route change's passes move the numbers:
 -- Engine.Idle)
 travelDone = Engine.Idle(travelDone)
-ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1, function() travelDone(); Engine.RefreshBg() end) end)
-ns.On("PLAYER_ENTERING_WORLD", function() C_Timer.After(4, travelDone) end)
+local function zoneArrived() C_Timer.After(1, function() travelDone(); Engine.RefreshBg() end) end -- (ZONE_CHANGED_NEW_AREA)
+local function travelDoneLater() C_Timer.After(4, travelDone) end -- (PLAYER_ENTERING_WORLD)
 ns.On("HEARTHSTONE_BOUND", function()
   -- remember where you bound (the map you were on and the name the game gives it); every hearth step on that map
   -- counts as done while you stay bound there
   local m = ns.State.Position()
   -- (bound at one of the plan's bind stops - its innkeeper within 100 yd: that stop's own map, so the bind step and
-  -- every hearth to it match whatever map id the game hands out indoors. A tester's bind went unnoticed)
+  -- every hearth to it match whatever map id the game hands out indoors)
   local HBDx = LibStub("HereBeDragons-2.0")
   local px, py, pinst = HBDx:GetPlayerWorldPosition()
   if px then
@@ -2620,8 +2321,9 @@ local function learnBind()
   if ns.Why then ns.Why("hearth", "your hearthstone is set here (" .. b .. "): noted") end
 end
 Engine.LearnBind = learnBind
-for _, ev in ipairs({ "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA" }) do ns.On(ev, function() pcall(learnBind) end) end
-ns.On("PLAYER_ENTERING_WORLD", function() C_Timer.After(2, function() pcall(learnBind) end) end)
+local function bindSeen() pcall(learnBind) end
+for _, ev in ipairs({ "ZONE_CHANGED", "ZONE_CHANGED_INDOORS" }) do ns.On(ev, bindSeen) end
+local function bindLater() C_Timer.After(2, bindSeen) end -- (PLAYER_ENTERING_WORLD)
 -- opening a flight map ticks a "get the flight path" step only at that flight master (same map) - not when you
 -- open the map somewhere else to fly toward it (the zone check in the step status covers learning it normally)
 ns.On("FR_TAXI_OPENED", Engine.Idle(function()
@@ -2629,19 +2331,6 @@ ns.On("FR_TAXI_OPENED", Engine.Idle(function()
   local s = steps()[j]; local m = ns.State.Position()
   if s and (not s.m or s.m == m) then Engine.AutoDone(j) end
 end))
--- once: undo "got the flight path" ticks from before that fix, where you still have no flight path in that zone
-ns.On("FR_LOADED", function()
-  if ns.char.fixFpTicks then return end
-  ns.char.fixFpTicks = true
-  C_Timer.After(2, function()
-    local undone = 0
-    for i, s in ipairs(steps()) do
-      local k = s.k == "fp" and key(i)
-      if k and ns.char.manualDone[k] and s.zone and not Engine.KnowsThisFlightPoint(s) then ns.char.manualDone[k] = nil; undone = undone + 1 end
-    end
-    if undone > 0 then ns.Print("Un-ticked " .. undone .. " \"get the flight path\" step" .. (undone == 1 and "" or "s") .. " you don't actually have yet."); Engine.Refresh() end
-  end)
-end)
 -- hearthstone cast: complete a hearth step
 ns.On("UNIT_SPELLCAST_SUCCEEDED", Engine.Idle(function(unit, _, spellID)
   if unit ~= "player" then return end
@@ -2668,7 +2357,18 @@ ns.On("TRAINER_SHOW", function() atClassTrainer = not (IsTradeskillTrainer and I
 ns.On("TRAINER_CLOSED", function()
   if not atClassTrainer then return end
   atClassTrainer = false
-  -- (not a stop that waits for your level - "Nothing to learn until level 60": you learned nothing there, and ticked it
-  -- never came back at 60 - mutate --play, a level 59 at the plan's last training)
+  -- (not a stop that waits for your level - "Nothing to learn until level N": you learned nothing there, and once
+  -- ticked it never came back)
   Engine.WhenIdle(function() local j = nearCurrent("train", 4); if j and Engine.Status(j) ~= "wait" then Engine.AutoDone(j) end end)
 end)
+
+-- The engine's handlers of entering the world and of a new zone: one per event, its steps in this order (each on its
+-- own: one that fails doesn't stop the rest). Dungeon.lua's handlers run before these, Boats.lua's and the UI's after.
+local function inOrder(ev, fns)
+  return function(...)
+    for _, fn in ipairs(fns) do local ok, err = pcall(fn, ...); if not ok and ns.LogError then ns.LogError(ev, err) end end
+  end
+end
+ns.On("PLAYER_ENTERING_WORLD", inOrder("PLAYER_ENTERING_WORLD",
+  { dungeonSeen, worldReady, function() Engine.StateChanged() end, loginCatchUp, travelDoneLater, bindLater }))
+ns.On("ZONE_CHANGED_NEW_AREA", inOrder("ZONE_CHANGED_NEW_AREA", { dungeonSeen, insideChanged, zoneArrived, bindSeen }))

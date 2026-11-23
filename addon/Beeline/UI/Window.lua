@@ -1,7 +1,7 @@
--- The addon's windows (the route window, Where to?, side trips, the quest log check, news, options, the bug report)
--- share one shell: on the dialog layer, kept on screen, dragged anywhere, our panel look and scale, Escape closes it.
--- It was written out in each of them (the code review). Style.Window(f, name) gives frame f that shell; name is its
--- global name (Escape closes it through UISpecialFrames). Style.CloseButton(f): the "x" at the top right.
+-- The addon's windows (the route window, Home base with its side trips tab, the quest log check, news, options, the bug
+-- report) share one shell: on the dialog layer, kept on screen, dragged anywhere, our panel look and scale, Escape closes it.
+-- Style.Window(f, name) gives frame f that shell; name is its global name (Escape closes it through
+-- UISpecialFrames). Style.CloseButton(f): the "x" at the top right.
 local _, ns = ...
 local Style = ns.Style
 local C = Style.C

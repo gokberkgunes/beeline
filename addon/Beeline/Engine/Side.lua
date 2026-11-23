@@ -1,20 +1,16 @@
--- The route engine, a quest giver next to you with a quest your plan could not hold (side quests). Part of Engine.lua, split out as is (the code review: Engine.lua was 13 features in
--- one file); loaded right after it, so its event handlers run in the same order as before.
+-- The route engine, side quests: a quest giver next to you with a quest your plan could not hold. Loaded right after
+-- Engine.lua, so its event handlers run in the same order as before the split.
 local _, ns = ...
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end
-local function key(i) return Engine.Key(i) end
-local keyCache = Engine._keyCache
 local HBD = LibStub("HereBeDragons-2.0")
 local wpos = ns.Util.WPos
 
 ----------------------------------------------------------------------------------------------------------------
 -- A quest giver right next to you with a quest your plan could not hold (ns.SIDE_QUESTS, QuestData.lua: the giver in
 -- a capital, or an objective in another zone than the giver - the planner takes a leg's quests from the givers in the
--- leg's zones and drops one with an objective outside them). A Noble Brew: Zardeth stands by the warlock trainers in
--- Stormwind, a Tear of Tilloa lies by Darkshire and a Musquash Root in the Wetlands, both on a level 31's route - and
--- the card said nothing ("why doesn't this end up in my list since I'm right here?").
+-- leg's zones and drops one with an objective outside them).
 -- The rule, kept small: you stand within SIDE_NEAR_YD of the giver; the quest is yours to take (side, class, level,
 -- what comes before it) and near your level; it is not on your route, not "not doing", not turned down by the giver;
 -- every objective lies within SIDE_OBJ_YD of a stop still ahead (while the quest is not gray there) and so does the
@@ -24,19 +20,12 @@ local wpos = ns.Util.WPos
 ----------------------------------------------------------------------------------------------------------------
 Engine.SIDE_NEAR_YD = 60   -- the giver is this close: "right here"
 Engine.SIDE_HOLD_YD = 150  -- the offer stands while you are within this of the giver
-Engine.SIDE_OBJ_YD = 800   -- an objective (or the hand-in) is on your route within this of a stop ahead (the Musquash Root
-                           -- lies 740 yd from the Wetlands' nearest quest spots: about four minutes there and back on foot)
+Engine.SIDE_OBJ_YD = 800   -- an objective (or the hand-in) is on your route within this of a stop ahead (~4 min there and back on foot)
 Engine.SIDE_BELOW = 3      -- the quest at most this many levels below you (full XP, or close to)
 Engine.SIDE_ABOVE = 3      -- ... or above you
 Engine.SIDE_LATE = 4       -- a stop ahead counts while the plan has you at most this many levels above the quest
 Engine.SIDE_XP = 25        -- XP per quest level it must give: a 230 XP errand at 28 is not worth a line on the card
-local function sideMine(d)
-  local f = UnitFactionGroup and UnitFactionGroup("player")
-  if d.f and f and d.f ~= (f == "Horde" and "H" or "A") then return false end
-  if d.cl then local _, c = UnitClass("player"); if not (c and ("," .. d.cl .. ","):find("," .. c .. ",", 1, true)) then return false end end
-  if d.rc then local _, r = UnitRace("player"); if not (r and ("," .. d.rc .. ","):find("," .. r .. ",", 1, true)) then return false end end
-  return true
-end
+local function sideMine(d) return State.ForMe(d.f, d.cl, d.rc) end
 Engine.SideMine = sideMine -- (ItemQuests.lua: the same check for a quest an item starts)
 local sideIndex -- [map] = { quest ids whose giver stands there }
 local function sideOn(m)
@@ -52,14 +41,14 @@ local function yardsOf(m, x, y, px, py, pinst)
   return math.sqrt((a - px) ^ 2 + (b - py) ^ 2), a, b
 end
 local mapNameOf = ns.Util.MapName
-Engine.SIDE_LEVEL_DIP = 5  -- the most a plan's planned level drops along it, with a margin (a Skyborne start to 22, its trunk from 18)
+Engine.SIDE_LEVEL_DIP = 5  -- the most a plan's planned level drops along it, with a margin
 -- the quests a step list has steps for, built once per list (SideFits asks "is it on your route?" about once a second)
-local qsOf = { list = nil, n = 0, set = nil }
+local qsOf = { list = nil, gen = 0, set = nil }
 local function questsOf(list)
-  if qsOf.list ~= list or qsOf.n ~= #list then
+  if qsOf.list ~= list or qsOf.gen ~= (list._gen or 0) then
     local set = {}
     for _, s in ipairs(list) do if s.q then set[s.q] = true end end
-    qsOf.list, qsOf.n, qsOf.set = list, #list, set
+    qsOf.list, qsOf.gen, qsOf.set = list, list._gen or 0, set
   end
   return qsOf.set
 end
@@ -90,11 +79,10 @@ function Engine.SideFits(q)
   -- (from the plan's own next step: the card may be on a later one you happen to stand at)
   local list, ahead, from = steps(), {}, Engine.planned or Engine.current or 1
   if questsOf(list)[q] then return false, "on your route" end
-  -- (the stops that count are at most SIDE_LATE levels above the quest; a plan's planned level never drops by more than
-  -- SIDE_LEVEL_DIP along it, so past that the rest can't count: the walk to level 60 was 3 ms a look on a Horde plan at 50)
+  -- (only stops at most SIDE_LATE levels above the quest; planned level never drops by more than SIDE_LEVEL_DIP
+  -- along a plan, so the walk stops past that)
   local cap, top = d.l + Engine.SIDE_LATE, 0
-  -- (and only on the maps asked about below - its objectives' and its hand-in's: a step's status far ahead is dear, 4 ms
-  -- for one at the orc warrior's level 50)
+  -- (and only on its objectives' and hand-in's maps: a far step's status is dear, ~4 ms)
   local maps = { [d.e[2]] = true }
   for _, o in ipairs(d.o or {}) do for k = 3, #o do maps[o[k][1]] = true end end
   for j = from, #list do
@@ -162,7 +150,7 @@ function Engine.SideOffer(px, py, pinst, force)
         if not offered and (force or not sideNo[q] or now - sideNo[q] >= Engine.SIDE_AGAIN) then
           ok, zones = Engine.SideFits(q)
           sideNo[q] = not ok and now or nil
-          -- (why not, for the quests you could take: "why doesn't this end up in my list" has an answer in /bee why)
+          -- (why not, for the quests you could take: answered in /bee why)
           if not ok and zones ~= "not for you" and zones ~= "yours already" and zones ~= "not near your level" and ns.Why then
             ns.Why("side", ns.SIDE_QUESTS[q].n .. " (" .. g[1] .. ", right here) is not offered: " .. tostring(zones))
           end
@@ -173,7 +161,7 @@ function Engine.SideOffer(px, py, pinst, force)
     if best then
       local sq = ns.SIDE_QUESTS[best]
       local where = #bestZones > 0 and ("what it asks for (" .. table.concat(bestZones, ", ") .. ") is on your route") or ("it is handed in right here (" .. sq.e[1] .. ")")
-      -- (sq.u: work the quest data lists none of - Brewer's Trade - so nothing can be said about where it is)
+      -- (sq.u: work the quest data lists nothing for, so nothing can be said about where it is)
       local note = sq.u and (sq.n .. " is offered here (follow your quest log for where). " .. sq.xp .. " xp.")
         or ("Not in your plan, but you are right here: " .. where .. ". " .. sq.xp .. " xp.")
       if sq.u then where = "follow your quest log for where" end
@@ -199,13 +187,13 @@ local function sideStops()
   local added = false
   local zoneMaps -- (lazy: a picked zone's maps, Stitch.ZoneMaps; false on your plan)
   local px, py, pinst = HBD:GetPlayerWorldPosition()
-  -- (also the ones in your log from before the addon knew about them: A Noble Brew, picked up by hand)
+  -- (also the ones in your log from before the addon knew about them, picked up by hand)
   ns.char.side = ns.char.side or {}
   for _, t in ipairs({ ns.SIDE_QUESTS or {}, ns.ITEM_QUESTS or {} }) do
     for q in pairs(t) do if not ns.char.side[q] and State.OnQuest(q) then ns.char.side[q] = true end end
   end
-  -- (the quests first, then each with a pause after it in a route job: a quest picked up meanwhile is not added to the
-  -- table being walked)
+  -- (collect the quests first, then walk them pausing in a route job: a quest picked up meanwhile is not added to
+  -- the table being walked)
   local qs = {}; for q in pairs(ns.char.side) do qs[#qs + 1] = q end
   for _, q in ipairs(qs) do
     ns.MaybeYield()
@@ -222,8 +210,7 @@ local function sideStops()
       elseif State.QuestReady(q) then
         if sq.e and not has["turnin:"] and not (BeelineEnders and BeelineEnders[q]) then
           local step = { k = "turnin", q = q, name = sq.n, level = sq.l, npc = sq.e[1], m = sq.e[2], x = sq.e[3], y = sq.e[4], r = 6, inserted = true, side = true, note = "Added: you finished this one on the way." }
-          -- (weighed like the plan's own finished quests: waiting for the cheapest spot can lose more XP than going now -
-          -- it was placed by walking cost alone, levels later and gray by then - code review)
+          -- (weighed like the plan's own finished quests: waiting for the cheapest spot can lose more XP than going now)
           local opts
           if tonumber(sq.l) and Engine.HandInNow then
             local now, lost, secs = Engine.HandInNow(step, tonumber(sq.l), Engine.InsertStop(step, px, py, pinst, { dry = true }))
@@ -234,8 +221,8 @@ local function sideStops()
       else
         for _, o in ipairs(sq.o or {}) do
           local open = Engine.ObjectiveFor({ q = q, match = o[2] }, true)
-          -- (no place last time: not asked again until the route changes, you've moved 60 yd or 30 s have passed -
-          -- every quest log event re-ran the whole search and said so in /bee why)
+          -- (no place last time: not asked again until the route changes, you move 60 yd or 30 s pass - otherwise every
+          -- quest log event re-ran the whole search)
           local mk = q .. ":" .. o[2]
           local miss = sideMiss[mk]
           local recent = miss and miss.list == list and px and miss.x and (px - miss.x) ^ 2 + (py - miss.y) ^ 2 < 3600 and GetTime() - miss.t < 30
@@ -247,9 +234,8 @@ local function sideStops()
             -- (only while the quest is worth it: up to the last step the plan has you at most SIDE_LATE levels above it)
             local last -- (a plan without levels: anywhere)
             for j in ipairs(list) do local L = Engine.PlanLevel(j); if L then last = last or 0; if L <= sq.l + Engine.SIDE_LATE then last = j end end end
-            -- (on a zone you picked, only on that zone's maps, as the quests you carry there (Stitch.Carried): a side
-            -- quest's objective in the next zone over went first on the card after picking Thousand Needles, and sent
-            -- you to Stonetalon - mutate sweep. Back on your plan it is fitted again)
+            -- (on a zone you picked, only on that zone's maps, like the quests you carry there (Stitch.Carried): a
+            -- side objective in the next zone over must not lead you out. Back on your plan it is fitted again)
             if d.zoneRoute and zoneMaps == nil then zoneMaps = (ns.Stitch and ns.Stitch.ZoneMaps and ns.Stitch.ZoneMaps(d)) or false end
             local best, bestCost
             for k = 3, #o do

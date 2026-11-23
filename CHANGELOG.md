@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.0 - 2026-11-23
+- Home base is one place with one button: the house at the right of the card's bottom line, always there. It opens the Home base window to pick a zone; on a dungeon route or side trip it takes you back to your plan, and at 60 with "Finish my quests" on it goes back to the level 60 card. Its tooltip says which. The "Zones" text button on a level-up row is the house too.
+- Undo shows next to the house for 10 seconds after a skip, done, jump or "not doing". /bee undo still works any time.
+- The card's hover bar is shorter: back, next, done, skip, the route list, "looks wrong", collapse and options. Undo and side trips moved off it.
+- Side trips (dungeons, class quests, bonus items) are a tab of the Home base window, beside Zones and Plan, instead of a window of their own. /bee dungeons opens it there; the house, /bee home, the key and the route list open Home base on Zones.
+- Faster: opening the Home base window and switching its tabs take about a third to half the time they did, and so do drawing the card and standing still at higher levels on the test characters.
+- Turning off "Keep notes for bug reports" in Options now stays off. It shared its saved setting with the notes themselves and came back on when they were kept or cleared.
+- At a quest giver with several quests, the route's other pick-ups there are seen (they were read too late, after auto-accept had taken one).
+- A learned boat pier moves the card's plan and the arrow together; the arrow could point at the new pier while the route was priced from the old one.
+- The arrow's place no longer moves when you change its size or Beeline's scale.
+- The x on the card's offer row dismisses the row it shows.
+- A /click BeelineItemButton macro no longer uses the last step's item on a step with none.
+- Keybinds pressed while the game is still loading do nothing instead of erroring.
+- "Show example" in Options no longer writes made-up notes into /bee report.
+- Auto hand-in only hands in quests that are in your log.
+
 ## 2.4.1 - 2026-11-22
 - Gray quests are never offered for pick-up: not on the card, not as "right here" extras, not by auto-accept - not even to open a chain. Quests 6 or more levels below you aren't offered as "right here" extras either (a level 46 at Nijel's Point was told to pick up Carved Centaur Totems, 40). Gray quests already in your log can still be finished and handed in. The gray line is the game's own (the quest log's colours).
 - No more trips back for quests far below you. Ahead of the plan, the card could send you across the map for something the plan does at a lower level: a level 46 who had finished Riverglades was sent by boat and flight to Dustwallow Marsh for Stinky's Escape, a level 37 escort. When the plan's next step leaves your zone for quests well below you, the addon now looks for the best place to carry on from your level, as it does when you first join the plan.

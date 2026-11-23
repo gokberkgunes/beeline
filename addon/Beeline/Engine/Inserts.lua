@@ -1,35 +1,31 @@
--- The route engine, adding a stop where it costs least, and side trips merged into your route. Part of Engine.lua, split out as is (the code review: Engine.lua was 13 features in
--- one file); loaded right after it, so its event handlers run in the same order as before.
+-- The route engine, adding a stop where it costs least, and side trips merged into your route. Loaded right after
+-- Engine.lua, so its event handlers run in the same order as before the split.
 local _, ns = ...
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end
-local function key(i) return Engine.Key(i) end
-local keyCache = Engine._keyCache
 local HBD = LibStub("HereBeDragons-2.0")
 local wpos = ns.Util.WPos
+local isTrip = Engine.IsTrip
 
 ----------------------------------------------------------------------------------------------------------------
 -- Adding a stop (like adding a stop in a maps app): a quest you finished that the route has no hand-in for gets one,
 -- slotted into the cheapest gap between two neighbouring stops - cost d(a,X) + d(X,b) - d(a,b) - or made the very next
 -- step if "from where you are" is the cheapest gap. One pass over the stops; no replan. Only after the current step,
 -- and only on the stop's continent. Hand-in spots: BeelineEnders from the plan.
--- A gap is priced as a walk only when it is one. The straight-line detour d(a,X) + d(X,b) - d(a,b) means something
--- when you cover a -> b on the ground; when the way from a to b is a flight, a boat or your hearthstone (you are in
--- Southshore and the step is in Duskwood; a hand-in added in another zone), nothing between the two ends is "on the
--- way" - Thorium Point lies under the line from Southshore to Duskwood, and a level 30 was sent there for its flight
--- path as the very next step. Such a gap takes a stop only at one of its ends: there and back from where you leave
--- or from where you arrive, if the stop is ground travel from that end.
+-- A gap is priced as a walk only when it is one: the straight-line detour means something when you cover a -> b on
+-- the ground; when a -> b is a flight, a boat or your hearthstone, nothing between the ends is "on the way" (a stop
+-- under the line would be sent to as the very next step). Such a gap takes a stop only at one of its ends: there and
+-- back from where you leave or where you arrive, if the stop is ground travel from that end.
 ----------------------------------------------------------------------------------------------------------------
 local function wd(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2) end
 -- do you cover a -> b on the ground? The same zone: yes. Another zone: what the trip planner says (ns.Travel.Plan, the
 -- one the card's travel line comes from) - rides only. A place whose zone is unknown: no.
 local groundMemo = {}
 Engine._groundMemo = groundMemo -- (tests: the same answers whether the passes run at once or over frames)
--- The answers kept from one login to the next (per character): a login's catch-up asked the trip planner the same gaps
--- every time - 12 trip searches of an 80 ms refresh at a level 45's login (the simulator, a player's save). They are
--- kept for the level they were asked at (it is in every answer's key), the addon's version and its travel data; any
--- of those changed, they start over. ONFOOT_KEEP of them at most.
+-- The answers kept from one login to the next (per character): a login's catch-up asked the trip planner the same
+-- gaps every time (most of an 80 ms refresh). Keyed by level (in every key), addon version and travel data; any
+-- change starts over. ONFOOT_KEEP of them at most.
 Engine.ONFOOT_KEEP = 2000
 local function memoStamp()
   local n = 0
@@ -53,23 +49,36 @@ function Engine.OnFootSave()
 end
 ns.On("FR_LOADED", function() pcall(Engine.OnFootLoad) end)
 ns.On("PLAYER_LOGOUT", function() pcall(Engine.OnFootSave) end)
-function Engine.OnFoot(am, ax, ay, bm, bx, by)
+-- -> the answer without a search, or nil
+local function footQuick(am, ax, ay, bm, bx, by)
   if not (am and bm) then return false end
   if am == bm then return true end
   if not (ax and ay and bx and by and ns.Travel and ns.Travel.Plan) then return false end
+  return nil
+end
+-- the key's tail: your flight paths, level and bind (taken once per InsertStop pass and frame)
+local function footTail()
   local n = State.KnownTaxiCount()
   local okB, bind = pcall(GetBindLocation)
-  local k = table.concat({ am, math.floor(ax * 400), math.floor(ay * 400), bm, math.floor(bx * 400), math.floor(by * 400), n, UnitLevel("player") or 0, tostring(okB and bind) }, ":")
+  return n .. ":" .. (UnitLevel("player") or 0) .. ":" .. tostring(okB and bind)
+end
+local function footBy(tail, am, ax, ay, bm, bx, by)
+  local k = am .. ":" .. math.floor(ax * 400) .. ":" .. math.floor(ay * 400) .. ":" .. bm .. ":" .. math.floor(bx * 400) .. ":" .. math.floor(by * 400) .. ":" .. tail
   local v = groundMemo[k]
   if v == nil then
     -- (ns.Call, not pcall: inside a route job the search may pause, and a pause inside a pcall is an error the pcall
-    -- swallows - "not on foot" was remembered for a ride, and the stops went elsewhere)
+    -- swallows - a wrong "not on foot" was remembered)
     local ok, legs = ns.Call(ns.Travel.Plan, { m = am, x = ax, y = ay }, { m = bm, x = bx, y = by })
     v = ok and type(legs) == "table" and legs[1] ~= nil or false
     if v then for _, l in ipairs(legs) do if l.how ~= "ride" then v = false; break end end end
     groundMemo[k] = v
   end
   return v
+end
+function Engine.OnFoot(am, ax, ay, bm, bx, by)
+  local q = footQuick(am, ax, ay, bm, bx, by)
+  if q ~= nil then return q end
+  return footBy(footTail(), am, ax, ay, bm, bx, by)
 end
 
 -- opts.rough: priced by straight-line detours alone (never more than the real price: it can only rule a far stop out)
@@ -80,7 +89,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   local list = steps()
   local cur = Engine.current
   if not cur then return nil end
-  -- (from your place in the plan, not the card's step when that is a quest from the part you passed - review)
+  -- (from your place in the plan, not the card's step when that is a quest from the part you passed)
   local fromPlan = (ns.Next and ns.Next.taken and ns.Next.taken == list[cur] and Engine.planned and Engine.planned > cur) and Engine.planned or cur
   local from = math.max(fromPlan, opts.minIndex or cur)
   Engine.lastInsertCost = nil -- (a stop that can't go anywhere leaves no price behind: the merge's "left for later" read the last one)
@@ -93,14 +102,22 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   if from > cur and list[from - 1] then local t = list[from - 1]; local w = wpos(t); if w and w[3] == X[3] then prev = { w = w, m = t.m, x = t.x, y = t.y } end end
   -- opts.onMap: only a gap with an end in that zone (straight lines say nothing across a zone border: mountains)
   local function touches(a, bm) return not opts.onMap or (a and a.m == opts.onMap) or bm == opts.onMap end
+  local tail, tailAt
+  local function onFoot(am, ax, ay, bm, bx, by)
+    local q = footQuick(am, ax, ay, bm, bx, by)
+    if q ~= nil then return q end
+    local now = GetTime and GetTime()
+    if not tail or tailAt ~= now then tail, tailAt = footTail(), now end
+    return footBy(tail, am, ax, ay, bm, bx, by)
+  end
   -- what the stop costs in the gap a -> s (nil: this gap can't take it)
   local function gapCost(a, s, w)
     if not touches(a, s.m) then return nil end
     if opts.rough then return wd(a.w, X) + wd(X, w) - wd(a.w, w) end -- straight lines only: a lower bound, no trip searches
-    if Engine.OnFoot(a.m, a.x, a.y, s.m, s.x, s.y) then return wd(a.w, X) + wd(X, w) - wd(a.w, w) end
+    if onFoot(a.m, a.x, a.y, s.m, s.x, s.y) then return wd(a.w, X) + wd(X, w) - wd(a.w, w) end
     local c
-    if Engine.OnFoot(a.m, a.x, a.y, new.m, new.x, new.y) then c = 2 * wd(a.w, X) end
-    if Engine.OnFoot(new.m, new.x, new.y, s.m, s.x, s.y) then local c2 = 2 * wd(X, w); if not c or c2 < c then c = c2 end end
+    if onFoot(a.m, a.x, a.y, new.m, new.x, new.y) then c = 2 * wd(a.w, X) end
+    if onFoot(new.m, new.x, new.y, s.m, s.x, s.y) then local c2 = 2 * wd(X, w); if not c or c2 < c then c = c2 end end
     return c
   end
   -- riding the current travel step (no flight path there yet): the road from you to the first stop at the other end
@@ -120,17 +137,12 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   for i = from, opts.at and from - 1 or math.min(#list, opts.maxIndex or #list) do
     if (i - from) % 8 == 7 then ns.MaybeYield() end -- (a route job: every 8 gaps a pause - never after the insert below)
     local s = list[i]
-    -- (never into the part of the plan behind you: the card showed a quest from there - an extra - and a side quest's
-    -- objective went in after it, at step 981 in Wetlands; being on the route, it became the plan's next step and the
-    -- card and its Base left Riverglades for Wetlands - tester)
-    -- (nor between two steps of quests you completed there: the route doesn't pass by them - the hand-in of Zapped Giants
-    -- went in among Feralas's done steps behind you, the plan's next step, and the card sent you from Tanaris - mutate)
-    -- (nor the pick-up of a quest you carry there: done too. A skyborne warrior 46 who left Azshara out but for three of
-    -- its pick-ups had Saving a Sentinel's hand-in put in between two of them at no cost - and with nothing else of
-    -- Azshara left to do, the card sent him 9,700 yd from Tanaris for it, the plan going on in Searing Gorge - mutate --play)
+    -- (never into the part of the plan behind you: the stop would become the plan's next step and pull the card back;
+    -- nor between two steps of quests you completed there, nor the pick-up of a quest you carry: the route doesn't
+    -- pass by them, and a zero-cost gap there sent players far away for one stop)
     if (Engine.BehindYou and (bm and Engine.BehindYouIn(bm, s) or not bm and Engine.BehindYou(s)))
       or (passed and s.q and s.q > 0 and passed(i) and (State.IsCompleted(s.q) or (s.k == "accept" and State.OnQuest(s.q)))) then prev = nil
-    elseif s.k == "fly" or s.k == "hearth" then prev = nil -- a flight in between: the gap doesn't count
+    elseif isTrip(s) then prev = nil -- a trip in between: the gap doesn't count
     else
       local w = wpos(s)
       if w and w[3] == X[3] then
@@ -143,9 +155,9 @@ function Engine.InsertStop(new, px, py, pinst, opts)
         end
         -- never between two steps at the same NPC (turn in to Takar, accept from Takar): do both while you are there
         local split = list[i - 1] and list[i - 1].npc and list[i - 1].npc == s.npc
-        -- (a gap whose straight-line detour is no better than the best so far can't win: every price gapCost gives is
-        -- at least that detour - the triangle inequality - so it is not priced. Pricing asks the trip planner whether
-        -- a -> b is a ride: ~290 trip searches on a zone picked in Where to? at level 50, nearly all for gaps far away)
+        -- (a gap whose straight-line detour is no better than the best so far can't win: every gapCost price is at
+        -- least that detour (triangle inequality), so it is not priced - pricing asks the trip planner, hundreds of
+        -- searches for far gaps otherwise)
         local hopeless = Engine.INSERT_PRUNE ~= false and prev and bestCost and wd(prev.w, X) + wd(X, w) - wd(prev.w, w) - 1e-6 >= bestCost
         if prev and not split and not hopeless then
           local c = gapCost(prev, s, w)
@@ -162,10 +174,9 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   if opts.maxCost and (bestCost or math.huge) > opts.maxCost then return nil end
   if opts.dry then return best, bestCost end
   -- the current step stays current: a stop that goes "before the current step" becomes the step right after it,
-  -- unless it\x27s cheapest to do first, in which case it\x27s inserted at the current position (shown next)
+  -- unless it's cheapest to do first, in which case it's inserted at the current position (shown next)
   -- the stop belongs to the stretch it lands in: the hub of the step it goes before (or the one before it, at the end).
-  -- Whatever sec it carried (a copy from another side trip points into that trip's sections) would put the wrong hub
-  -- on the card and a stray header in the list.
+  -- A sec copied from another side trip would put the wrong hub on the card and a stray header in the list.
   local around = list[best] or list[best - 1]
   if around then new.sec = around.sec end
   new.added = true -- (a stop put in here belongs where it went: the plan's floor leaves it alone, Engine.Compute)
@@ -175,7 +186,7 @@ function Engine.InsertStop(new, px, py, pinst, opts)
   local d = BeelineData
   if d and list == d.steps then for _, c in ipairs(d.choices or {}) do if c.at and c.at >= best then c.at = c.at + 1 end end end
   if ns.Why then ns.Why("insert", "added " .. (new.k or "") .. " " .. (new.name or (new.k == "fp" and ((new.zone or "?") .. " (" .. tostring(new.npc) .. ")")) or new.npc or "") .. " as step " .. best .. " (" .. (opts.why or "you finished it; this is where it costs least") .. ")") end
-  keyCache[list] = nil
+  Engine.StepsChanged(list)
   if Engine.focus and Engine.focus >= best then Engine.focus = Engine.focus + 1 end
   if Engine.view and Engine.view >= best then Engine.view = Engine.view + 1 end
   Engine.RunShift(best)
@@ -184,7 +195,7 @@ end
 
 -- side trips merge: the next stops of unfinished side trips (class quests, the sleeping bag), where they cost least,
 -- if the detour is small. On a side trip, the other side trips join it; on your leveling path they join it too, but
--- only where the path really passes by (the player's choice, 2026-11-08: fold them in, and keep them as side trips)
+-- only where the path really passes by (fold them in, and keep them as side trips)
 Engine.MERGE_MAX_YARDS = 3000
 Engine.MERGE_PATH_YARDS = 600
 Engine.FP_DETOUR_YARDS = 600
@@ -209,7 +220,7 @@ function Engine.MergeSideTrips()
       local rsteps = ns.Steps(r)
       for _, s in ipairs(rsteps) do
         ns.MaybeYield()
-        local skip = s.k == "fly" or s.k == "hearth" or s.unknown or not (s.q and s.q > 0 and s.m and s.x)
+        local skip = isTrip(s) or s.unknown or not (s.q and s.q > 0 and s.m and s.x)
           or State.IsCompleted(s.q) or (s.k == "accept" and State.OnQuest(s.q)) or onRoute[s.k .. ":" .. s.q]
         -- a chain step the route already has: the rest of the chain goes after it
         local there = s.q and onRoute[s.k .. ":" .. s.q]
@@ -218,15 +229,14 @@ function Engine.MergeSideTrips()
           local copy = {}; for k, v in pairs(s) do copy[k] = v end
           copy.inserted, copy.id, copy.wp = true, nil, nil
           copy.note = "On the way: " .. (r.dungeonName or r.title) .. "."
-          -- a quest is picked up only if its hand-in joins this trip too: the note by Camp Taurajo is on the ride north,
-          -- but its hand-in is in Westfall - the card ran a level 30 2,000 yd for a quest to carry (mutate sweep, 79007)
+          -- a quest is picked up only if its hand-in joins this trip too (else the card ran you far for a quest to carry)
           local handIn
           if s.k == "accept" then
             for _, t in ipairs(rsteps) do if t.k == "turnin" and t.q == s.q and t.m and t.x then handIn = t; break end end
             if handIn and onRoute["turnin:" .. s.q] then handIn = nil end -- the route hands it in itself
           end
           -- (the pick-up is priced first: most are too far anyway, and pricing the hand-in only for one that fits keeps
-          -- the trip searches at login where they were - perf gate, human paladin at 50: 5 -> 8)
+          -- login trip searches down)
           local at, why
           local opts = { minIndex = minI, maxCost = maxCost, why = "on the way for " .. (r.dungeonName or r.title), dry = handIn and true or nil }
           local fits = Engine.InsertStop(copy, px, py, pinst, opts)
@@ -278,26 +288,24 @@ function Engine.LogEnders()
   Engine.logLevels = {} -- quest level by id, for the gray check below
   local n = C_QuestLog and C_QuestLog.GetNumQuestLogEntries and select(2, pcall(C_QuestLog.GetNumQuestLogEntries))
   if type(n) == "number" and n > 0 and C_QuestLog.GetInfo then
-    for i = 1, n do
-      local ok, info = pcall(C_QuestLog.GetInfo, i)
-      if ok and info and not info.isHeader and info.questID and enders[info.questID] then inLog[info.questID] = enders[info.questID]; Engine.logLevels[info.questID] = info.level end
+    for _, q, level in State.LogQuests(n) do
+      if enders[q] then inLog[q] = enders[q]; Engine.logLevels[q] = level end
     end
     return inLog
   end
   return enders -- no quest log to read (tests): every spot, each checked with QuestReady
 end
 -- finished quests in your log with no hand-in on the route: add one where it costs least
--- Where it costs least by the walk can be where the plan next passes the hand-in, levels later: the quest is gray by
--- then and pays a tenth (The Perenolde Tiara, finished at 37, filed under the plan's Stormwind visit at 59 - tester).
--- The XP it would lose by waiting is weighed against going now, there and back, at half a level an hour (as a
--- leftover's trip is, Engine/Worth.lua); worth more than that trip, the hand-in is your next stop.
+-- Where it costs least by the walk can be where the plan next passes the hand-in, levels later, when the quest is gray
+-- and pays a tenth. The XP it would lose by waiting is weighed against going now, there and back, at your pace
+-- (Engine.XpPerSec); worth more than that trip, the hand-in is your next stop.
 -- -> the step the hand-in goes before now (nil: where the walk says), the XP it would lose, the trip's seconds
 function Engine.HandInNow(step, ql, at)
   local list = steps()
   local me = UnitLevel and UnitLevel("player") or 1
   if type(ql) ~= "number" or not at or not Engine.current then return nil end
   local t = list[at] or list[at - 1] or list[#list]
-  -- (the plan's level there, PlanLevel: travel, binds and added stops carry no lvl of their own - code review)
+  -- (the plan's level there, PlanLevel: travel, binds and added stops carry no lvl of their own)
   local then_ = math.max(me, tonumber(Engine.PlanLevel and Engine.PlanLevel(at)) or tonumber(t and t.lvl) or me)
   local lost = Engine.QuestXP(ql, me) - Engine.QuestXP(ql, then_)
   if lost <= 0 then return nil end
@@ -307,7 +315,7 @@ function Engine.HandInNow(step, ql, at)
   if not secs then return nil end
   local tripCost = Engine.XpPerSec(me) * (2 * secs) -- there and back, at your pace (Engine.XpPerSec)
   if lost <= tripCost then return nil end
-  -- (before the plan's own step, not the card's: the card can show a quest from the part behind you - code review)
+  -- (before the plan's own step, not the card's: the card can show a quest from the part behind you)
   return Engine.planned or Engine.current, lost, secs
 end
 local function applyInserts()
@@ -322,9 +330,8 @@ local function applyInserts()
   for _, s in ipairs(list) do if s.k == "turnin" and s.q then if Engine.BehindYouIn(bm, s) then behind[s.q] = true else have[s.q] = true end end end
   local px, py, pinst = HBD:GetPlayerWorldPosition()
   local added = false
-  -- (on a zone you picked: only the hand-ins in that zone - the rest wait for your way back to the plan, as a side quest's
-  -- stops do (Side.lua). A short zone route's end was the cheapest spot for every finished quest in the log, and the card
-  -- sent a level 52 to Felwood, Winterspring and Un'Goro one after another - mutate --play)
+  -- (on a zone you picked: only the hand-ins in that zone - the rest wait for your way back to the plan, as a side
+  -- quest's stops do (Side.lua); a short zone route's end was otherwise the cheapest spot for every finished quest)
   local zoneMaps; if not BeelineData.zoneRoute then zoneMaps = false end
   for q, e in pairs(Engine.LogEnders()) do
     ns.MaybeYield() -- (a route job: a quest a pause)
@@ -333,9 +340,8 @@ local function applyInserts()
       local step = { k = "turnin", q = q, name = e.name, npc = e.npc, m = e.m, x = e.x, y = e.y, r = 6, inserted = true,
         note = "Added: you finished this one on the way." }   -- its sec comes from where InsertStop puts it
       local ql, me = Engine.logLevels and Engine.logLevels[q], UnitLevel and UnitLevel("player")
-      if type(ql) == "number" then step.level = ql end -- (the solve prices a hand-in by its quest's level: without it, a flat guess - code review)
-      -- a gray quest (Messenger to Westfall at 26: 250 XP) that leads to nothing worth XP gets no stop at all: the one
-      -- gray rule (Engine.GrayDrop) - it had one when right on the way, while the quest log check said to drop it
+      if type(ql) == "number" then step.level = ql end -- (the solve prices a hand-in by its quest's level: without it, a flat guess)
+      -- a gray quest that leads to nothing worth XP gets no stop at all: the one gray rule (Engine.GrayDrop)
       local gray = type(me) == "number" and Engine.GrayDrop(q, me, ql) == true
       local opts = (behind[q] and { maxCost = Engine.MERGE_PATH_YARDS, why = "its hand-in is behind you in the plan, and the route passes by" }) or nil
       -- (not gray, not behind you: would waiting for the cheapest spot cost more XP than going now?)

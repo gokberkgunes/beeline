@@ -8,18 +8,15 @@ ns.Pins = Pins
 local HBDP = LibStub("HereBeDragons-Pins-2.0")
 
 -- A frame keeps its job for life: one pool for world-map pins, one for minimap pins. HereBeDragons parents a minimap
--- pin to the minimap and a world-map pin to the map canvas - but only once it actually places it. A frame that had
--- been on the minimap and came back from a shared pool as a world-map pin stayed on the minimap, at the spot it last
--- had there, whenever the world map was not showing that zone (closed since login, or last looked at elsewhere):
--- a pin at a fixed offset from your arrow, walking with you. So: separate pools, a frame is handed over hidden and
--- unanchored (HereBeDragons shows it when it places it), and Pins.Sweep hides anything that slipped through.
+-- pin to the minimap and a world-map pin to the map canvas - but only once it actually places it, so a frame reused
+-- across the two can stay stuck on the minimap. So: separate pools, a frame is handed over hidden and unanchored
+-- (HereBeDragons shows it when it places it), and Pins.Sweep hides anything that slipped through.
 local pool, used, lastKey = { world = {}, mini = {} }, {}, nil
 local all = {} -- every frame made here (pins and dots)
 -- the step the first (current) pin marks, for tests: card, arrow and pins must agree
 function Pins.First() local p = used[1]; return p and p.index end
 -- The minimap shows one thing: where the card's step is, when it's near. A pin beside you reads as "do this now", so
--- nothing else belongs there (a "2" for a hand-in to Elling Trias sat next to you in Stormwind - for a quest Jorgen
--- across town only gives you after the hand-in before it).
+-- nothing else belongs there.
 -- The world map shows the plan, and each pin says which of three things it is:
 --   the step on the card - big, coloured, no number
 --   a next stop you could do right now - coloured, numbered in plan order
@@ -64,10 +61,9 @@ function Pins.Tip(i, n)
   return lines
 end
 -- How a pin looks. World map: the card's step is the pin shape with a dark edge; the next stops are small round
--- badges with their number (the pin shape has a hole in its head, right where the number sat - on a dark map the
--- digit was gone). Minimap (the card's step only): no bigger than before, but a round badge that fills its size, in
--- the kind's colour with a dark rim and the kind's icon (the one on the card) - the pin shape was a few yellow pixels
--- that said nothing on Stormwind's blue and brown.
+-- badges with their number (the pin shape's head has a hole where a number would sit). Minimap (the card's step
+-- only): a round badge that fills its size, in the kind's colour with a dark rim and the kind's icon (the one on the
+-- card), readable on any minimap colours.
 local DARK = { 0.05, 0.05, 0.07 }
 -- what a pin's look depends on: the pins are redrawn whenever a step or your nearness changes, and one that already
 -- looks this way is left as it is (a dozen texture and font calls each, for nothing) - the redraw takes such a pin
@@ -82,7 +78,7 @@ local function look(p, where, n, s, notYet)
   if p.looks == key then return end
   p.looks = key
   local c = notYet and GREY or kind.color
-  -- (the minimap pin's size is a setting: it covered the game's own marker and its above/below arrow - a player)
+  -- (the minimap pin's size is a setting: it can cover the game's own marker and its above/below arrow)
   local size = mini and 20 * (ns.db.miniPinScale or 1) or (first and 22 or (notYet and 14 or 16))
   p:SetSize(size, size)
   local round = mini or not first
@@ -357,7 +353,7 @@ function Pins.Update(force)
         look(p, where, label + 1, s, notYet[n])
         -- hidden and unanchored until HereBeDragons places it (it shows the frame itself)
         p:Hide(); p:ClearAllPoints()
-        -- (on top of the map's own markers - a quest giver's "!" covered ours - like other Forever map addons)
+        -- (on top of the map's own markers, like other Forever map addons)
         if where == "world" then HBDP:AddWorldMapIconMap(Pins, p, m, x, y, HBD_PINS_WORLDMAP_SHOW_PARENT or 1, "PIN_FRAME_LEVEL_TOPMOST")
         else
           -- by world position, not by map: the map-bound call only draws the pin while the game says you are on
@@ -373,9 +369,8 @@ function Pins.Update(force)
 end
 Pins._used = used
 -- blink the world map pin of step i (the card's Map button) once it is on the screen. A pin is in the list before the
--- map shows it (HereBeDragons places it when the map opens on its zone): its blink played unseen and was used up, so
--- the map opened with nothing marked. Until it shows it is looked for again every tenth of a second, for 3 seconds
--- (not on the screen by then: no late blink). -> true when it blinked now
+-- map shows it (HereBeDragons places it when the map opens on its zone), so until it shows it is looked for again
+-- every tenth of a second, for 3 seconds (not on the screen by then: no late blink). -> true when it blinked now
 Pins.BLINK_TRIES = 30
 function Pins.Blink(i, tries)
   tries = tries or Pins.BLINK_TRIES
@@ -387,7 +382,6 @@ function Pins.Blink(i, tries)
   C_Timer.After(0.1, function() if blinkFor == i then Pins.Blink(i, tries - 1) end end)
   return false
 end
-function Pins.PendingBlink() local i = blinkFor; blinkFor = nil; return i end
 -- every frame this file ever put on a map (pins and path dots)
 function Pins.Frames() return all end
 -- nothing of ours may show on the minimap unless HereBeDragons is placing it there; returns how many it had to hide
@@ -405,14 +399,16 @@ ns.On("FR_LOADED", function() ns.NewTicker(2, ns.Guard("pins", function() Pins.U
 
 ns.On("FR_STEP", function() local t0 = debugprofilestop and debugprofilestop(); Pins.Update(); if t0 and ns.Time then ns.Time("pins on step", debugprofilestop() - t0) end end)
 ns.On("FR_DUNGEON", function() Pins.Update(true) end)
-ns.On("FR_SETTINGS", function() Pins.Update(true) end)
+-- a setting changed: rebuilt for the pins' own settings and the ones that retarget the arrow (its line is drawn here)
+Pins.SETTING_KEYS = { pins = true, pinCount = true, pathLine = true, miniPin = true, miniPinScale = true, miniPath = true,
+  arrow = true, gameNav = true, smartNext = true, trails = true }
+ns.On("FR_SETTINGS", function(key) if key == nil or Pins.SETTING_KEYS[key] then Pins.Update(true) end end)
 ns.On("FR_ROUTE_CHANGED", function() Pins.Update(true) end)
 ns.On("ZONE_CHANGED_NEW_AREA", function() C_Timer.After(1.5, function() Pins.Update() end) end)
 
 -- Is a live line (Nav.lua) on its way, or drawn, for what the arrow points at? Then the planned path stays off the
--- map: it was drawn for the seconds the live line took to be found and then replaced by it ("a random path that
--- flashes for a few seconds"). A line that waits for your position (a loading screen: the game has none for a
--- moment) is on its way too; one that waits because the target is in another world is not.
+-- map (no path flashing up for the seconds the live line takes). A line that waits for your position (a loading
+-- screen: the game has none for a moment) is on its way too; one that waits because the target is in another world is not.
 function Pins.LiveComing()
   local N = ns.Nav
   if not N then return false end
@@ -428,16 +424,12 @@ end
 -- at the stop it starts from): the stretch you are on, -1 when you are not on it (or not walking at all: a flight, a
 -- boat), nil when the arrow points at something else on the way there (the flight master, a zone crossing) or the
 -- step is in another world - the path is then a look at what is planned over there, whole.
--- The planned path starts where the plan expected you to come from. Drawn from that start whenever a step came up,
--- it showed a path from somewhere you never were until the arrow's first word on it, a second or two later, took
--- it away again.
-Pins.PLANNED_OFF_YD = 45
+-- The planned path starts where the plan expected you to come from, so nothing is drawn until the arrow's first word on it.
 function Pins.OnPlanned(i)
   local t = ns.Arrow and ns.Arrow.Current and ns.Arrow.Current()
   if not t or t.index ~= i then return -1 end -- nothing to walk to (a flight), or the arrow hasn't turned to this step yet
-  -- dead: the arrow and its line go to your corpse - the step's planned trail (from the stop before it, wherever that
-  -- was) is not the way you are going. It was drawn whole: the corpse target has no path of its own, which read as
-  -- "nothing to judge" (a trail from Grom'gol to the Mosh'Ogg mound with the player a ghost far south - tester)
+  -- dead: the arrow and its line go to your corpse - the step's planned trail is not the way you are going (the
+  -- corpse target has no path of its own: not "nothing to judge")
   if t.corpse then return -1 end
   local P = t.path
   if not (P and P.pts and #P.pts >= 2) then return nil end
@@ -454,9 +446,7 @@ function Pins.OnPlanned(i)
     if d < bd - 0.01 then best, bd = j, d end
   end
   if not best then return -1 end
-  local St = P.start
-  local atStart = St and math.sqrt((px - St[1]) ^ 2 + (py - St[2]) ^ 2) <= (P.startR or 40) + 25
-  return (bd <= Pins.PLANNED_OFF_YD or atStart) and best or -1
+  return ns.Arrow.OnPlannedPath(P, px, py, bd) and best or -1
 end
 -- the planned path of a step, where no live line is coming (no walk map for this zone, or no way found on it):
 -- only what is still ahead of you, and only while you are on it. seg: the arrow's word on where you are on it

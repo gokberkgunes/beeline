@@ -1,4 +1,4 @@
--- Quests priced and chains named without a plan (the design for zones and chains, stage 2): ns.QUEST_XP and
+-- Quests priced and chains named without a plan: ns.QUEST_XP and
 -- ns.CHAINS come from QuestData.lua (tools/gen-quest-data.js, tools/chains.js); both are unpacked the first time
 -- they are asked for.
 --   ns.QuestXp(q, level)  the XP quest q pays at that level (the planner's world.js questXp: full up to 5 levels
@@ -49,7 +49,7 @@ function ns.ChainOf(q)
   return { id = ch.id, name = ch.name, q = ch.q, z = ch.z, at = e.at }
 end
 
--- One line about the chain a quest is part of, for the zone list (the design for zones and chains, 2.6):
+-- One line about the chain a quest is part of, for the zone list:
 --   "Nesingwary: 3 of 9 done, ~14k XP left, goes on in Stranglethorn Vale, gray at 44"
 -- the XP is what its parts not done pay at your level; "goes on in" is the next part not done when it's in another
 -- zone than this one's; "gray at" the level its next part turns gray. nil for a quest in no chain (or a chain of one).
@@ -85,7 +85,7 @@ function ns.ChainLine(q, level)
   return table.concat(out, ", ")
 end
 
--- Chains you'd lose by leaving now (2.6/3: don't let wandering lose a chain silently): quests you carry on the route
+-- Chains you'd lose by leaving now (don't let wandering lose a chain silently): quests you carry on the route
 -- you're on whose chain's next part turns gray within `margin` levels (default 2). -> { { q, line, grayAt } }, soonest first
 function ns.ChainsAtRisk(margin)
   local d, S, E = BeelineData, ns.State, ns.Engine

@@ -30,48 +30,29 @@ function Hints.ScaleDue()
 end
 local sbar
 local function buildScale()
-  local card = BeelineCard
-  if not card then return nil end
-  sbar = CreateFrame("Frame", "BeelineScaleBar", card)
-  sbar:SetHeight(22)
-  Style.Panel(sbar, C.bg2)
-  sbar.text = Style.Text(sbar, 11, C.warn); sbar.text:SetPoint("LEFT", 10, 0); sbar.text:SetWordWrap(false)
-  local x = Style.Button(sbar, "x", 18, 18, function() ns.db.hintScaleOff = true; sbar:Hide() end, "Leave it as it is (Beeline scale, in /bee options, changes it any time)")
-  x:SetPoint("RIGHT", -3, 0)
-  sbar.go = Style.Button(sbar, "Bigger", 96, 18, function()
+  sbar = Style.CardBar("BeelineScaleBar", 3, C.warn, function() ns.db.hintScaleOff = true; sbar:Hide() end, "Leave it as it is (Beeline scale, in /bee options, changes it any time)")
+  if not sbar then return nil end
+  sbar.go = Style.CardBarButton(sbar, "Bigger", 96, function()
     local s = sbar.suggest or Style.SuggestScale(); if not s then sbar:Hide(); return end
     Style.SetUIScale(s); sbar:Hide()
     ns.Print(string.format("Beeline scale set to %.2f. Change it under /bee options, or /bee scale 1 to go back.", s))
   end, "Makes the card, the arrow, the route list and every Beeline window bigger. Nothing else in your UI changes.")
-  sbar.go:SetPoint("RIGHT", x, "LEFT", -4, 0)
-  sbar.text:SetPoint("RIGHT", sbar.go, "LEFT", -6, 0)
   return sbar
 end
 function Hints.CheckScale()
   local s = Hints.ScaleDue()
   if not s then if sbar then sbar:Hide() end; return false end
   if not (sbar or buildScale()) then return false end
-  -- under the other bars that are showing
-  local above = BeelineCard
-  for _, b in ipairs({ BeelineNewsBar or false, BeelineHintBar or false }) do if b and b:IsShown() then above = b end end
-  sbar:ClearAllPoints(); sbar:SetPoint("TOPLEFT", above, "BOTTOMLEFT", 0, -4); sbar:SetPoint("TOPRIGHT", above, "BOTTOMRIGHT", 0, -4)
   sbar.suggest = s
   sbar.text:SetText("Small text on this screen?"); sbar.go.label:SetText(string.format("Make it %d%%", math.floor(s * 100 + 0.5)))
   sbar:Show()
+  Style.StackCardBars()
   return true
 end
 
 local bar
 local function build()
-  local card = BeelineCard
-  if not card then return nil end
-  bar = CreateFrame("Frame", "BeelineHintBar", card)
-  bar:SetHeight(22)
-  Style.Panel(bar, C.bg2)
-  bar.text = Style.Text(bar, 11, C.warn); bar.text:SetPoint("LEFT", 10, 0); bar.text:SetWordWrap(false)
-  local x = Style.Button(bar, "x", 18, 18, function() ns.db.hintTaxiOff = true; bar:Hide() end, "Don't show this again")
-  x:SetPoint("RIGHT", -3, 0)
-  bar.text:SetPoint("RIGHT", x, "LEFT", -6, 0)
+  bar = Style.CardBar("BeelineHintBar", 2, C.warn, function() ns.db.hintTaxiOff = true; bar:Hide() end, "Don't show this again")
   return bar
 end
 
@@ -79,13 +60,9 @@ function Hints.Check()
   local due = Hints.TaxiDue()
   if not due then if bar then bar:Hide() end; return false end
   if not (bar or build()) then return false end
-  -- under the what's-new bar when that is showing
-  local news = BeelineNewsBar
-  local above = (news and news:IsShown()) and news or BeelineCard
-  bar:ClearAllPoints(); bar:SetPoint("TOPLEFT", above, "BOTTOMLEFT", 0, -4); bar:SetPoint("TOPRIGHT", above, "BOTTOMRIGHT", 0, -4)
   bar.text:SetText("Open any flight master's map once so I know your flight paths.")
   bar:Show()
-  if sbar and sbar:IsShown() then Hints.CheckScale() end -- (it sits under this one)
+  Style.StackCardBars()
   return true
 end
 

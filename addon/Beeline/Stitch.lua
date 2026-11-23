@@ -1,4 +1,4 @@
--- Chain starts for a zone you picked (the design for zones and chains, stage 3): when a quest there needs an earlier
+-- Chain starts for a zone you picked: when a quest there needs an earlier
 -- quest you haven't handed in, the steps for it are cut from your own plan (it already has them, in order) and put in
 -- front of that quest when the detour is small; otherwise the quest waits and you are told what it needs and where.
 -- Nothing is saved: the splice is made again each time the zone's route is unpacked.
@@ -77,8 +77,8 @@ local function questName(q, list)
   return "an earlier quest", nil
 end
 
--- the maps a zone's route quests on: three quest steps or more there (a step or two across the boat - an Auberdine
--- hand-in on the Wetlands route - is not where the zone is: Darkshore's quests in your log aren't the Wetlands')
+-- the maps a zone's route quests on: three quest steps or more there (a step or two across a boat is not where the
+-- zone is)
 Stitch.ZONE_MIN_STEPS = 3
 function Stitch.ZoneMaps(d)
   local n, maps = {}, {}
@@ -92,7 +92,7 @@ end
 -- and which hand-ins Where to? counts for the zone (ns.ZoneChoices): the same rule, so a row offered for a hand-in has it
 -- on the card once picked.
 -- (a quest a pick takes along: in your log, not handed in, not one you said no to, and not one whose work is red to you -
--- t, a step of it: it waits for your level, Engine.TooHigh. Spliced, it read "wait" on the card - code review)
+-- t, a step of it: it waits for your level, Engine.TooHigh)
 local function carries(q, t)
   local S, E = ns.State, ns.Engine
   if not (S.OnQuest(q) and not S.IsCompleted(q) and not ns.Nope(q)) then return false end
@@ -131,7 +131,7 @@ function Stitch.CarriedFrom(steps, on, memo)
   return out
 end
 
--- a stop after a route's last step, as InsertStop puts one there (its stretch, the step numbers, the engine's key cache)
+-- a stop after a route's last step, as InsertStop puts one there (its stretch, the step numbers, the list's generation)
 local function appendStop(list, new)
   local last = list[#list]
   if last then new.sec = last.sec end
@@ -139,7 +139,7 @@ local function appendStop(list, new)
   list[#list + 1] = new
   new.id = #list
   local E = ns.Engine
-  if E and E._keyCache then E._keyCache[list] = nil end
+  if E and E.StepsChanged then E.StepsChanged(list) end
   if ns.Why then ns.Why("insert", "added " .. (new.k or "") .. " " .. (new.name or new.dest or "") .. " as step " .. #list .. " (nothing else left on this route: the quests you carry here)") end
   return #list
 end
@@ -151,11 +151,10 @@ function Stitch.Splice()
   local d, E, S = BeelineData, ns.Engine, ns.State
   if not (d and d.zoneRoute and d.steps) or not (E and E.InsertStop) then return false end
   -- nothing of the zone's own left for you (E.current nil): no chain starts (they go before a quest here), but the
-  -- quests you carry still come, after its last step (InsertStop needs a current step: a zone whose own quests were all
-  -- done was offered for the hand-in you carried there, and picking it left the card empty - mutate sweep)
+  -- quests you carry still come, after its last step (InsertStop needs a current step)
   local empty = not E.current
-  -- chain starts once per unpacked route; the quests you carry every time you come to it (back to a zone you had picked
-  -- before, its route still unpacked: what you picked up since was left off - the simulated zone-hopper's check)
+  -- chain starts once per unpacked route; the quests you carry every time you come to it (you may have picked up more
+  -- since the route was unpacked)
   local firstTime = not empty and not d.steps._stitched
   local P = ns.STITCH
   local main = ns.Util.PlanRoute()
@@ -173,7 +172,7 @@ function Stitch.Splice()
   while i <= #d.steps do
     ns.MaybeYield() -- (a route job: a step a pause)
     local s = d.steps[i]
-    if s.k == "accept" and s.q and not s.inserted and not isDone(s.q) and not onQuest(s.q) and ns.PrereqsMet and not ns.PrereqsMet(s.q) then
+    if s.k == "accept" and s.q and not s.inserted and not isDone(s.q) and not onQuest(s.q) and not ns.State.PrereqsMet(s.q) then
       local ids = Stitch.Closure(s.q, function(q) return isDone(q) or done[q] end, onPlan)
       local packet, missing = Stitch.Packet(mainSteps, ids, isDone, onQuest)
       local name = s.name or questName(s.q)
@@ -208,8 +207,8 @@ function Stitch.Splice()
         end
         if ok then
           -- what it costs and what it opens: the detour at your speed plus the stops, and the XP of it and what it opens
-          -- ("+4 min, opens ~12k XP" - a detour without its cost read as being sent across a zone for one quest)
-          local secs = yards / ((ns.Travel and ns.Travel.Speed and ns.Travel.Speed()) or 7) + 10 * #added
+          -- ("+4 min, opens ~12k XP")
+          local secs = ns.Travel.WalkSecs(yards) + 10 * #added
           local cost = string.format("+%d min, opens ~%s XP", math.max(1, math.floor(secs / 60 + 0.5)), (ns.Paths and ns.Paths.Short and ns.Paths.Short(xp)) or tostring(xp))
           for _, c in ipairs(added) do c.note = "Chain start for " .. name .. " (" .. cost .. ")."; c.chainCost = cost end
           res.costs = res.costs or {}; res.costs[#res.costs + 1] = name .. ": " .. cost
@@ -218,6 +217,7 @@ function Stitch.Splice()
         else
           -- (all or nothing: half a chain start is a walk for nothing)
           for _, c in ipairs(added) do for j = #d.steps, 1, -1 do if d.steps[j] == c then table.remove(d.steps, j); break end end end
+          E.StepsChanged(d.steps)
           local mn, mz = questName(ids[1], mainSteps)
           why = name .. " - needs " .. mn .. (mz and (" (" .. mz .. ")") or "") .. " first, too far from here"
         end
@@ -226,11 +226,10 @@ function Stitch.Splice()
     end
     i = i + 1
   end
-  -- The quests you carry here. A zone's route has its own quests only: the ones in your log that your plan does in this
-  -- zone were nowhere on it, and the card sent you to the zone route's first pick-up across the zone with 27 quests in
-  -- your log, most of them there (Stranglethorn, tester). Their objectives and hand-ins on this zone's maps are cut from
-  -- your plan and put where each costs least, objectives before the hand-in. A hand-in elsewhere stays on your plan
-  -- (finished, its hand-in is added where it costs least anyway: Engine applyInserts).
+  -- The quests you carry here. A zone's route has its own quests only, so the ones in your log that your plan does in
+  -- this zone are added: their objectives and hand-ins on this zone's maps are cut from your plan and put where each
+  -- costs least, objectives before the hand-in. A hand-in elsewhere stays on your plan (finished, its hand-in is added
+  -- where it costs least anyway: Engine applyInserts).
   local carried, maps = Stitch.Carried(d.steps, mainSteps)
   local tripAdded = false
   local carriedN, carriedQ = 0, 0
@@ -288,8 +287,7 @@ end
 
 ns.On("FR_ROUTE_CHANGED", function() ns.Engine.After(0.7, "stitch", function() if Stitch.Splice() then ns.Engine.Refresh() end end) end)
 -- and at login (a /reload, the next session): the route you were on is selected quietly, with no FR_ROUTE_CHANGED, and a
--- zone route is unpacked afresh - the quests you carry there were gone from it. A level 40 on Stranglethorn after a
--- /reload had The Second Rebellion and Some Assembly Required in the log, "off-route", never on the card (tester).
+-- zone route is unpacked afresh, without the quests you carry there - so splice them again.
 -- After the other login stages (hand-ins 3 s, side quests 3.2 s, side trips 3.5 s), as after a pick; nothing on a plan.
 Stitch.LOGIN_DELAY = 3.7
 function Stitch.OnLogin() if Stitch.Splice() then ns.Engine.Refresh() end end

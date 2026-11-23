@@ -21,15 +21,11 @@ local byte, sub, rep, char, concat = string.byte, string.sub, string.rep, string
 local floor, sqrt, abs, max, min, huge = math.floor, math.sqrt, math.abs, math.max, math.min, math.huge
 
 Nav.WEIGHT = 1.2       -- how greedy the search is: a few % longer lines for far fewer squares looked at
-Nav.WEIGHT_RATED = 0.9 -- the same where the ground is rated (roads, mobs), counted against a yard of open ground: 1.2
-                       -- times what a yard of road costs. Measured on seven walks in Elwynn, Redridge and the
-                       -- Wetlands: at 1.1 the search runs straight past a road that bends away (a fifth to a half
-                       -- of the road yards of the cheapest line); at 0.9 its line costs within 3% of the cheapest,
-                       -- for 30 to 70% of the squares an estimate that cannot miss (0.75) looks at
+Nav.WEIGHT_RATED = 0.9 -- the same where the ground is rated (roads, mobs), counted against a yard of open ground:
+                       -- 0.9 keeps lines within ~3% of the cheapest; 1.1 runs past roads that bend away
 Nav.BUDGET_MS = 2      -- CPU per frame while a zone unpacks or a search runs
-Nav.STRAY_YD = 12      -- this far off the line: a new line from where you are (read off the last search, so cheap).
-                       -- At 30 the arrow spent those yards steering you back onto the old line - the line is a
-                       -- hint, not a rail: step off it and it is redrawn from where you are
+Nav.STRAY_YD = 12      -- this far off the line: a new line from where you are (read off the last search, so cheap);
+                       -- the line is a hint, not a rail
 Nav.SWIM = 1.5         -- swimming costs this much more than walking (the planner's factor)
 Nav.LOOK = 64          -- a straightened stretch spans at most this many squares
 Nav.SLACK = 1.02       -- ...and may cost this much more than the squares the search walked
@@ -38,17 +34,14 @@ Nav.SLACK_OPEN = 1.2   -- ...and from open ground where the ground is rated (mob
 Nav.SNAP = 6           -- you (or the target) may be this many squares from the nearest ground the grid knows
 Nav.Z_SNAP = 4         -- with a height: a node within this many yards of it...
 Nav.Z_REACH = 3        -- ...looked for up to this many squares further out, else the nearest in height (a small floor
-                       -- patch is merged into the next square's node: its own square may hold only the level above -
-                       -- Orgrimmar's cliff over Gryshka's inn, Ironforge's mountain over the Commons)
+                       -- patch is merged into the next square's node: its own square may hold only the level above)
 Nav.KEEP = 2           -- unpacked zones kept in memory
-Nav.ROAD = 0.9         -- a yard of road costs this much of a yard of open ground: about a tenth further to stay on it.
-                       -- (0.75, a third further, had the arrow dragging players onto every road; on foot a road is
-                       -- no faster, and the mobs beside the way are priced on their own)
+Nav.ROAD = 0.9         -- a yard of road costs this much of a yard of open ground: about a tenth further to stay on it
+                       -- (lower drags players onto every road; on foot a road is no faster)
 Nav.MOB_NEAR = 1.4     -- a yard of open ground within about 24 yd of a hostile spawn costs this much more...
 Nav.MOB_CLOSE = 2.2    -- ...and within about 12 yd this much (tools/navgrid.js MOB_NEAR, MOB_CLOSE)
-Nav.MOB_ROAD = 1.4     -- on a road only a spawn within 12 yd counts, and this much: roads run past camps, and what
-                       -- stands 20 yd off one mostly leaves you alone. (Counting those sent the line off the road
-                       -- and through the quiet woods beside it - the opposite of what a road is for.)
+Nav.MOB_ROAD = 1.4     -- on a road only a spawn within 12 yd counts, and this much: roads run past camps, and
+                       -- counting farther ones pushes the line off the road
 Nav.MOB_GAP = 5        -- mobs this many levels under you (or more) are left out: they hardly notice you
 Nav.STRAIGHT_TOL = 5   -- the arrow aims as far along the line as a straight walk stays within this many yards of it
 Nav.STRAIGHT_MAX = 200 -- ...up to this far
@@ -128,7 +121,7 @@ local function unpackRows(s, codes, W, pause)
   return rows
 end
 -- which side's enemies count (the other side's guards and townsfolk are a layer of their own in the data)
-function Nav.Side() local f = UnitFactionGroup and UnitFactionGroup("player"); return f == "Horde" and "H" or "A" end
+function Nav.Side() return ns.State.MyFaction() or "A" end
 -- your level, for which mobs matter
 function Nav.Level() return (UnitLevel and UnitLevel("player")) or 1 end
 
@@ -301,7 +294,6 @@ local function centre(N, sq)
   return N.left - (sq - r * N.W + 0.5) * N.cell, N.top - (r + 0.5) * N.cell
 end
 local function heightOf(N, n) if n < N.NC then return N.bz[n] end return N.oz[n - N.NC + 1] end
-local function swims(N, n) if n < N.NC then return byte(N.swim, n + 1) == 1 end return N.osw[n - N.NC + 1] or false end
 -- is there any ground in this square?
 function Nav.Ground(N, sq) return byte(N.base, sq + 1) ~= 0 or N.solo[sq] or N.at[sq] ~= nil end
 local function squareAt(N, wx, wy)
@@ -310,7 +302,7 @@ local function squareAt(N, wx, wy)
   return r * N.W + c
 end
 function Nav.Inside(D, wx, wy) return wx <= D.left and wx >= D.right and wy <= D.top and wy >= D.bottom end
-Nav._squareOf, Nav._centre, Nav._squareAt, Nav._heightOf = squareOf, centre, squareAt, heightOf
+Nav._squareAt = squareAt
 
 -- the nodes at a world point: those of its square, or of the nearest ring of squares that has any (you may stand on
 -- a crate the grid left out). With a height: the one node nearest to it (Z_SNAP / Z_REACH). Without: all of them,
@@ -350,8 +342,8 @@ local function nodesNear(N, wx, wy, z)
       if first and rad >= first + Nav.Z_REACH then return all, first end
     elseif #found > 0 then
       first = first or rad
-      -- every node that close in height at this distance (one of two by Talvash del Kissel's door in Ironforge is a
-      -- ledge that doesn't join the street), else the nearest in height once Z_REACH squares are looked at
+      -- every node that close in height at this distance (one may be a ledge that doesn't join the street), else the
+      -- nearest in height once Z_REACH squares are looked at
       local close = {}
       for _, n in ipairs(found) do
         local d = abs((heightOf(N, n) or z) - z)
@@ -525,7 +517,6 @@ local function clear(N, a, b, maxCost, F)
   end
   return true
 end
-Nav._clear = clear
 
 -- the nodes from `from` to the target, as the search left them
 local function trace(S, from)
@@ -624,62 +615,15 @@ function Nav.Find(m, sx, sy, sz, tx, ty, tz, level)
   return P, S, clock() - t0
 end
 
--- distance from a point to the segment a-b
-local function segDist(px, py, a, b)
-  local dx, dy = b[1] - a[1], b[2] - a[2]; local L2 = dx * dx + dy * dy
-  local t = L2 > 0 and max(0, min(1, ((px - a[1]) * dx + (py - a[2]) * dy) / L2)) or 0
-  return sqrt((px - a[1] - t * dx) ^ 2 + (py - a[2] - t * dy) ^ 2), t
-end
--- Where you are along a line: the nearest segment from the cursor on (the cursor only moves forward: what is behind
--- you is gone). Sets P.cursor and P.left (yards still to walk); returns the segment and how far off the line you are.
-function Nav.Advance(P, px, py)
-  local pts = P.pts
-  local best, bd, bt = P.cursor, huge, 0
-  for j = P.cursor, #pts - 1 do
-    local d, t = segDist(px, py, pts[j], pts[j + 1])
-    if d < bd - 0.01 then best, bd, bt = j, d, t end
-  end
-  P.cursor = best
-  if pts[best + 1] then
-    local a, b = pts[best], pts[best + 1]
-    P.left = P.rem[best + 1] + (1 - bt) * sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2)
-  else P.left = 0 end
-  return best, bd
-end
-
--- Where to steer along a line (P.pts, P.rem; a live line or the planner's path): not for the next corner - that
--- swings the arrow by the whole corner the moment you reach it, and by a lot whenever you stand a little beside the
--- line near a point - but for the spot on the line `look` yards from you, ahead of where you are on it (where the
--- line leaves a circle of that size round you). Coming up to a corner that spot slides round it, so the arrow turns
--- over those yards, as you would; where you stand beside the line hardly matters. Further off the line than the
--- look-ahead, the circle grows to reach it (Nav.AIM_REACH times as far as you are off), so the arrow leads back onto
--- the line at a slant, not square to it.
--- The look-ahead is the caller's (Arrow.lua: short in a city and indoors, longer in open country and on a mount).
--- It is not shortened where the straight run to the spot is blocked: that was tried (asking the walk map) and made
--- the spot jump at every corner - the swing this is here to take away. A short look-ahead cuts a corner by no more
--- than the old arrow did (it turned for the next point 7 yd before a corner).
--- Where you are = the nearest stretch from P.cursor on (it only moves forward).
--- -> the spot { x, y } (one table per line, reused), yards to walk (to the spot, then the rest of the line), how
---    far off the line you are, the line's height where you are (when it has heights)
--- far: in open country, reach on along a nearly straight stretch (Nav.STRAIGHT_TOL)
--- soft: the planner's own path in open country (no walk map, no walls): beside it, the arrow only leans toward it
--- (Nav.AIM_SOFT times as far ahead as you are off), it doesn't pull you back onto it
-function Nav.Aim(P, px, py, look, far, soft)
+local segDist = ns.Travel.SegDist -- (point to segment: distance, and where on it; Travel.lua loads first)
+-- Where you are on a line of 2 or more points (Nav.Advance and Nav.Aim both, so neither undoes the other): near where you
+-- were - a little behind, up to Nav.AIM_AHEAD_YD of line ahead - and the nearest by distance plus a small cost per yard
+-- of line skipped, so a line that loops back past you (a switchback) can't capture the arrow with a later stretch. Further than Nav.AIM_LOST_YD from all of that (a teleport, a long lag), the whole line
+-- ahead is searched. Sets P.cursor. -> the segment, how far off the line you are, where along the segment (0-1)
+local function locate(P, px, py)
   local pts, rem = P.pts, P.rem
   local n = #pts
-  local aim = P.aim; if not aim then aim = {}; P.aim = aim end
-  if n < 2 then
-    local a = pts[1]
-    aim[1], aim[2] = a[1], a[2]
-    local d = sqrt((a[1] - px) ^ 2 + (a[2] - py) ^ 2)
-    return aim, d, d, a[3] or P.z0
-  end
   local c0 = P.cursor or 1; if c0 < 1 then c0 = 1 end; if c0 > n - 1 then c0 = n - 1 end
-  -- where you are on the line: near where you were - a little behind, up to Nav.AIM_AHEAD_YD of line ahead - and the
-  -- nearest by distance plus a small cost per yard of line skipped. A line that loops back past you (Ironforge's ring,
-  -- a switchback) can't capture the arrow with a stretch you reach only later: it pointed "back to the path" across
-  -- the room while you walked along the dots (tester). Far from all of that (a teleport, a long lag), the whole line
-  -- ahead is searched as before.
   local best, bd, bt, bc = c0, huge, 0, huge
   local from = c0 - Nav.AIM_BACK; if from < 1 then from = 1 end
   -- (where you are along the stretch you were on: the line skipped to reach stretch j counts from there)
@@ -701,6 +645,41 @@ function Nav.Aim(P, px, py, look, far, soft)
     end
   end
   P.cursor = best
+  return best, bd, bt
+end
+-- Where you are along a line (locate). Sets P.cursor and P.left (yards still to walk); returns the segment and how far
+-- off the line you are.
+function Nav.Advance(P, px, py)
+  local pts = P.pts
+  if #pts < 2 then P.left = 0; return P.cursor, huge end
+  local best, bd, bt = locate(P, px, py)
+  local a, b = pts[best], pts[best + 1]
+  P.left = P.rem[best + 1] + (1 - bt) * sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2)
+  return best, bd
+end
+
+-- Where to steer along a line (P.pts, P.rem; a live line or the planner's path): not the next corner (the arrow
+-- would swing by the whole corner on reaching it) but the spot where the line leaves a circle of `look` yards round
+-- you, ahead of where you are on it (locate). Near a corner that spot slides round it, so the arrow turns smoothly.
+-- Further off the line than the look-ahead, the circle grows (Nav.AIM_REACH) so the arrow leads back at a slant.
+-- The look-ahead is the caller's (Arrow.lua). It is not shortened where the straight run is blocked: that makes the
+-- spot jump at every corner.
+-- -> the spot { x, y } (one table per line, reused), yards to walk (to the spot, then the rest of the line), how
+--    far off the line you are, the line's height where you are (when it has heights)
+-- far: in open country, reach on along a nearly straight stretch (Nav.STRAIGHT_TOL)
+-- soft: the planner's own path in open country (no walk map, no walls): beside it, the arrow only leans toward it
+-- (Nav.AIM_SOFT times as far ahead as you are off), it doesn't pull you back onto it
+function Nav.Aim(P, px, py, look, far, soft)
+  local pts, rem = P.pts, P.rem
+  local n = #pts
+  local aim = P.aim; if not aim then aim = {}; P.aim = aim end
+  if n < 2 then
+    local a = pts[1]
+    aim[1], aim[2] = a[1], a[2]
+    local d = sqrt((a[1] - px) ^ 2 + (a[2] - py) ^ 2)
+    return aim, d, d, a[3] or P.z0
+  end
+  local best, bd, bt = locate(P, px, py)
   local a, b = pts[best], pts[best + 1]
   local zHere = P.z0
   if a[3] and b[3] then zHere = a[3] + (b[3] - a[3]) * bt end
@@ -709,9 +688,7 @@ function Nav.Aim(P, px, py, look, far, soft)
   -- (a little off it: a long shallow merge, Nav.AIM_MERGE times as far ahead as you are off; wandered far off: back
   -- onto the stretch you left at a slant, Nav.AIM_REACH times - a long merge there would cut across to another leg)
   local reach = bd <= Nav.AIM_MERGE_YD and bd * Nav.AIM_MERGE or max(Nav.AIM_MERGE_YD * Nav.AIM_MERGE, bd * Nav.AIM_REACH)
-  -- (the planner's path in the open, and you clearly beside it: a lean, not a pull - 45 yd off it in the Tanaris desert
-  -- the arrow pointed 50 degrees sideways back to the line, the objective straight ahead: "it forces players on the
-  -- path too hard" - a player)
+  -- (the planner's path in the open, and you clearly beside it: a lean, not a pull back onto it)
   if soft and bd >= Nav.STRAIGHT_BESIDE then reach = max(reach, bd * Nav.AIM_SOFT) end
   if reach > R then R = reach end
   local j, t0, t = best, bt, nil
@@ -729,16 +706,13 @@ function Nav.Aim(P, px, py, look, far, soft)
   end
   local ax, ay = a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t
   -- far (open country): where the line runs on nearly straight, aim at the furthest spot you can walk to in a
-  -- straight line without leaving it by more than Nav.STRAIGHT_TOL - a long, slightly wavy stretch gives one steady
-  -- direction far ahead, not a spot 20 yd on that wobbles with every kink. Coming up to a bend it slides onto the
-  -- next stretch bit by bit (the furthest spot that still fits), so it doesn't jump to its far end
-  -- It fades out as you get off the line, blended toward the near spot, rather than switching off (switched, the
-  -- arrow swung 30 degrees at once); that also keeps a follower from cutting a bend by more than the near spot does
+  -- straight line without leaving it by more than Nav.STRAIGHT_TOL: one steady direction, not one that wobbles with
+  -- every kink. Near a bend it slides onto the next stretch bit by bit (the furthest spot that still fits).
+  -- Off the line it is blended toward the near spot rather than switched off (no sudden swing, no cut bends)
   local nj, nt = j, t
   if far and bd < Nav.STRAIGHT_OFF then
     local nx, ny = ax, ay
-    -- (the slack grows with how far off you are only once you are clearly beside the line, not while following it round
-    -- a bend: there it is as before, so the arrow turns as smoothly)
+    -- (the slack grows with how far off you are only once clearly beside the line, not while following it round a bend)
     local beside = bd >= Nav.STRAIGHT_BESIDE
     local tol, maxD2 = Nav.STRAIGHT_TOL + (beside and bd or 0), Nav.STRAIGHT_MAX * Nav.STRAIGHT_MAX
     -- every corner between you and (qx, qy) within tol of the straight run there
@@ -770,9 +744,8 @@ function Nav.Aim(P, px, py, look, far, soft)
         break
       end
     end
-    -- (on the line: the far spot; a little off it, blended toward the near one as before, so the arrow doesn't swing;
-    -- further off, the far spot again - the walk to it stays within your distance off the line, so it can't cut a bend
-    -- the line makes round something)
+    -- (on the line: the far spot; a little off it, blended toward the near one; further off, the far spot again - the
+    -- walk to it stays within your distance off the line, so it can't cut a bend)
     local B = Nav.STRAIGHT_BESIDE
     local w = (bd < Nav.STRAIGHT_TOL and (1 - bd / Nav.STRAIGHT_TOL)) or (bd < B and 0) or math.min(1, (bd - B) / B)
     ax, ay = nx + (ax - nx) * w, ny + (ay - ny) * w

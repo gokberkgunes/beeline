@@ -1,6 +1,6 @@
 -- "Also hand in" (fallback): a quest you finished that your route has no hand-in for AND that the engine could not
--- slot into the route as a stop (its NPC is on no stretch of the route). (you did it on the way, out of order, or the
--- plan had left it out). If its hand-in NPC is near you, the card shows one line for it - no replan needed.
+-- slot into the route as a stop (its NPC is on no stretch of the route). If its hand-in NPC is near you, the card
+-- shows one line for it - no replan needed.
 -- Hand-in spots come from the plan (BeelineEnders: every quest you could take, up to a few levels past the target).
 local _, ns = ...
 local Extras = {}
@@ -8,10 +8,19 @@ ns.Extras = Extras
 local HBD = LibStub("HereBeDragons-2.0")
 local NEAR = 250 -- yards
 
--- does the current route already hand this quest in?
+-- does the current route already hand this quest in? (its hand-ins by quest, made once per step list and again when its
+-- length changes: asked for each finished quest in your log on every card layout)
+local turnIns = setmetatable({}, { __mode = "k" })
 local function routeTurnsIn(q)
-  for _, s in ipairs(BeelineData and BeelineData.steps or {}) do if s.k == "turnin" and s.q == q then return true end end
-  return false
+  local steps = BeelineData and BeelineData.steps
+  if not steps then return false end
+  local ix = turnIns[steps]
+  if not ix or ix.n ~= #steps then
+    ix = { n = #steps, q = {} }
+    for _, s in ipairs(steps) do if s.k == "turnin" and s.q then ix.q[s.q] = true end end
+    turnIns[steps] = ix
+  end
+  return ix.q[q] or false
 end
 
 -- finished quests with no hand-in on the route whose NPC is within reach: { { q, name, npc, yards } } nearest first
@@ -49,7 +58,7 @@ end
 local last
 local function check()
   local l = Extras.Line()
-  if l ~= last then last = l; ns.Fire("FR_STEP", ns.Engine.Shown()) end
+  if l ~= last then last = l; ns.Card.Repaint() end
 end
-ns.On("FR_STATE", function() C_Timer.After(0.2, check) end)
+ns.On("FR_STATE", ns.Debounce(0.2, check)) -- (once for a burst of FR_STATE)
 ns.On("FR_LOADED", function() ns.NewTicker(3, ns.Guard("extras", check)) end)

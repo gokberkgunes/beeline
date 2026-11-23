@@ -24,8 +24,7 @@ local function same(a, b) return a and b and (a == b or a:find(b, 1, true) or b:
 function Offers.Zones(level)
   local plan = BeelinePlan
   if not plan then return {} end
-  -- (a built-in plan's ranking is its trunk's at 21, not yours: a level 1 was told "best zones now: Wetlands" - its zones
-  -- are in Where to?, from the plan's zone routes)
+  -- (a built-in plan's ranking is its trunk's, not yours - its zones are in Where to?, from the plan's zone routes)
   if ns.planKey and ns.planKey.starter then return {} end
   local list = (plan.ahead and plan.ahead[level]) or (level == plan.level and plan.zones) or {}
   local out = {}
@@ -60,6 +59,26 @@ end
 -- Near the end of your home base: once per base, "About 9k XP left here. Next bases: A, B, C" - when what is left
 -- there is under a quarter of your level (the player picks the next one; nothing switches)
 Offers.BASE_SHARE = 0.25
+-- the next bases it names (ns.ZoneChoices: every zone route looked at) are kept for the card's layouts, until a quest,
+-- the step, the route, the zone or the level changes
+local bases
+for _, e in ipairs({ "FR_STEP", "FR_STATE", "FR_ROUTE_CHANGED", "FR_NOPE", "FR_ZONETRIPS", "FR_DUNGEON", "QUEST_ACCEPTED", "QUEST_TURNED_IN",
+  "QUEST_REMOVED", "QUEST_LOG_UPDATE", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS" }) do
+  ns.On(e, function() bases = nil end, true) -- (first: before the card lays out on it)
+end
+local countsChanged = ns.ZoneCountsChanged
+if countsChanged then ns.ZoneCountsChanged = function(...) bases = nil; return countsChanged(...) end end
+local function nextBases(d, L)
+  if bases and bases.d == d and bases.L == L and bases.via == ns.ZoneChoices then return bases.names end
+  local names = {}
+  local zc = ns.ZoneChoices and ns.ZoneChoices()
+  local rows = {}
+  for _, r in ipairs((zc and zc.rows) or {}) do if (r.route or r.planned) and not r.here and r.route ~= d then rows[#rows + 1] = r end end
+  table.sort(rows, ns.Card.BaseOrder)
+  for k = 1, math.min(3, #rows) do names[#names + 1] = ns.Style.ShortZone(rows[k].zone) end
+  bases = { d = d, L = L, via = ns.ZoneChoices, names = names }
+  return names
+end
 function Offers.BaseNudge()
   local d = BeelineData
   if not (d and d.zoneRoute and d.id and ns.char) then return nil end
@@ -68,12 +87,7 @@ function Offers.BaseNudge()
   local need = ns.XP_TO_LEVEL and ns.XP_TO_LEVEL[L]
   local left = ns.ZoneXpLeft and ns.ZoneXpLeft(d, L)
   if not (left and need and need > 0 and left > 0 and left < Offers.BASE_SHARE * need) then return nil end
-  local names = {}
-  local zc = ns.ZoneChoices and ns.ZoneChoices()
-  local rows = {}
-  for _, r in ipairs((zc and zc.rows) or {}) do if (r.route or r.planned) and not r.here and r.route ~= d then rows[#rows + 1] = r end end
-  table.sort(rows, function(a, b) if (a.best and 1 or 0) ~= (b.best and 1 or 0) then return a.best and true or false end return (a.xpLeft or 0) > (b.xpLeft or 0) end)
-  for k = 1, math.min(3, #rows) do names[#names + 1] = ns.Style.ShortZone(rows[k].zone) end
+  local names = nextBases(d, L)
   local short = ns.Paths and ns.Paths.Short and ns.Paths.Short(left) or tostring(math.floor(left))
   return "About " .. short .. " XP left here." .. (#names > 0 and (" Next bases: " .. table.concat(names, ", ")) or ""), d.id
 end
@@ -95,17 +109,19 @@ function Offers.Current()
   return level, { text = text, better = better }
 end
 
-function Offers.Dismiss()
-  if Offers.kind then ns.char.baseNudged = ns.char.baseNudged or {}; ns.char.baseNudged[Offers.kind] = true
+-- base: the shown row's home-base nudge (false: the level-up line; nil: whatever Current last returned)
+function Offers.Dismiss(base)
+  if base == nil then base = Offers.kind end
+  if base then ns.char.baseNudged = ns.char.baseNudged or {}; ns.char.baseNudged[base] = true
   else ns.char.offerDismissed = UnitLevel("player") end
-  ns.Fire("FR_STEP", ns.Engine.Shown())
+  ns.Card.Repaint()
 end
 
 ns.On("PLAYER_LEVEL_UP", function(newLevel)
   C_Timer.After(1, function()
     ns.char.dingLevel = newLevel; ns.char.dingAt = time()
     local text = Offers.Summary(newLevel)
-    if text then ns.Print(text .. ". /bee paths to look - your route stays as it is.") end
+    if text then ns.Print(text .. ". /bee home to look - your route stays as it is.") end
     ns.Fire("FR_STEP", ns.Engine.Shown())
   end)
 end)

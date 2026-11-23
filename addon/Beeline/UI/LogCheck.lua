@@ -17,9 +17,9 @@ local f, recount
 local W, PAD, ROW, BTNS = 560, 14, 34, 176
 local rows = {}
 
-local function call(fn, ...) if type(fn) == "function" then local ok, a = pcall(fn, ...); if ok then return a end end end
+local call = ns.Util.Call
 -- (the engine's one gray rule, Engine.GrayDrop: gray and leading to nothing worth XP is off the route and "drop" here; gray
--- but leading on is kept in both. The log check said "drop" for quests the route kept - code review, and user's rule)
+-- but leading on is kept in both - the log check and the route must agree)
 -- -> "drop"; or "leads", the follow-up's name; or nil (not gray)
 local function grayRule(e, level)
   local E = ns.Engine
@@ -48,7 +48,7 @@ end
 
 -- where a quest comes up in a route: the first step for it, and the planned level there
 -- a step list's steps by quest, made once per list (and again when stops are added): the check runs on every log change,
--- and walking the whole plan for each quest in your log, twice, was 10 ms at level 50 (the perf battery)
+-- too often to walk the whole plan for each quest
 local qIndex = setmetatable({}, { __mode = "k" })
 local NONE = {}
 local function stepsOf(steps, id)
@@ -133,9 +133,8 @@ function LogCheck.Classify()
     elseif done then
       verdict, why = "turnin", "Finished but not on your route - hand it in if you pass by"
     else
-      -- (not "drop": it was "Not on any of your routes - you won't be sent there", untrue for a quest another zone's
-      -- route has, and a tester abandoned four of those - persona review). Another zone's route has it: picking that
-      -- zone as home base brings it along; a side quest: its stops are fitted in; else it's simply yours
+      -- (not "drop": another zone's route has it: picking that zone as home base brings it along; a side quest: its
+      -- stops are fitted in; else it's simply yours)
       local zr = LogCheck.ZoneFor(e.id)
       if zr then
         verdict, why = "yours", "In " .. Style.ShortZone(zr.zoneName) .. ": pick it as home base and this joins your route"
@@ -154,8 +153,7 @@ function LogCheck.Classify()
   return list
 end
 
--- Quest items you still carry that nothing needs: "for the quests you won't do, figure out which ones have items you
--- no longer need, and prompt people what they should delete". ns.QUEST_ITEMS (QuestData.lua) names every quest that
+-- Quest items you still carry that nothing needs. ns.QUEST_ITEMS (QuestData.lua) names every quest that
 -- uses a quest item - as an objective, handed to you by the giver, needed along the way, or the item that starts it.
 -- An item is left over only when EVERY quest of yours that uses it is out of the picture:
 --   handed in; or you said you won't do it; or it was in your log once, is gone from it, and your routes don't send
@@ -172,8 +170,7 @@ function LogCheck.Leftovers(bags)
   if type(bags) ~= "table" then return {} end
   local State, Engine = ns.State, ns.Engine
   local nope, had = (ns.char and ns.char.nope) or {}, (ns.char and ns.char.hadQuest) or {}
-  local f = UnitFactionGroup and call(UnitFactionGroup, "player")
-  local side = f == "Horde" and "H" or f == "Alliance" and "A" or nil
+  local side = State.MyFaction()
   local class = UnitClass and select(2, UnitClass("player"))
   local function mine(q)
     local who = ns.QUEST_FOR and ns.QUEST_FOR[q]
@@ -271,10 +268,12 @@ recount = function()
   local ok, list = pcall(LogCheck.Classify)
   if t0 and ns.Time then ns.Time("logcheck", debugprofilestop() - t0) end
   local n = 0; if ok then for _, x in ipairs(list) do if x.verdict == "drop" or x.verdict == "offroute" then n = n + 1 end end end
-  if n ~= LogCheck.dropCount then LogCheck.dropCount = n; ns.Fire("FR_STEP", ns.Engine.Shown()) end
+  if n ~= LogCheck.dropCount then LogCheck.dropCount = n; ns.Card.Repaint() end
 end
-ns.On("FR_STATE", function() C_Timer.After(0.3, recount) end)
-ns.On("FR_ROUTE_CHANGED", function() C_Timer.After(0.3, recount) end)
+-- (once for a burst: a kill or a loot sends several FR_STATE)
+local recountSoon = ns.Debounce(0.3, function() recount() end)
+ns.On("FR_STATE", recountSoon)
+ns.On("FR_ROUTE_CHANGED", recountSoon)
 ns.On("PLAYER_LEVEL_UP", function() C_Timer.After(1, recount) end)
 
 -- drop several: one confirm listing them, then one at a time (the game abandons the selected quest)
@@ -336,21 +335,8 @@ local function build()
     local dlg = StaticPopup_Show("BEELINE_DROPALL", #drop, names); if dlg then dlg.data = drop end
   end, "Abandon the gray quests and the ones you refused (asks first, listing them)")
   f.all:SetPoint("TOPRIGHT", -PAD, -34)
-  -- the list scrolls (a full log plus the won't-do list ran off the screen): at most MAXH tall, mouse wheel, a thumb
-  f.scroll = CreateFrame("ScrollFrame", nil, f); f.scroll:EnableMouseWheel(true)
-  f.content = CreateFrame("Frame", nil, f.scroll); f.content:SetSize(W, 10); f.scroll:SetScrollChild(f.content)
-  f.track = f:CreateTexture(nil, "ARTWORK"); f.track:SetTexture(Style.WHITE); f.track:SetVertexColor(1, 1, 1, 0.05); f.track:SetWidth(4)
-  f.thumb = f:CreateTexture(nil, "OVERLAY"); f.thumb:SetTexture(Style.WHITE); f.thumb:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.6); f.thumb:SetWidth(4)
-  local function setScroll(v)
-    local max = math.max(0, f.content:GetHeight() - f.scroll:GetHeight())
-    v = math.max(0, math.min(max, v)); f.scroll:SetVerticalScroll(v)
-    local th = f.track:GetHeight() or 0
-    f.thumb:SetShown(max > 0); f.track:SetShown(max > 0)
-    if max > 0 and th > 0 then local h = math.max(20, th * f.scroll:GetHeight() / f.content:GetHeight()); f.thumb:SetHeight(h); f.thumb:ClearAllPoints(); f.thumb:SetPoint("TOPRIGHT", f.track, "TOPRIGHT", 0, -(th - h) * v / max) end
-  end
-  f.setScroll = setScroll
-  f.scroll:SetScript("OnMouseWheel", function(self, d) setScroll(self:GetVerticalScroll() - d * 60) end)
-  f.grip = Style.ScrollGrip(f, f.track, f.thumb, function(fr) setScroll(fr * math.max(0, f.content:GetHeight() - f.scroll:GetHeight())) end)
+  -- the list scrolls: at most MAXH tall, mouse wheel, a thumb
+  Style.ScrollList(f, W, 60)
   f:Hide()
 end
 
@@ -397,7 +383,7 @@ function LogCheck.Draw()
     r.edge:SetVertexColor(0.55, 0.58, 0.66, 0.9)
     r.title:SetText(n.name)
     r.why:SetText("|cff8c94a8" .. (n.ready and "Finished when you dropped it: its hand-in is off your route" or "Off your route and future plans") .. "|r")
-    r.btn:Hide(); r.keep:Hide(); r.go:Hide() -- (a reused row: its Go from a quest row sat under Bring back)
+    r.btn:Hide(); r.keep:Hide(); r.go:Hide() -- (a reused row: no Go left over from a quest row)
     r.back:Show(); r.back:ClearAllPoints(); r.back:SetPoint("RIGHT", r, "RIGHT", -4, 0)
     local h = math.max(ROW, r.title:GetStringHeight() + r.why:GetStringHeight() + 9); r:SetHeight(h)
     r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y); r:Show()
@@ -438,6 +424,7 @@ function LogCheck.Draw()
 end
 
 function LogCheck.Toggle()
+  if not f then return end -- (a key pressed while loading)
   if f:IsShown() then f:Hide(); return end
   f:Show(); LogCheck.Draw()
 end
