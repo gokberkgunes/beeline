@@ -55,6 +55,7 @@ Nav.lua
 Drops.lua
 FunCandidates.lua
 QuestData.lua
+Patrol.lua
 Chains.lua
 Stitch.lua
 Learn.lua
@@ -62,7 +63,8 @@ Availability.lua
 ItemQuests.lua
 Next.lua
 UI\Style.lua
-UI\Window.lua
+UI\Skins\Beeline.lua
+UI\Skins\Blizzard.lua
 UI\Explain.lua
 UI\Card\Text.lua
 UI\Card\Secure.lua

@@ -59,12 +59,12 @@ local function build()
   f:SetSize(420, ROW * VISIBLE + 84)
   f:SetPoint("CENTER")
   Style.Window(f, "BeelineList")
-  f.title = Style.Text(f, 13, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", 12, -10)
+  f.title = Style.WindowTitle(f, 13, 12, -10)
   f.sub = Style.Text(f, 10, C.sub); f.sub:SetPoint("TOPLEFT", 80, -12); f.sub:Hide()
   local close = Style.CloseButton(f)
   -- which path you're following: name + badges, the zones in order, level/hours, and a button to change it
   f.paths = CreateFrame("Frame", nil, f); f.paths:SetPoint("TOPLEFT", 10, -32); f.paths:SetPoint("TOPRIGHT", -10, -32); f.paths:SetHeight(60)
-  f.paths.bg = Style.Nine(f.paths, "panel", "BACKGROUND", 0, 10, 0, 1, 0.82, 0.36, 0.06)
+  f.paths.bg = Style.RowBg(f.paths, 10, 0.06, C.gold)
   f.pathLabel = Style.Text(f.paths, 9, C.dim, "OUTLINE"); f.pathLabel:SetPoint("TOPLEFT", 10, -8); f.pathLabel:SetText("FOLLOWING")
   f.pathName = Style.Text(f.paths, 12, C.text, "OUTLINE"); f.pathName:SetPoint("LEFT", f.pathLabel, "RIGHT", 6, 0); f.pathName:SetWordWrap(false)
   f.pathFast = Style.Pill(f.paths, "MOST ENJOYABLE", C.good)
@@ -96,10 +96,10 @@ local function build()
   for k = 1, VISIBLE do
     local r = CreateFrame("Button", nil, f); r:SetHeight(ROW)
     r:SetPoint("RIGHT", -14, 0)
-    r.hl = r:CreateTexture(nil, "BACKGROUND"); r.hl:SetTexture(Style.WHITE); r.hl:SetAllPoints()
+    r.hl = Style.Fill(r, "BACKGROUND"); r.hl:SetAllPoints()
     r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(12, 12); r.icon:SetPoint("LEFT", 14, 0)
     r.text = Style.Text(r, 11, C.text); r.text:SetPoint("LEFT", r.icon, "RIGHT", 7, 0); r.text:SetPoint("RIGHT"); r.text:SetWordWrap(false); r.text:SetJustifyV("MIDDLE")
-    local hover = r:CreateTexture(nil, "HIGHLIGHT"); hover:SetTexture(Style.WHITE); hover:SetAllPoints(); hover:SetVertexColor(1, 1, 1, 0.05)
+    Style.Highlight(r, 0.05)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     r:SetScript("OnClick", function(self, btn) ns.Engine.Look(self.index, btn) end)
     r:SetScript("OnEnter", function(self)
@@ -114,9 +114,8 @@ local function build()
     rows[k] = r
   end
   -- scrollbar: the wheel, or drag / click it (Style.ScrollGrip)
-  f.track = f:CreateTexture(nil, "ARTWORK"); f.track:SetTexture(Style.WHITE); f.track:SetVertexColor(1, 1, 1, 0.04); f.track:SetWidth(3)
+  f.track, f.thumb = Style.ScrollTrack(f, 3, 0.04)
   f.track:SetPoint("BOTTOMRIGHT", -6, 14)
-  f.thumb = f:CreateTexture(nil, "OVERLAY"); f.thumb:SetTexture(Style.WHITE); f.thumb:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.6); f.thumb:SetWidth(3)
   f.offset = 0
   f:EnableMouseWheel(true)
   f:SetScript("OnMouseWheel", function(_, d) List.Scroll(-d * 3) end)
@@ -220,15 +219,14 @@ function List.DrawRows(data)
     elseif e.header then
       r:Show(); r.icon:Hide(); r.text:ClearAllPoints(); r.text:SetPoint("LEFT", 2, 0); r.text:SetPoint("RIGHT")
       r.text:SetFontObject(Style.Font(11, "OUTLINE")); r.text:SetJustifyH("LEFT"); r.text:SetText(e.header); r.text:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-      r.hl:SetVertexColor(1, 1, 1, 0.03)
+      Style.Paint(r.hl, C.white, 0.03)
     else
       local s = data.steps[e.index]; local kind = Style.Kind(s)
       r:Show(); r.index = e.index; r.icon:Show()
       r.text:ClearAllPoints(); r.text:SetPoint("LEFT", r.icon, "RIGHT", 7, 0); r.text:SetPoint("RIGHT")
       r.text:SetFontObject(Style.Font(11)); r.text:SetJustifyH("LEFT")
       local isDone = ns.Engine.IsDone(e.index)
-      r.icon:SetTexture(Style.MEDIA .. (isDone and "icon-check" or kind.icon))
-      if isDone then r.icon:SetVertexColor(C.good[1], C.good[2], C.good[3], 0.6) else r.icon:SetVertexColor(kind.color[1], kind.color[2], kind.color[3]) end
+      Style.ListMark(r.icon, kind, isDone)
       local title = ns.Card.Describe(s)
       local ch = ns.ChoiceFor and ns.ChoiceFor(e.index)
       if ch and not isDone then
@@ -237,8 +235,8 @@ function List.DrawRows(data)
         title = title .. "  |cffffd25a(choose: " .. table.concat(names, " / ") .. ")|r"
       end
       if isDone then r.text:SetText(ns.Card.Plain(title)); r.text:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      else r.text:SetText(title); r.text:SetTextColor(1, 1, 1) end
-      if e.index == cur then r.hl:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.16) else r.hl:SetVertexColor(0, 0, 0, 0) end
+      else r.text:SetText(title); r.text:SetTextColor(C.white[1], C.white[2], C.white[3]) end
+      if e.index == cur then Style.Paint(r.hl, C.gold, 0.16) else Style.Paint(r.hl, C.black, 0) end
     end
   end
   local n = math.max(1, #entries)

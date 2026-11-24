@@ -120,9 +120,9 @@ local glow
 local function highlight(index)
   local btn = QuestInfo_GetRewardButton and QuestInfoFrame and QuestInfoFrame.rewardsFrame and QuestInfo_GetRewardButton(QuestInfoFrame.rewardsFrame, index)
   if not btn then return end
-  glow = glow or btn:CreateTexture(nil, "OVERLAY")
+  glow = glow or ns.Style.Fill(btn, "OVERLAY")
   glow:SetParent(btn); glow:ClearAllPoints(); glow:SetAllPoints(btn)
-  glow:SetTexture(ns.Style.WHITE); glow:SetVertexColor(0.36, 0.86, 0.48, 0.25); glow:Show()
+  ns.Style.Paint(glow, ns.Style.C.good, 0.25); glow:Show()
 end
 
 -- the reward window is open (by the events, not QuestFrame: another quest UI may show it instead)

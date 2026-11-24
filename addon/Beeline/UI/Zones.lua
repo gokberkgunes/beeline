@@ -41,7 +41,7 @@ local function build()
     r:SetPoint("TOPLEFT", 8, -30 - (n - 1) * 31); r:SetPoint("RIGHT", f, "RIGHT", -8, 0)
     r.zone = Style.Text(r, 11, C.text); r.zone:SetPoint("TOPLEFT", 4, -2); r.zone:SetPoint("RIGHT", -4, 0); r.zone:SetWordWrap(false)
     r.what = Style.Text(r, 10, C.sub); r.what:SetPoint("TOPLEFT", r.zone, "BOTTOMLEFT", 0, -2); r.what:SetPoint("RIGHT", -4, 0); r.what:SetWordWrap(false)
-    local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetAllPoints(); hl:SetVertexColor(1, 1, 1, 0.05)
+    Style.Highlight(r, 0.05)
     r:SetScript("OnEnter", function(self)
       if not self.z then return end
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(self.z.zone, 1, 1, 1)
@@ -53,7 +53,7 @@ local function build()
     f.rows[n] = r
   end
   tab = CreateFrame("Button", nil, c); tab:SetSize(14, 40)
-  Style.Nine(tab, "panel", "BACKGROUND", 0, 6, 0, 0.1, 0.11, 0.14, 0.95)
+  Style.RowBg(tab, 6, 0.95, C.tab)
   tab.label = Style.Text(tab, 11, C.gold); tab.label:SetPoint("CENTER")
   tab:SetScript("OnClick", function() ns.db.zonesPanel = not ns.db.zonesPanel; Zones.Update() end)
   tab:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Zones ahead", 1, 1, 1); GameTooltip:AddLine("Where the route goes next and how many quests in each", 0.6, 0.65, 0.72, true); GameTooltip:Show() end)

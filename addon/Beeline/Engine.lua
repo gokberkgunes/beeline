@@ -1898,6 +1898,12 @@ ns.Jobs.ended = function(job) if job.kind == "route" then Engine.CheckIdle() end
 -- not held - the switch's refresh shows the new route's step
 ns.On("FR_ROUTE_CHANGED", function()
   Engine.routeGen = Engine.routeGen + 1
+  -- the step numbers of the route before: one the new route doesn't have is gone now, not after the refresh that
+  -- follows (Routes.lua fires this first): the windows and the map listen too, and step 1754 of the plan read on a
+  -- 20-step dungeon route was no step (a player's report: Style.lua "attempt to index local 'step'")
+  local list = steps()
+  if Engine.current and not list[Engine.current] then Engine.current = nil end
+  if Engine.view and not list[Engine.view] then Engine.view = nil end
   if lock then
     cancelling = true
     ns.Jobs.Cancel("route")

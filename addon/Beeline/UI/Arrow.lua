@@ -5,7 +5,7 @@
 -- yards before it instead of swinging round on the corner itself.
 local _, ns = ...
 local Style = ns.Style
-local C = Style.C
+local C = Style.Bee.C -- (the arrow keeps Beeline's look in every skin)
 local HBD = LibStub("HereBeDragons-2.0")
 local Arrow = {}
 ns.Arrow = Arrow
@@ -118,8 +118,8 @@ local function build()
   f.pulse = pulse
   f.check = f:CreateTexture(nil, "OVERLAY"); f.check:SetTexture(Style.MEDIA .. "icon-check"); f.check:SetSize(34, 34); f.check:SetPoint("CENTER", 0, 10)
   f.check:SetVertexColor(C.good[1], C.good[2], C.good[3]); f.check:Hide()
-  f.dist = Style.Text(f, 15, C.text, "OUTLINE"); f.dist:SetPoint("TOP", f.arrow, "BOTTOM", 0, -4); f.dist:SetJustifyH("CENTER")
-  f.label = Style.Text(f, 10, C.sub, "OUTLINE"); f.label:SetPoint("TOP", f.dist, "BOTTOM", 0, -2); f.label:SetJustifyH("CENTER"); f.label:SetWidth(220); f.label:SetWordWrap(false)
+  f.dist = Style.Bee.Text(f, 15, C.text, "OUTLINE"); f.dist:SetPoint("TOP", f.arrow, "BOTTOM", 0, -4); f.dist:SetJustifyH("CENTER")
+  f.label = Style.Bee.Text(f, 10, C.sub, "OUTLINE"); f.label:SetPoint("TOP", f.dist, "BOTTOM", 0, -2); f.label:SetJustifyH("CENTER"); f.label:SetWidth(220); f.label:SetWordWrap(false)
   Style.Scaled(f, "arrowScale") -- the Beeline scale x the arrow's own
   Arrow.ApplyPos()
   f:Hide()
@@ -422,15 +422,23 @@ function Arrow.SetTarget(i, force)
       leg = how
     end
   end
+  -- a quest giver or hand-in who walks a route (Patrol.lua): the nearest point of the route, not where it spawns (the
+  -- world map draws the whole route: Pins)
+  local patrol = s and m and x and not leg and m == s.m and ns.Patrol and ns.Patrol.For(s)
+  if patrol then
+    local px, py, pinst = HBD:GetPlayerWorldPosition()
+    if px and pinst == patrol.inst then x, y = ns.Patrol.Nearest(patrol, px, py) end
+    label = s.npc .. " walks a route (on your map)"
+  end
   if s and m and x then
     local wx, wy, winst = HBD:GetWorldCoordinatesFromZone(x, y, m)
     -- a waypoint gets its own small radius: the step's (25 yd for a dungeon, up to 60 for a kill area) belongs to the step
-    target = { index = i, step = step, m = m, x = x, y = y, r = leg and 8 or s.r, leg = leg, zone = s.zone, wx = wx, wy = wy, winst = winst, label = label or ns.Card.Plain((ns.Card.Describe(s))) }
+    target = { index = i, step = step, m = m, x = x, y = y, r = leg and 8 or patrol and math.max(s.r or 12, 20) or s.r, leg = leg, patrol = patrol or nil, zone = s.zone, wx = wx, wy = wy, winst = winst, label = label or ns.Card.Plain((ns.Card.Describe(s))) }
     target.path = (not label) and buildPath(s, m, wx, wy) or nil
     if leg == "ride" and endM and endX then local a, b, c = HBD:GetWorldCoordinatesFromZone(endX, endY, endM); if a then target.endW = { a, b, c } end end
     -- the live line (Nav.lua) is for exactly this target: the step itself (with its planned floor height) or a waypoint
     target.key = wx and (i .. ":" .. math.floor(wx) .. ":" .. math.floor(wy)) or nil
-    target.z = (not leg) and (m == s.m) and s.z or nil
+    target.z = (not leg) and (m == s.m) and not patrol and s.z or nil
     if target.path then
       local list = BeelineData.steps
       for j = i - 1, math.max(1, i - 12), -1 do

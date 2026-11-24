@@ -15,7 +15,6 @@ local C = Style.C
 local Options = {}
 ns.Options = Options
 
-local MEDIA = Style.MEDIA
 local W, H = 540, 500          -- the window: Where to?'s width, room for the links at the bottom
 local RAIL, PAD = 64, 14       -- the tab rail, the page margin
 local TOP = 44                 -- where a page starts
@@ -38,6 +37,46 @@ Options.PRESETS = {
   { name = "Compact", v = { showNext = 1, cardNotes = false, cardZones = true, cardOffers = true, cardItemQuests = true, remindBags = true, remindFood = true, remindGrimoire = true } },
   { name = "Minimal", v = { showNext = 0, cardNotes = false, cardZones = false, cardOffers = false, cardItemQuests = false, remindBags = false, remindFood = false, remindGrimoire = false } },
 }
+-- the skins (UI/Skins): saved as ns.db.skin, read once at login (Core.lua). A change asks to reload; until then the
+-- look stays as it is
+Options.SKINS = { "beeline", "blizzard" }
+Options.SKIN_LABEL = { beeline = "Beeline", blizzard = "Blizzard" }
+function Options.SkinLabel(name) return Options.SKIN_LABEL[name or Style.SKIN_DEFAULT] or tostring(name) end
+StaticPopupDialogs.BEELINE_SKIN_RELOAD = {
+  text = "Reload now to apply the new skin?", button1 = RELOADUI or "Reload", button2 = CANCEL or "Not now",
+  OnAccept = function() ReloadUI() end, timeout = 0, whileDead = true, hideOnEscape = true,
+}
+-- saves the skin; one other than the look on screen asks to reload. false: no such skin
+function Options.SetSkin(name)
+  if not Options.SKIN_LABEL[name] then return false end
+  ns.db.skin = name
+  for _, l in ipairs(Options.skinLabels) do l() end
+  if name ~= Style.skinName then StaticPopup_Show("BEELINE_SKIN_RELOAD")
+  elseif StaticPopup_Hide then StaticPopup_Hide("BEELINE_SKIN_RELOAD") end
+  return true
+end
+-- the Skin button: cycles the skins (a change asks to reload); on the General tab and on the game's Settings > AddOns page
+Options.skinLabels = {}
+function Options.SkinButton(parent)
+  local sk = Style.Button(parent, "", 150, 22, function()
+    local names = Options.SKINS
+    local now = ns.db.skin or Style.SKIN_DEFAULT
+    local nxt = names[1]
+    for k, n in ipairs(names) do if n == now then nxt = names[k % #names + 1] end end
+    Options.SetSkin(nxt)
+  end, "Beeline's own look, or the game's (Blizzard). A change reloads the UI.")
+  local function label() sk.label:SetText("Skin: " .. Options.SkinLabel(ns.db.skin)) end
+  sk:HookScript("OnShow", label); table.insert(Options.skinLabels, label)
+  return sk
+end
+-- /bee skin (shows it), /bee skin beeline, /bee skin blizzard
+function ns.SlashSkin(arg)
+  arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if arg ~= "" and Options.SetSkin(arg) then return end
+  local saved = ns.db.skin or Style.SKIN_DEFAULT
+  ns.Print("skin: " .. Options.SkinLabel(Style.skinName) .. (saved ~= Style.skinName and (" (" .. Options.SkinLabel(saved) .. " after a reload)") or "")
+    .. "  -  /bee skin beeline  -  /bee skin blizzard")
+end
 -- the preset your settings match, or nil (custom)
 function Options.PresetNow()
   for _, p in ipairs(Options.PRESETS) do
@@ -67,8 +106,8 @@ end
 local function header(page, text)
   page.y = page.y + (page.y > 0 and 10 or 0)
   local t = Style.Text(page, 11, C.gold, "OUTLINE"); t:SetPoint("TOPLEFT", 0, -page.y); t:SetText(text:upper())
-  local line = page:CreateTexture(nil, "ARTWORK"); line:SetTexture(Style.WHITE); line:SetHeight(1)
-  line:SetPoint("LEFT", t, "RIGHT", 8, 0); line:SetPoint("RIGHT", page, "RIGHT", 0, 0); line:SetVertexColor(C.dim[1], C.dim[2], C.dim[3], 0.4)
+  local line = Style.Divider(page, 0.4, C.dim); line:SetHeight(1)
+  line:SetPoint("LEFT", t, "RIGHT", 8, 0); line:SetPoint("RIGHT", page, "RIGHT", 0, 0)
   page.y = page.y + 22
 end
 
@@ -81,22 +120,16 @@ end
 -- a whole-row toggle: our own box, the row lights on hover (a bigger target than a checkbox)
 local function toggle(page, label, key, tipText)
   local b = CreateFrame("Button", nil, page); b:SetSize(PAGE_W, 24); b:SetPoint("TOPLEFT", 0, -page.y)
-  b.wash = b:CreateTexture(nil, "BACKGROUND"); b.wash:SetTexture(Style.WHITE); b.wash:SetAllPoints(); b.wash:SetVertexColor(1, 1, 1, 0.06); b.wash:Hide()
-  b.box = b:CreateTexture(nil, "ARTWORK"); b.box:SetTexture(MEDIA .. "ring"); b.box:SetSize(16, 16); b.box:SetPoint("LEFT", 4, 0)
-  b.tick = b:CreateTexture(nil, "OVERLAY"); b.tick:SetTexture(MEDIA .. "icon-check"); b.tick:SetSize(14, 14); b.tick:SetPoint("CENTER", b.box, "CENTER", 0, 0)
-  b.tick:SetVertexColor(C.good[1], C.good[2], C.good[3])
+  Style.Check(b) -- b.box, its hover look
   b.text = Style.Text(b, 12, C.text); b.text:SetPoint("LEFT", b.box, "RIGHT", 8, 0); b.text:SetText(label)
   local function sync()
     local on = ns.db[key] and true or false
-    b.tick:SetShown(on)
     local c = on and C.text or C.sub
-    b.text:SetTextColor(c[1], c[2], c[3]); b.box:SetVertexColor(on and C.good[1] or C.dim[1], on and C.good[2] or C.dim[2], on and C.good[3] or C.dim[3])
+    b.text:SetTextColor(c[1], c[2], c[3]); Style.PaintCheck(b, on)
   end
   b.sync = sync
   b:SetScript("OnShow", sync)
   b:SetScript("OnClick", function() ns.db[key] = not ns.db[key]; sync(); ns.Fire("FR_SETTINGS", key) end)
-  b:SetScript("OnEnter", function(self) self.wash:Show() end)
-  b:SetScript("OnLeave", function(self) self.wash:Hide() end)
   tip(b, tipText)
   remember(page, key, ns.DEFAULTS[key])
   index(page, b, label, tipText)
@@ -173,6 +206,9 @@ function BUILD.card(p)
   local pre = Style.Button(p, "", 150, 22, nil, "Full, Compact or Minimal. Changing a toggle below makes it Custom.")
   pre:SetPoint("TOPLEFT", 0, -p.y); p.y = p.y + 28
   index(p, pre, "Look: Full, Compact, Minimal", "card preset minimal compact simple clean")
+  -- the skin, beside it: Beeline's look or the game's
+  local sk = Options.SkinButton(p); sk:SetPoint("LEFT", pre, "RIGHT", 8, 0)
+  index(p, sk, "Skin: Beeline, Blizzard", "skin look theme style blizzard beeline stock game")
   local function preLabel() pre.label:SetText("Look: " .. (Options.PresetNow() or "Custom")) end
   pre:SetScript("OnClick", function()
     local now, names = Options.PresetNow(), {}
@@ -283,8 +319,7 @@ function BUILD.news(p)
   end
   local function mark(r, on)
     if on and not r.pill then
-      r.edge = r:CreateTexture(nil, "ARTWORK"); r.edge:SetTexture(Style.WHITE); r.edge:SetWidth(3); r.edge:SetPoint("TOPLEFT", 0, -3); r.edge:SetPoint("BOTTOMLEFT", 0, 3)
-      r.edge:SetVertexColor(C.gold[1], C.gold[2], C.gold[3])
+      r.edge = Style.RowEdge(r, 3, 0, 3); Style.Paint(r.edge, C.gold)
       r.pill = Style.Pill(r, "NEW", C.gold); r.pill:SetPoint("LEFT", r.head, "RIGHT", 8, 0)
     end
     if r.pill then r.pill:SetShown(on); r.edge:SetShown(on) end
@@ -378,7 +413,6 @@ end
 
 -- ---------------------------------------------------------------- the window
 
-local paintTab = Style.PaintTab
 
 -- the gold dot on News while an update is unread
 function Options.Dot()
@@ -424,7 +458,7 @@ function Options.Go(e)
   Options.Show(e.tab)
   local fl = e.frame.flash
   if not fl then
-    fl = e.frame:CreateTexture(nil, "BACKGROUND"); fl:SetTexture(Style.WHITE); fl:SetAllPoints(); fl:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.18)
+    fl = Style.Fill(e.frame, "BACKGROUND"); fl:SetAllPoints(); Style.Paint(fl, C.gold, 0.18)
     e.frame.flash = fl
   end
   fl:Show(); C_Timer.After(1.2, function() fl:Hide() end)
@@ -445,11 +479,11 @@ local function showResults(text)
     local e, r = found[k], results.rows[k]
     if e and not r and k <= 14 then
       r = CreateFrame("Button", nil, results); r:SetSize(PAGE_W, 26); r:SetPoint("TOPLEFT", 0, -(k - 1) * 28)
-      r.wash = r:CreateTexture(nil, "BACKGROUND"); r.wash:SetTexture(Style.WHITE); r.wash:SetAllPoints(); r.wash:SetVertexColor(1, 1, 1, 0.04)
+      r.wash = Style.Fill(r, "BACKGROUND"); r.wash:SetAllPoints(); Style.Paint(r.wash, C.white, 0.04)
       r.name = Style.Text(r, 12, C.text); r.name:SetPoint("LEFT", 10, 0)
       r.tab = Style.Text(r, 10, C.sub); r.tab:SetPoint("RIGHT", -10, 0)
-      r:SetScript("OnEnter", function(self) self.wash:SetVertexColor(1, 1, 1, 0.1) end)
-      r:SetScript("OnLeave", function(self) self.wash:SetVertexColor(1, 1, 1, 0.04) end)
+      r:SetScript("OnEnter", function(self) Style.Paint(self.wash, C.white, 0.1) end)
+      r:SetScript("OnLeave", function(self) Style.Paint(self.wash, C.white, 0.04) end)
       r:SetScript("OnClick", function(self) if self.e then Options.Go(self.e) end end)
       results.rows[k] = r
     end
@@ -471,7 +505,7 @@ function Options.Show(key)
   Options.tab = key
   for _, t in ipairs(TABS) do
     local on = t.key == key
-    host.tabs[t.key].on = on; paintTab(host.tabs[t.key])
+    host.tabs[t.key].on = on; Style.PaintTab(host.tabs[t.key])
     if panel.pages[t.key] then panel.pages[t.key]:SetShown(on) end
     if on then host.title:SetText(t.title) end
   end
@@ -491,16 +525,16 @@ local function build()
   local close = Style.CloseButton(host); close:SetFrameLevel(host:GetFrameLevel() + 10)
   -- the rail
   host.rail = CreateFrame("Frame", nil, host); host.rail:SetPoint("TOPLEFT", 4, -4); host.rail:SetPoint("BOTTOMLEFT", 4, 4); host.rail:SetWidth(RAIL - 6)
-  local railBg = host.rail:CreateTexture(nil, "BACKGROUND"); railBg:SetTexture(Style.WHITE); railBg:SetAllPoints(); railBg:SetVertexColor(0, 0, 0, 0.25)
+  Style.RailBg(host.rail, 0.25)
   host.tabs = {}
   for k, t in ipairs(TABS) do
     local b = Style.RailTab(host.rail, t, 8 + (k - 1) * 52, function() Options.Show(t.key) end, RAIL - 6)
-    b.dot = b:CreateTexture(nil, "OVERLAY"); b.dot:SetTexture(MEDIA .. "dot"); b.dot:SetSize(8, 8); b.dot:SetPoint("TOPRIGHT", -8, -6)
-    b.dot:SetVertexColor(C.gold[1], C.gold[2], C.gold[3]); b.dot:Hide()
+    b.dot = Style.Dot(b, 8); b.dot:SetPoint("TOPRIGHT", -8, -6)
+    Style.Paint(b.dot, C.gold); b.dot:Hide()
     host.tabs[t.key] = b
   end
   -- the title, and the links at its right: show the demo card, reset this tab
-  host.title = Style.Text(host, 16, C.gold, "OUTLINE"); host.title:SetPoint("TOPLEFT", RAIL + PAD, -14)
+  host.title = Style.WindowTitle(host, 16, RAIL + PAD, -14)
   host.reset = Style.Button(host, "Reset tab", 70, 18, function()
     local pg = panel.pages[Options.tab]; if not (pg and pg.keys) then return end
     for _, k in ipairs(pg.keys) do ns.db[k.key] = k.default end
@@ -543,6 +577,7 @@ local function build()
     Options.Open()
   end)
   open:SetPoint("TOPLEFT", lt, "BOTTOMLEFT", 0, -12)
+  local lsk = Options.SkinButton(link); lsk:SetPoint("TOPLEFT", open, "BOTTOMLEFT", 0, -8); link.skin = lsk
   if Settings and Settings.RegisterCanvasLayoutCategory then
     local cat = Settings.RegisterCanvasLayoutCategory(link, "Beeline")
     Settings.RegisterAddOnCategory(cat)

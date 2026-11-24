@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.0 - 2026-11-24
+- Quest givers who walk around: the card says when the NPC you need walks a route ("walks a route, see the map"), the arrow points at the nearest point of that route instead of the spot they started from, and the world map draws their route. 69 quest NPCs do this, among them the Centaur Pariah in Desolace, the Gizelton caravan, Crier Goodman and Curator Thorius.
+- Dungeon trips carry every quest for the dungeon: the whole chain of quests that leads up to each one, also chains that start at an object (Maraudon now has Rot and Regret, from the Strange Pylons onward), and a new last part, "4. Follow-ups", with the quests that carry on after the hand-ins (Passing the Blame). Uldaman, Razorfen Downs, Blackrock Depths, Zul'Farrak, Blackrock Spire, Scholomance and Stratholme gain quests too.
+- Ironforge and Undercity: the map line no longer runs through the rock. Their maps also cover the mountain top and the ruins above them, and the line could climb onto it.
+- Fixed an error ("Style.lua:38: attempt to index local 'step'") when the route changed under an open window.
+- Skins: Beeline can now look like the game's own windows. Pick **Skin: Blizzard** on the General tab of Options (beside Look), on Beeline's page in the game's Settings > AddOns, or with /bee skin blizzard; /bee skin beeline goes back. Changing it asks to reload.
+- The Blizzard skin draws the card and every Beeline window in the game's metal frame with its title strip, like the bags, with the red close button, the game's buttons, check boxes and fonts, and the stock ! and ? quest marks on the card. The guide arrow and the map pins keep Beeline's look.
+
 ## 2.5.0 - 2026-11-23
 - Home base is one place with one button: the house at the right of the card's bottom line, always there. It opens the Home base window to pick a zone; on a dungeon route or side trip it takes you back to your plan, and at 60 with "Finish my quests" on it goes back to the level 60 card. Its tooltip says which. The "Zones" text button on a level-up row is the house too.
 - Undo shows next to the house for 10 seconds after a skip, done, jump or "not doing". /bee undo still works any time.

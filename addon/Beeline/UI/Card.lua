@@ -23,6 +23,7 @@ local function section(i) local s = steps()[i]; local secs = BeelineData and Bee
 local plain, legKind, legText = Card.Plain, Card.LegKind, Card.LegText
 
 local function build()
+  PAD = Style.M.cardPad; Card.PAD = PAD -- (the skin's margin: Style.UseSkin ran before this)
   f = CreateFrame("Frame", "BeelineCard", UIParent)
   f:SetSize(ns.db.cardWidth, 160)
   f:SetPoint("TOPRIGHT", UIParent, "RIGHT", -60, 230) -- (Card.DEFAULT_POS; Card.ApplyPos sets the real place)
@@ -33,33 +34,25 @@ local function build()
   local function follow() if not InCombatLockdown() then Card.PlaceSecure() end end
   f:SetScript("OnDragStart", function(self) if not ns.db.locked then self:StartMoving(); self.dragging = true; self:SetScript("OnUpdate", follow) end end)
   f:SetScript("OnDragStop", function(self) self.dragging = nil; self:SetScript("OnUpdate", nil); self:StopMovingOrSizing(); Card.AnchorTop(); Card.PlaceSecure() end)
-  Style.Panel(f)
+  Style.CardPanel(f)
+  local HY = Style.M.cardHeadY -- (the skin can lift the header onto its title strip)
 
   -- header
-  f.title = Style.Text(f, 11, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -11); f.title:SetWordWrap(false)
+  f.title = Style.Text(f, 11, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -11 + HY); f.title:SetWordWrap(false)
   -- "?": why the card sends you here, in a line or two (UI/Explain.lua, worked out on the click). Always on the header,
   -- not in the hover bar: the moment you wonder is the moment you look at the card
   f.help = Style.Button(f, "?", 16, 16, function(self) if ns.Explain then ns.Explain.Show(self, ns.Engine.Shown and ns.Engine.Shown()) end end, "Why this step? Click to see.", C.gold)
-  f.help:SetPoint("TOPRIGHT", -PAD + 4, -8)
+  f.help:SetPoint("TOPRIGHT", -PAD + 4, -8 + HY)
   f.count = Style.Text(f, 10, C.dim); f.count:SetPoint("RIGHT", f.help, "LEFT", -6, 0); f.count:SetJustifyH("RIGHT")
   f.title:SetPoint("RIGHT", f.count, "LEFT", -8, 0)
-  f.prog = CreateFrame("Frame", nil, f); f.prog:SetPoint("TOPLEFT", PAD, -28); f.prog:SetPoint("TOPRIGHT", -PAD, -28); f.prog:SetHeight(2)
-  local pbg = f.prog:CreateTexture(nil, "BACKGROUND"); pbg:SetTexture(Style.WHITE); pbg:SetAllPoints(); pbg:SetVertexColor(1, 1, 1, 0.06)
-  f.progFill = f.prog:CreateTexture(nil, "ARTWORK"); f.progFill:SetTexture(Style.WHITE); f.progFill:SetPoint("TOPLEFT"); f.progFill:SetPoint("BOTTOMLEFT")
-  f.progFill:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.9)
+  f.prog = CreateFrame("Frame", nil, f); f.prog:SetPoint("TOPLEFT", PAD, -28); f.prog:SetPoint("TOPRIGHT", -PAD, -28); f.prog:SetHeight(Style.M.progH)
+  f.progFill = Style.Progress(f.prog)
   f.prog:SetScript("OnSizeChanged", function() Card.UpdateProgress() end)
 
   -- current step
   local cur = CreateFrame("Frame", nil, f); f.cur = cur
   cur:SetPoint("TOPLEFT", PAD, -40); cur:SetPoint("RIGHT", -PAD, 0); cur:SetHeight(60)
-  cur.accent = f:CreateTexture(nil, "ARTWORK"); cur.accent:SetTexture(Style.WHITE); cur.accent:SetWidth(3)
-  cur.accent:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -40); cur.accent:SetPoint("BOTTOMLEFT", cur, "BOTTOMLEFT", -PAD, 0)
-  cur.halo = cur:CreateTexture(nil, "ARTWORK", nil, 0); cur.halo:SetTexture(Style.MEDIA .. "glow"); cur.halo:SetSize(66, 66)
-  cur.disc = cur:CreateTexture(nil, "ARTWORK", nil, 1); cur.disc:SetTexture(Style.MEDIA .. "disc"); cur.disc:SetSize(38, 38); cur.disc:SetPoint("TOPLEFT", 0, 0)
-  cur.halo:SetPoint("CENTER", cur.disc)
-  cur.icon = cur:CreateTexture(nil, "ARTWORK", nil, 2); cur.icon:SetSize(22, 22); cur.icon:SetPoint("CENTER", cur.disc); cur.icon:SetVertexColor(0.07, 0.07, 0.09)
-  cur.check = cur:CreateTexture(nil, "OVERLAY"); cur.check:SetTexture(Style.MEDIA .. "icon-check"); cur.check:SetSize(30, 30); cur.check:SetPoint("CENTER", cur.disc)
-  cur.check:SetVertexColor(C.good[1], C.good[2], C.good[3]); cur.check:SetAlpha(0)
+  Style.StepMark(f, cur, PAD) -- cur.accent, halo, disc, icon, check
   cur.dist = Style.Text(cur, 11, C.gold); cur.dist:SetPoint("TOPRIGHT", 0, -1); cur.dist:SetWidth(DIST_W); cur.dist:SetJustifyH("RIGHT"); cur.dist:SetWordWrap(false)
   cur.titleText = Style.Text(cur, 15, C.text); cur.titleText:SetPoint("TOPLEFT", cur.disc, "TOPRIGHT", 12, 1)
   cur.detail = Style.Text(cur, 11, C.sub); cur.detail:SetPoint("TOPLEFT", cur.titleText, "BOTTOMLEFT", 0, -4)
@@ -79,7 +72,7 @@ local function build()
   -- on; the plan's own next step comes back
   cur.notNow = Style.Button(cur, "not now", 60, 14, function() if ns.Next and ns.Next.Dismiss then ns.Next.Dismiss(ns.Engine.Shown and ns.Engine.Shown()) end end, "Skip this stop for now: the route goes back to its planned next step. It's offered again once you've moved on, or in 15 minutes.", C.dim, 10)
   -- a quest newer than the original game: a short tag, its meaning on hover
-  cur.fq = Style.Button(cur, "Forever Quest", 84, 14, function() end, "Added by WoW Forever. If the giver has nothing for you, it drops off your route by itself.", { 0.56, 0.83, 1 }, 10)
+  cur.fq = Style.Button(cur, "Forever Quest", 84, 14, function() end, "Added by WoW Forever. If the giver has nothing for you, it drops off your route by itself.", C.forever, 10)
   cur.fq:SetWidth(cur.fq.label:GetStringWidth() + 12)
   cur.fq:Hide()
   -- a chain-start step spliced in for a zone you picked: you can say no (Stitch.Refuse)
@@ -112,13 +105,13 @@ local function build()
   cur.pop = pop
 
   -- timeline of the next steps
-  f.line = f:CreateTexture(nil, "ARTWORK"); f.line:SetTexture(Style.WHITE); f.line:SetVertexColor(1, 1, 1, 0.09); f.line:SetWidth(1)
+  f.line = Style.Divider(f, 0.09); f.line:SetWidth(1)
   f.rows = {}
   for i = 1, 5 do
     local r = CreateFrame("Button", nil, f); r:SetHeight(20)
-    r.dot = r:CreateTexture(nil, "OVERLAY"); r.dot:SetTexture(Style.MEDIA .. "dot"); r.dot:SetSize(9, 9); r.dot:SetPoint("LEFT", 18.5, 0) -- centre lines up with the icon disc above
+    r.dot = Style.Dot(r, 9); r.dot:SetPoint("LEFT", 18.5, 0) -- centre lines up with the icon disc above
     r.text = Style.Text(r, 11, C.sub); r.text:SetPoint("LEFT", r.dot, "RIGHT", 16, 0); r.text:SetPoint("RIGHT"); r.text:SetWordWrap(false); r.text:SetJustifyV("MIDDLE")
-    local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetAllPoints(); hl:SetVertexColor(1, 1, 1, 0.035)
+    Style.Highlight(r, 0.035)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     r:SetScript("OnClick", function(self, btn) if self.index then ns.Engine.Look(self.index, btn) end end) -- (a trip's leg row: no step)
     r:SetScript("OnEnter", function(self) Card.Hover(true); GameTooltip:SetOwner(self, "ANCHOR_LEFT"); if not self.index then GameTooltip:SetText("Part of the trip on the card", 1, 1, 1); GameTooltip:AddLine("It moves up to the card when you get there.", 0.6, 0.65, 0.72, true); GameTooltip:Show(); return end GameTooltip:SetText("Click to look at this step", 1, 1, 1); GameTooltip:AddLine("Right-click: show it on the map", 0.6, 0.65, 0.72); GameTooltip:AddLine("Shift-click to jump here (skips what's before it - Undo brings it back)", 0.6, 0.65, 0.72, true); GameTooltip:Show() end)
@@ -146,9 +139,9 @@ local function choiceRow(k)
   local r = cur.optRows[k]
   if r then return r end
   r = CreateFrame("Button", nil, cur); r:SetHeight(40)
-  r.bgParts = Style.Nine(r, "panel", "BACKGROUND", 0, 8, 0, 1, 1, 1, 0.05)
-  r.edge = r:CreateTexture(nil, "ARTWORK"); r.edge:SetTexture(Style.WHITE); r.edge:SetWidth(2); r.edge:SetPoint("TOPLEFT", 2, -5); r.edge:SetPoint("BOTTOMLEFT", 2, 5)
-  local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetTexture(Style.WHITE); hl:SetPoint("TOPLEFT", 2, -2); hl:SetPoint("BOTTOMRIGHT", -2, 2); hl:SetVertexColor(1, 0.82, 0.36, 0.08)
+  r.bgParts = Style.RowBg(r, 8, 0.05)
+  r.edge = Style.RowEdge(r, 2, 2, 5)
+  Style.Highlight(r, 0.08, C.gold, 2)
   r.name = Style.Text(r, 13, C.text, "OUTLINE"); r.name:SetPoint("TOPLEFT", 12, -6); r.name:SetWordWrap(false)
   r.fast = Style.Pill(r, "PLAN", C.good)
   r.rate = Style.Text(r, 11, C.gold); r.rate:SetPoint("TOPRIGHT", -10, -7); r.rate:SetJustifyH("RIGHT")
@@ -189,7 +182,7 @@ local function fillChoice()
     r.next:SetText((away and reason) and (away .. " · " .. reason) or away or reason or "")
     local c = z.best and C.good or C.dim
     r.edge:SetVertexColor(c[1], c[2], c[3], z.best and 0.9 or 0.3)
-    for _, part in ipairs(r.bgParts or {}) do part:SetVertexColor(1, 1, 1, 0.04) end
+    Style.SetRowBg(r.bgParts, 0.04)
     r:Show()
   end
 end
@@ -220,7 +213,7 @@ Card.DUNGEON_BARS = 12 -- bars at most; quests past that are one line each in th
 -- get, its count) with no name above it, and at most DUNGEON_BARS_COMPACT bars
 Card.DUNGEON_COMPACT = 3
 Card.DUNGEON_BARS_COMPACT = 8
-local TICK = "|T" .. Style.MEDIA .. "icon-check:12|t "
+local TICK = Style.GlyphTag("icon-check", 12) .. " "
 local function namesOf(list, max)
   local t, seen, u = {}, {}, {}
   for _, e in ipairs(list) do if not seen[e.name] then seen[e.name] = true; u[#u + 1] = e end end
@@ -299,10 +292,8 @@ function Card.Fill()
   cur.choice = nil; for _, r in ipairs(cur.optRows or {}) do r:Hide() end
   cur.map:Hide(); cur.nope:Hide(); cur.notOffered:Hide(); cur.notNow:Hide(); cur.fq:Hide(); cur.noChain:Hide()
   local function bar() cur.nbars = cur.nbars + 1; local b = cur.bars[cur.nbars]; if not b then b = Style.Bar(cur); cur.bars[cur.nbars] = b end; return b end
-  local function look(color, glyph)
-    cur.disc:SetVertexColor(color[1], color[2], color[3]); cur.halo:SetVertexColor(color[1], color[2], color[3], 0.35)
-    cur.accent:SetVertexColor(color[1], color[2], color[3], 0.9); cur.icon:SetTexture(Style.MEDIA .. glyph)
-  end
+  -- (kind: the step kind whose own mark this is, for a skin with the game's marks)
+  local function look(color, glyph, kind) Style.PaintMark(cur, color, glyph, kind) end
   local data = BeelineData -- (the demo swaps in its own)
   -- inside a dungeon the card is about the dungeon (not while you look at another step, or in the demo)
   if not ns.Engine.view and not (ns.Demo and ns.Demo.active) and ns.Dungeon then
@@ -422,7 +413,7 @@ function Card.Fill()
     if l1.npc then sub[#sub + 1] = (l1.how == "fly" and l1.from) and ("from " .. l1.from .. " (" .. l1.npc .. ")") or (l1.npc .. ", flight master") end
     if #sub > 0 then detail = "|cff8e99ad" .. table.concat(sub, " · ") .. "|r" .. (detail and ("\n" .. detail) or "") end
   end
-  look(kind.color, kind.icon)
+  look(kind.color, kind.icon, kind)
   local status = ns.Engine.Status(i)
   local group = ns.Engine.Group(i)
   -- ("Do these here" only once you're there: on the way, the headline is the leg)

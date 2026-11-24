@@ -5,7 +5,7 @@ local _, ns = ...
 local Style = ns.Style
 local C = Style.C
 local Card = ns.Card
-local PAD = Card.PAD
+local PAD -- (Card.PAD: the skin's margin, set when the card is built)
 local f
 
 -- the footer's flag: "this looks wrong" keeps what the card showed for the next /bee report (Moments.lua) - no chat
@@ -14,16 +14,16 @@ Card.FLAG_TIP = { "Looks wrong? Click, then send /bee report." }
 function Card.FlagMoment(b)
   local m = ns.Moments and ns.Moments.Flag()
   if not (b and b.icon) then return m end
-  if m then b.icon:SetTexture(Style.MEDIA .. "icon-check"); b.icon:SetVertexColor(C.good[1], C.good[2], C.good[3]) end
+  if m then Style.Glyph(b.icon, "icon-check"); Style.Paint(b.icon, C.good) end
   if C_Timer and C_Timer.After then
-    C_Timer.After(2, function() b.icon:SetTexture(Style.MEDIA .. "btn-flag"); local r = C.sub; b.icon:SetVertexColor(r[1], r[2], r[3]) end)
+    C_Timer.After(2, function() Style.Glyph(b.icon, "btn-flag"); Style.Paint(b.icon, b.rest or C.sub) end)
   end
   return m
 end
 
 -- the footer's frames, made with the card (build, UI/Card.lua)
 function Card.BuildFooter(frame)
-  f = frame
+  f, PAD = frame, Card.PAD
   -- footer: the next zone on the left (Card.FooterText), the house at the right, controls left of it (shown on hover)
   f.eta = Style.Text(f, 10, C.dim); f.eta:SetWordWrap(false)
   f.ctl = CreateFrame("Frame", nil, f); f.ctl:SetSize(184, 20); f.ctl:SetAlpha(0)
@@ -66,7 +66,7 @@ function Card.BuildFooter(frame)
     "Leave this dungeon route or side trip and carry on with your plan. Progress here is kept.")
   f.leave:Hide()
   -- quests in your log you won't do (not on the route, or gray by then): a nudge that opens the log check
-  f.drop = Style.Button(f, "", 90, 14, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Quests in your log no route of yours uses. Click to look them over.", { 1, 0.55, 0.3 }, 10)
+  f.drop = Style.Button(f, "", 90, 14, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Quests in your log no route of yours uses. Click to look them over.", C.warn, 10)
   f.drop:Hide()
   -- the rows under the step (laid out by Card.Layout from FOOT): a line of text, at the right an optional button
   -- (go = { label, width, onClick, tip, field, icon = glyph: an icon, not a label }) and an optional "x" (x = { onClick,
@@ -80,7 +80,7 @@ function Card.BuildFooter(frame)
       right:SetPoint("RIGHT", r, "RIGHT", x and -20 or 0, 0)
       r[go[5] or "go"] = right
     end
-    if x then r.x = Style.Button(r, "x", 16, 16, x[1], x[2]); r.x:SetPoint("RIGHT", r, "RIGHT", 0, 0); right = right or r.x end
+    if x then r.x = Style.XButton(r, 16, x[1], x[2]); r.x:SetPoint("RIGHT", r, "RIGHT", 0, 0); right = right or r.x end
     if not wrap then if right then r.text:SetPoint("RIGHT", right, "LEFT", -6, 0) else r.text:SetPoint("RIGHT", 0, 0) end end
     r:Hide()
     f[key] = r
@@ -91,10 +91,10 @@ function Card.BuildFooter(frame)
     { "Home base", "The zones you could go to now. Nothing changes unless you pick one." }, icon = "btn-home" },
     { function() ns.Offers.Dismiss(f.offer.base or false) end, "Hide this until your next level" })
   -- a newer plan from the companion: reload to load it (Card.SaveNudge)
-  footRow("save", { 0.55, 0.85, 1 }, { "Reload", 64, function() Card.Save() end, "Reload (a few seconds) to load the new route." },
+  footRow("save", C.info, { "Reload", 64, function() Card.Save() end, "Reload (a few seconds) to load the new route." },
     { function() if Card.planReady then Card.readyDismissed = true end; Card.Layout() end, "Not now" })
   -- after a reload into a new plan: what changed on your path and why (once per plan; the companion writes it)
-  footRow("change", { 0.85, 0.8, 1 }, { "OK", 34, function() ns.char.changeSeen = BeelinePlan and BeelinePlan.generated; Card.Layout() end, "Got it", "ok" })
+  footRow("change", C.lilac, { "OK", 34, function() ns.char.changeSeen = BeelinePlan and BeelinePlan.generated; Card.Layout() end, "Got it", "ok" })
   f.change:EnableMouse(true)
   f.change:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:AddLine("Your plan was updated", 1, 0.82, 0.3)
@@ -105,9 +105,9 @@ function Card.BuildFooter(frame)
   footRow("special", C.gold, { "Do it now", 70, function() local r = f.special.route; if r then ns.EnterDungeonRoute(r.id) end end, "Switch to this side trip now. \"Back to plan\" on the card returns you." },
     { function() local r = f.special.route; if r then ns.char.hideSpecial = ns.char.hideSpecial or {}; ns.char.hideSpecial[r.id] = true; Card.Layout() end end, "Hide this here (it stays under Side trips)" })
   -- errands: bags nearly full, with the nearest vendor that can help
-  footRow("errand", { 0.55, 0.85, 1 }, nil, { function() ns.Errands.Dismiss() end, "Hide until it changes" })
+  footRow("errand", C.info, nil, { function() ns.Errands.Dismiss() end, "Hide until it changes" })
   -- a finished quest whose hand-in is close by (Engine.ReadyNearby): one line, Do it now
-  footRow("ready", { 0.45, 0.78, 1 }, { "Do it now", 70, function() local r = Card.readyNear; if r then ns.Engine.FocusOn(r.i, "you chose it: ready to hand in nearby") end end, "Show this hand-in on the card now. Your plan is kept - it comes back after." })
+  footRow("ready", C.blue, { "Do it now", 70, function() local r = Card.readyNear; if r then ns.Engine.FocusOn(r.i, "you chose it: ready to hand in nearby") end end, "Show this hand-in on the card now. Your plan is kept - it comes back after." })
   -- a quest an item in your bags starts (ns.ItemQuests): a line (two when it needs them) and "x". The use button is
   -- the card's use-item button above it: a secure button can't sit on a row, and rows move in combat
   footRow("itemq", C.gold, nil, { function() ns.ItemQuests.Dismiss() end, "Not doing it: this quest isn't offered again (the item stays in your bags)" }, true)
@@ -122,7 +122,7 @@ function Card.BuildFooter(frame)
   end)
   f.itemq:SetScript("OnLeave", GameTooltip_Hide)
   -- "Also hand in": a finished quest the route doesn't cover, with its NPC nearby
-  footRow("extra", { 0.45, 0.78, 1.0 })
+  footRow("extra", C.blue)
 end
 
 -- the rows under the card's step, in their order: get() -> what the row says (nil or false: hidden); set(row, v)

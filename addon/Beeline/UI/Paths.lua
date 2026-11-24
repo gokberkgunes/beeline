@@ -36,7 +36,7 @@ local function paintRow(b)
   local z = b.row or {}
   local col = z.best and C.gold or (z.here and C.good or C.dim)
   b.edge:SetVertexColor(col[1], col[2], col[3], (z.best or z.here) and 0.95 or 0.45)
-  for _, part in ipairs(b.bg) do part:SetVertexColor(1, 1, 1, b.hover and 0.09 or 0.04) end
+  Style.SetRowBg(b.bg, b.hover and 0.09 or 0.04)
   local nc = (z.best and C.gold) or C.text
   b.name:SetTextColor(nc[1], nc[2], nc[3])
 end
@@ -44,7 +44,7 @@ end
 local function paintCard(c)
   local col = c.isCur and C.gold or (c.isBest and C.good or C.dim)
   c.edge:SetVertexColor(col[1], col[2], col[3], c.isCur and 0.95 or 0.5)
-  for _, part in ipairs(c.bg) do part:SetVertexColor(1, 1, 1, (c.hover or c.isCur) and 0.07 or 0.035) end
+  Style.SetRowBg(c.bg, (c.hover or c.isCur) and 0.07 or 0.035)
 end
 
 local function hover(b, on, paint)
@@ -72,8 +72,8 @@ local function zoneRow(key)
   if rows[key] then return rows[key] end
   local b = CreateFrame("Button", nil, f.content)
   b:SetSize(W - 2 * PAD - 8, ROW_H)
-  b.bg = Style.Nine(b, "panel", "BACKGROUND", 0, 8, 0, 1, 1, 1, 0.04)
-  b.edge = b:CreateTexture(nil, "ARTWORK"); b.edge:SetTexture(Style.WHITE); b.edge:SetWidth(3); b.edge:SetPoint("TOPLEFT", 1, -5); b.edge:SetPoint("BOTTOMLEFT", 1, 5)
+  b.bg = Style.RowBg(b, 8, 0.04)
+  b.edge = Style.RowEdge(b, 3, 1, 5)
   -- line 1: the zone's name, bounded by the numbers at the right (they never run into each other)
   b.right = Style.Text(b, 10, C.sub); b.right:SetPoint("TOPRIGHT", -10, -7); b.right:SetWidth(RIGHT_W); b.right:SetJustifyH("RIGHT"); b.right:SetWordWrap(false)
   b.name = Style.Text(b, 12, C.text, "OUTLINE"); b.name:SetPoint("TOPLEFT", 12, -6); b.name:SetPoint("RIGHT", b.right, "LEFT", -8, 0)
@@ -124,8 +124,8 @@ local function pathCard(id)
   if cards[id] then return cards[id] end
   local c = CreateFrame("Button", nil, f.content)
   c:SetSize(W - 2 * PAD - 8, CARD_H)
-  c.bg = Style.Nine(c, "panel", "BACKGROUND", 0, 10, 0, 1, 1, 1, 0.035)
-  c.edge = c:CreateTexture(nil, "ARTWORK"); c.edge:SetTexture(Style.WHITE); c.edge:SetWidth(3); c.edge:SetPoint("TOPLEFT", 1, -8); c.edge:SetPoint("BOTTOMLEFT", 1, 8)
+  c.bg = Style.RowBg(c, 10, 0.035)
+  c.edge = Style.RowEdge(c, 3, 1, 8)
   c.hours = Style.Text(c, 12, C.gold); c.hours:SetPoint("TOPRIGHT", -12, -10); c.hours:SetWidth(RIGHT_W); c.hours:SetJustifyH("RIGHT"); c.hours:SetWordWrap(false)
   c.name = Style.Text(c, 13, C.text, "OUTLINE"); c.name:SetPoint("TOPLEFT", 14, -10); c.name:SetWordWrap(false)
   c.pill = Style.Pill(c, "", C.gold); c.pill:SetPoint("LEFT", c.name, "RIGHT", 8, 0)
@@ -156,9 +156,8 @@ local function planRow(k)
   if planRows[k] then return planRows[k] end
   local b = CreateFrame("Frame", nil, f.content)
   b:SetSize(W - 2 * PAD - 8, PLAN_H)
-  b.dot = b:CreateTexture(nil, "ARTWORK"); b.dot:SetTexture(Style.WHITE); b.dot:SetSize(6, 6); b.dot:SetPoint("TOPLEFT", 4, -9)
-  b.line = b:CreateTexture(nil, "BACKGROUND"); b.line:SetTexture(Style.WHITE); b.line:SetWidth(1); b.line:SetPoint("TOP", b.dot, "BOTTOM", 0, -2); b.line:SetPoint("BOTTOM", b, "BOTTOM", 0, -2)
-  b.line:SetVertexColor(1, 1, 1, 0.12)
+  b.dot = Style.Fill(b, "ARTWORK"); b.dot:SetSize(6, 6); b.dot:SetPoint("TOPLEFT", 4, -9)
+  b.line = Style.Divider(b, 0.12, nil, "BACKGROUND"); b.line:SetWidth(1); b.line:SetPoint("TOP", b.dot, "BOTTOM", 0, -2); b.line:SetPoint("BOTTOM", b, "BOTTOM", 0, -2)
   b.right = Style.Text(b, 10, C.sub); b.right:SetPoint("TOPRIGHT", -10, -4); b.right:SetWidth(RIGHT_W); b.right:SetJustifyH("RIGHT"); b.right:SetWordWrap(false)
   b.name = Style.Text(b, 12, C.text, "OUTLINE"); b.name:SetPoint("TOPLEFT", 18, -3); b.name:SetPoint("RIGHT", b.right, "LEFT", -8, 0); b.name:SetJustifyH("LEFT"); b.name:SetWordWrap(false)
   b.sub = Style.Text(b, 10, C.sub); b.sub:SetPoint("TOPLEFT", 18, -18); b.sub:SetPoint("RIGHT", b, "RIGHT", -10, 0); b.sub:SetJustifyH("LEFT"); b.sub:SetWordWrap(false)
@@ -175,10 +174,10 @@ local function build()
   -- the rail
   f.rail = CreateFrame("Frame", nil, f)
   f.rail:SetPoint("TOPLEFT", 4, -4); f.rail:SetPoint("BOTTOMLEFT", 4, 4); f.rail:SetWidth(RAIL - 6)
-  f.rail.bg = f.rail:CreateTexture(nil, "BACKGROUND"); f.rail.bg:SetAllPoints(); f.rail.bg:SetColorTexture(0, 0, 0, 0.28)
+  f.rail.bg = Style.RailBg(f.rail, 0.28)
   f.tabs = { tabButton("zones", 8), tabButton("paths", 60), tabButton("trips", 112) }
   -- the top: title, one line under it, close
-  f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", LEFT, -12)
+  f.title = Style.WindowTitle(f, 15, LEFT, -12)
   local close = Style.CloseButton(f)
   f.intro = Style.Text(f, 10, C.sub); f.intro:SetPoint("TOPLEFT", LEFT, -34); f.intro:SetPoint("RIGHT", f, "RIGHT", -PAD, 0); f.intro:SetWordWrap(false)
   -- the list: scrolls inside a window that keeps its size

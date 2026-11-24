@@ -3,6 +3,7 @@
 -- Shift-click to jump to it.
 local _, ns = ...
 local Style = ns.Style
+local Bee = Style.Bee -- (the pins keep Beeline's look in every skin)
 local Pins = {}
 ns.Pins = Pins
 local HBDP = LibStub("HereBeDragons-Pins-2.0")
@@ -89,7 +90,7 @@ local function look(p, where, n, s, notYet)
   p.back:SetVertexColor(0, 0, 0, notYet and 0.5 or (mini and 0.95 or 0.8))
   p.pin:SetTexture(shape)
   p.pin:SetVertexColor(c[1], c[2], c[3], (first or mini) and 1 or (notYet and 0.8 or 0.95))
-  p.num:SetFontObject(Style.Font(notYet and 8 or 9, nil, true))
+  p.num:SetFontObject(Bee.Font(notYet and 8 or 9, nil, true))
   p.num:SetTextColor(DARK[1], DARK[2], DARK[3]); p.num:SetShadowColor(0, 0, 0, 0)
   p.num:ClearAllPoints(); p.num:SetPoint("CENTER", 0, 0)
   p.num:SetText((first or mini) and "" or tostring(n - 1))
@@ -105,7 +106,7 @@ local function makePin()
   p.back = p:CreateTexture(nil, "BACKGROUND")
   p.pin = p:CreateTexture(nil, "ARTWORK"); p.pin:SetAllPoints()
   p.icon = p:CreateTexture(nil, "OVERLAY"); p.icon:SetPoint("CENTER"); p.icon:SetVertexColor(DARK[1], DARK[2], DARK[3])
-  p.num = Style.Text(p, 9, DARK, nil, "OVERLAY"); p.num:SetFontObject(Style.Font(9, nil, true)); p.num:SetJustifyH("CENTER")
+  p.num = Bee.Text(p, 9, DARK, nil, "OVERLAY"); p.num:SetFontObject(Bee.Font(9, nil, true)); p.num:SetJustifyH("CENTER")
   p:SetScript("OnEnter", function(self)
     if not (self.index and BeelineData and BeelineData.steps[self.index]) then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -268,6 +269,31 @@ function Pins.LineDots(where)
   return out
 end
 
+-- the route the card's quest giver or hand-in walks (Patrol.lua): dots along it on the world map, about every 0.6% of
+-- the map (at most 250), in the step's colour. The pin stays where the NPC spawns; the route shows where else to look.
+local patrolRef, patrolUsed, patrolFor = {}, {}, nil
+local function drawPatrol(s)
+  local R = ns.db.pins and s and ns.Patrol and ns.Patrol.For(s) or nil
+  if R == patrolFor and not (R and #patrolUsed == 0) then return end
+  for _, d in ipairs(patrolUsed) do d:Hide(); d:ClearAllPoints(); table.insert(dotPool.world, d) end
+  wipe(patrolUsed); HBDP:RemoveAllWorldMapIcons(patrolRef)
+  patrolFor = R
+  if not R then return end
+  local color = Style.Kind(s).color
+  for k = 2, #R.pts do
+    local a, b = R.pts[k - 1], R.pts[k]
+    local steps = math.max(1, math.floor(math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) / 0.006))
+    for t = 0, steps - 1 do
+      if #patrolUsed >= 250 then return end
+      local d = dot("world", color)
+      HBDP:AddWorldMapIconMap(patrolRef, d, R.m, a[1] + (b[1] - a[1]) * t / steps, a[2] + (b[2] - a[2]) * t / steps, HBD_PINS_WORLDMAP_SHOW_PARENT or 1)
+      patrolUsed[#patrolUsed + 1] = d
+    end
+  end
+end
+-- the route dots now on the world map (for tests)
+function Pins.PatrolDots() return #patrolUsed end
+
 local planned -- draws the planned path where no live line is coming (defined with the events at the end)
 -- the planned path's dots now on the maps (for tests)
 function Pins.PathDots() return #dotsUsed end
@@ -330,6 +356,7 @@ function Pins.Update(force)
     if list[1] ~= arrivedAt then arrivedAt = nil end
     -- a live line (Nav.lua) draws itself when it is ready; the planned path only where none is coming
     if line and ns.Nav and ns.Nav.PathFor(line.key) == line.P and ns.db.pathLine ~= false and #list > 0 then if force then drawLine(line.key, line.P) end else planned() end
+    drawPatrol(list[1] and BeelineData.steps[list[1]])
   end
   local key = pathKey .. ":" .. table.concat(near)
   if key == lastKey and not force then return end

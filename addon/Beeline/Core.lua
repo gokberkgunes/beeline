@@ -33,6 +33,7 @@ ns.DEFAULTS = {
   remindGrimoire = true, -- warlocks: a grimoire at the demon trainer
   newsBar = true,        -- the "updated to ..." bar under the card after an update
   keepMoments = true,    -- keep notes of odd moments on the card for the next /bee report (Moments.lua; on your PC only)
+  skin = "beeline",      -- the look (UI/Skins): read once at login; changing it reloads the UI (Options)
 }
 
 -- ns.Is(fn, ...): a yes/no question to the game (UnitOnTaxi, UnitIsAFK, IsFlying, IsIndoors...). Forever hides some
@@ -368,6 +369,7 @@ ns.On("ADDON_LOADED", function(name)
   if BeelineDB.moments == false then BeelineDB.keepMoments, BeelineDB.moments = false, nil end
   copyDefaults(BeelineDB, ns.DEFAULTS)
   ns.db = BeelineDB
+  ns.Style.UseSkin(ns.db.skin) -- (before any frame is built: FR_LOADED builds the card)
   -- combat fade used to default on: off once for everyone (anyone can turn it back on)
   if not ns.db.combatFadeReset then ns.db.combatFade = false; ns.db.combatFadeReset = true end
   ns.char = BeelineChar
@@ -507,6 +509,7 @@ SlashCmdList.BEELINE = function(msg)
   elseif msg == "target reset" then if ns.Card and ns.Card.ResetTarget then ns.Card.ResetTarget() else ns.db.targetPos = nil end
   elseif msg == "storage" then ns.Storage.Print()
   elseif msg == "scale" or msg:find("^scale ") then ns.Style.SlashScale(msg:sub(7))
+  elseif msg == "skin" or msg:find("^skin ") then ns.SlashSkin(msg:sub(6))
   elseif msg == "news" then ns.Fire("FR_NEWS")
   elseif msg == "report" then ns.Fire("FR_REPORT", false)
   elseif msg == "report full" then ns.Fire("FR_REPORT", true)
@@ -538,7 +541,7 @@ SlashCmdList.BEELINE = function(msg)
   elseif msg == "snapshot" then ns.State.Snapshot("manual"); ns.Print("snapshot saved - written to disk on /reload or logout.")
   elseif msg == "options" or msg == "config" then ns.Fire("FR_OPEN_OPTIONS")
   else
-    ns.Print("/bee - card · /bee list - whole route · /bee home - home base (pick a zone) · /bee dungeons - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee options")
+    ns.Print("/bee - card · /bee list - whole route · /bee home - home base (pick a zone) · /bee dungeons - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee skin · /bee options")
   end
 end
 -- /fr (ForeverRoute's old command) still works, with a one-time note, unless another addon has it: then it's theirs.

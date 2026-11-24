@@ -291,7 +291,7 @@ local COLORS = { drop = { 0.75, 0.62, 0.50 }, offroute = { 0.70, 0.72, 0.78 }, t
 local function row(k)
   if rows[k] then return rows[k] end
   local r = CreateFrame("Frame", nil, f.content); r:SetSize(W - 2 * PAD - 10, ROW)
-  r.edge = r:CreateTexture(nil, "ARTWORK"); r.edge:SetTexture(Style.WHITE); r.edge:SetWidth(3); r.edge:SetPoint("TOPLEFT", 0, -4); r.edge:SetPoint("BOTTOMLEFT", 0, 4)
+  r.edge = Style.RowEdge(r, 3, 0, 4)
   r.title = Style.Text(r, 11, C.text); r.title:SetPoint("TOPLEFT", 10, -3); r.title:SetWordWrap(false); r.title:SetWidth(W - 2 * PAD - BTNS - 14)
   r.why = Style.Text(r, 10, C.sub); r.why:SetPoint("TOPLEFT", r.title, "BOTTOMLEFT", 0, -2); r.why:SetWordWrap(true); r.why:SetJustifyH("LEFT"); r.why:SetWidth(W - 2 * PAD - BTNS - 14)
   if r.why.SetMaxLines then r.why:SetMaxLines(2) end
@@ -325,7 +325,7 @@ local function build()
   f = CreateFrame("Frame", "BeelineLogCheck", UIParent)
   f:SetSize(W, 200); f:SetPoint("CENTER", 0, 40)
   Style.Window(f, "BeelineLogCheck")
-  f.title = Style.Text(f, 15, C.gold, "OUTLINE"); f.title:SetPoint("TOPLEFT", PAD, -12); f.title:SetText("Quest log check")
+  f.title = Style.WindowTitle(f, 15, PAD, -12); f.title:SetText("Quest log check")
   local close = Style.CloseButton(f)
   f.sum = Style.Text(f, 11, C.sub); f.sum:SetPoint("TOPLEFT", PAD, -34); f.sum:SetWidth(W - 2 * PAD - 120)
   f.all = Style.Button(f, "Abandon gray", 100, 20, function()
@@ -380,7 +380,7 @@ function LogCheck.Draw()
   for i, n in ipairs(extra) do
     local r = row(#list + i)
     r.data, r.reason = { id = n.q, title = n.name }, nil
-    r.edge:SetVertexColor(0.55, 0.58, 0.66, 0.9)
+    Style.Paint(r.edge, C.muted, 0.9)
     r.title:SetText(n.name)
     r.why:SetText("|cff8c94a8" .. (n.ready and "Finished when you dropped it: its hand-in is off your route" or "Off your route and future plans") .. "|r")
     r.btn:Hide(); r.keep:Hide(); r.go:Hide() -- (a reused row: no Go left over from a quest row)
@@ -404,7 +404,7 @@ function LogCheck.Draw()
   for i, x in ipairs(left) do
     local r = row(#list + #extra + i)
     r.data, r.reason = nil, nil
-    r.edge:SetVertexColor(0.55, 0.58, 0.66, 0.9)
+    Style.Paint(r.edge, C.muted, 0.9)
     r.title:SetText(x.name .. (x.count > 1 and ("  |cff8e99adx" .. x.count .. "|r") or ""))
     r.why:SetText("|cff8c94a8" .. x.why .. "|r")
     r.btn:Hide(); r.keep:Hide(); r.back:Hide(); r.go:Hide()
