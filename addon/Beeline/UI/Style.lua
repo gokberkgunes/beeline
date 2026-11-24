@@ -35,6 +35,7 @@ Style.KIND = {
 }
 for k, m in pairs(Style.KIND) do m.key = k end
 function Style.Kind(step)
+  if not step then return Style.KIND.note end -- (a window drawn mid route change: no step, a plain look, no error)
   local k = step.k
   if k == "obj" and step.loot then k = "loot" end
   if k == "fly" and step.boat then k = "boat" end

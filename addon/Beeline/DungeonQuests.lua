@@ -437,6 +437,7 @@ ns.DUNGEON_QUESTS = {
       { 84193, "Anthion's Parting Words", 58, "H", nil, "Anthion Harmon, Eastern Plaguelands" },
       { 84330, "A Wee Bit O' Necromancy", 54, "A", 2, "Orthas, Eastern Plaguelands" },
       { 97179, "Collection of Goods", 60, "H", 2, "Ott, Hillsbrad Foothills" },
+      { 97412, "Just Compensation", 58, "H", nil, "Mokvar, Orgrimmar" },
     },
   },
   [349] = { -- Maraudon

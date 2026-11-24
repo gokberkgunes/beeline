@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0 - 2026-11-24
+- Every built-in plan is rebuilt on QuestieDB 1.1.5, which corrects quest givers, hand-ins, objectives and prerequisites. Hours to 60 are about the same as before.
+- Your class quests where you start are now in the plan: the class letter at level 1 (Hallowed Rune, Simple Letter, Etched Sigil...) and a priest's two quests at level 5 (In Favor of the Light and Garments of the Light, and the other races' versions). They are picked up and handed in on your way.
+- Training goes to the nearest trainer in the zone. A dwarf priest in Kharanos was sent back to Coldridge Valley at 6, 8 and 10.
+- Quests given just outside the zone you are going to are picked up on the way when the detour pays, also ones with work to do there (The Atal'ai Exile, Dreadmaul Rock, Martek the Exiled, A Watchful Eye).
+- Quests that need crafted goods are no longer in the plans: That's Asking A Lot (Thorium Bars, Hi-Explosive Bombs), The Ectoplasmic Distiller and Collection of Goods.
+- When the card sends you to a quest the plan had earlier, it says so: "Side quest first: ~12 min, +2.8k XP. Then: To Searing Gorge". It no longer calls a quest across the zone "nearby", and you can put it off with "not now".
+
 ## 2.6.0 - 2026-11-24
 - Quest givers who walk around: the card says when the NPC you need walks a route ("walks a route, see the map"), the arrow points at the nearest point of that route instead of the spot they started from, and the world map draws their route. 69 quest NPCs do this, among them the Centaur Pariah in Desolace, the Gizelton caravan, Crier Goodman and Curator Thorius.
 - Dungeon trips carry every quest for the dungeon: the whole chain of quests that leads up to each one, also chains that start at an object (Maraudon now has Rot and Regret, from the Strange Pylons onward), and a new last part, "4. Follow-ups", with the quests that carry on after the hand-ins (Passing the Blame). Uldaman, Razorfen Downs, Blackrock Depths, Zul'Farrak, Blackrock Spire, Scholomance and Stratholme gain quests too.

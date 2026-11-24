@@ -223,6 +223,29 @@ function Card.StepNote(s, i, status, headTrip)
   return Card.Note(s), s.warn and C.warn or C.sub
 end
 
+-- A quest the plan has earlier, taken up again because it still pays here (Next.IsBehind): a bare "Accept Active
+-- Ingredient" read as the plan jumping back (a report: on the way out of Dustwallow to Searing Gorge). Say it is a side
+-- quest, what the whole quest takes, and what comes after: "Side quest first: ~12 min, +2.8k XP. Then: To Searing Gorge"
+function Card.SideQuestNote(i)
+  local planned = ns.Engine.planned
+  if not (planned and i ~= planned and ns.Next and ns.Next.IsBehind and ns.Next.IsBehind(i)) then return nil end
+  local list = BeelineData and BeelineData.steps
+  local s, p = list and list[i], list and list[planned]
+  if not (s and s.q and p) then return nil end
+  -- its work still to do (the planner's seconds), a minute a stop
+  local sec = 0
+  for k = 1, #list do
+    local t = list[k]
+    if t.q == s.q and ns.Engine.Status(k) == "todo" then sec = sec + 60 + ((t.k == "obj" and tonumber(t.work)) or 0) end
+  end
+  local L = (UnitLevel and UnitLevel("player")) or 1
+  local xp = ns.QuestXp and ns.QuestXp(s.q, L)
+  if not xp and tonumber(s.level) and ns.Engine.QuestXP then xp = ns.Engine.QuestXP(tonumber(s.level), L) end
+  local bits = { string.format("~%d min", math.max(1, math.floor(sec / 60 + 0.5))) }
+  if xp and xp >= 100 then bits[#bits + 1] = "+" .. (xp >= 1000 and string.format("%.1fk", xp / 1000) or tostring(math.floor(xp))) .. " XP" end
+  return "|cffffd100Side quest first: " .. table.concat(bits, ", ") .. ".|r Then: " .. plain((Card.Describe(p)))
+end
+
 -- "A few in Hillsbrad Foothills too (16 there) - the plan farms the bigger group here" for an objective step whose
 -- mobs also stand, fewer of them, where the quest is given or handed in
 function Card.AlsoNote(s)

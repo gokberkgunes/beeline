@@ -464,6 +464,9 @@ function Card.Fill()
     -- plan farms them further away
     local also = Card.AlsoNote(s)
     if also then text = (text and text ~= "") and (text .. "\n" .. also) or also end
+    -- a quest the plan has earlier, taken up again here: a side quest first, then the plan (Card.SideQuestNote)
+    local side = Card.SideQuestNote(i)
+    if side then text = (text and text ~= "") and (side .. "\n" .. text) or side end
     -- live reordering picked this step because you are at it: that is exactly when its warnings and the full-log
     -- alert matter, so they stay, and the plan's own next step is a dim line under them
     -- a hand-in run here: say it - the moment the questing was for

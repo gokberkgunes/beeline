@@ -143,6 +143,7 @@ local PICK = {
   ["close by first"] = "Quickest from here: these quests of your plan are right around you, so they come first",
   ["right here"] = "Worth it: right here, and still XP at your level",
   ["nearby"] = "Worth it: close by, and still XP at your level",
+  ["in this zone"] = "Worth it: still XP at your level, done before you leave this zone",
 }
 local NO_NUMBER = { ["while you're here"] = true, ["saves a trip back"] = true, ["on the way"] = true }
 local function pickWhy(i)

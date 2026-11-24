@@ -1222,9 +1222,13 @@ end
 -- plan's step: Next.rejoin), "pickupFirst", "chain", "visit", "early", "opt", "way". skipRejoin: the kind below it
 local function kindOf(st, skipRejoin)
   if st.behind then
+    -- "nearby" only within twice HOLD_NEAR: across the zone it is "in this zone" (a report: Gizzix Grimegurgle, 1.6k yd
+    -- off on the far side of Dustwallow, was "nearby")
     local ep = ns.Engine and ns.Engine.pos
-    local near = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2 <= Next.HOLD_NEAR ^ 2
-    return near and "here" or "nearby"
+    local d2 = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2
+    if d2 and d2 <= Next.HOLD_NEAR ^ 2 then return "here" end
+    if d2 and d2 <= (2 * Next.HOLD_NEAR) ^ 2 then return "nearby" end
+    return "zone"
   end
   local rj = Next.rejoin
   if not skipRejoin and rj and st.step and st.step >= rj.at then return "rejoin" end
@@ -1236,6 +1240,7 @@ end
 local REASON = {
   here = "right here and still worth XP at your level (the plan has it earlier)",
   nearby = "nearby and still worth XP at your level (the plan has it earlier)",
+  zone = "in this zone and still worth XP at your level (the plan has it earlier): done before you leave",
   pickupFirst = "pick it up before you head out - its work can be done on the same trip",
   chain = "the chain goes on right here - hand it in and take the next",
   visit = "the plan comes back here for this later - done now, that trip back goes",
@@ -1243,7 +1248,7 @@ local REASON = {
   opt = "a quest you picked up on the way, handed in where it costs least",
   way = "on the way - the whole route from here is shorter this way",
 }
-local TAG = { here = "right here", nearby = "nearby", pickupFirst = "before you head out", chain = "chain continues",
+local TAG = { here = "right here", nearby = "nearby", zone = "in this zone", pickupFirst = "before you head out", chain = "chain continues",
   visit = "saves a trip back", early = "while you're here", opt = "on the way", way = "on the way" }
 
 -- why a step picked out of plan order, in words
@@ -1293,8 +1298,14 @@ end
 -- can the card's step be put off ("not now")? Only a stop the solver took in from where you are - a hand-in while
 -- you're here, a quest right behind you, one you picked up on the way - never the plan's own next step.
 function Next.CanDismiss(i)
-  for _, s in ipairs((Next.res and Next.res.seq) or {}) do if s.step == i then return (s.opt and true) or false end end
+  for _, s in ipairs((Next.res and Next.res.seq) or {}) do if s.step == i then return ((s.opt or s.behind) and true) or false end end
   return false
+end
+-- a quest the plan has earlier, taken up again because it is still worth XP here (the solve's "behind" stop): the card
+-- says it is a side quest first - nil when step i is not one
+function Next.IsBehind(i)
+  local st = seqStop(i)
+  return (st and st.behind) and true or false
 end
 -- "not now": the stop leaves the card until you move on or a while passes, and the plan's order stands
 function Next.Dismiss(i)
