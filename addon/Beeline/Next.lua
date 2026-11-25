@@ -786,6 +786,13 @@ local function gatherWindow(c)
   local reserve = pfAny and 1 or 0
   local hereYd2 = Next.HERE_YD ^ 2
   local wload = c.load
+  local inWin, byStep = {}, c.byStep -- (quests the window picks up: their work and hand-in come in too, below)
+  local function allObjsIn(q, before)
+    for _, o in ipairs(E.ObjStepsOf(q)) do
+      if o < before and not byStep[o] and E.Status(o) ~= "done" then return false end
+    end
+    return true
+  end
   for j = from, math.min(#list, from + Next.SCAN) do
     if j % 8 == 0 then ns.MaybeYield() end
     local s = list[j]
@@ -794,7 +801,18 @@ local function gatherWindow(c)
     if s == E.levelHold then break end
     local st = E.Status(j)
     scanEnd = j
-    if st == "todo" then
+    -- the work and the hand-in of a quest the window picks up: not doable yet ("blocked": not in your log), but the
+    -- plan's stops all the same, after their pick-up (setNeeds). Left out, the window
+    -- saw only pick-ups, and flying away from them looked free: from Searing Gorge the Blasted Lands' pick-ups came
+    -- before the Hinterlands' (the plan's next zone), then the Hinterlands, then back to the Blasted Lands for the work.
+    -- (a hand-in only once every objective of its quest left to do is in the window: never one that can't be done)
+    if st == "blocked" and s.q and inWin[s.q] and not s.inserted and wpos(s) and not s.unknown
+      and ((s.k == "obj" and not E.InsideOf(s)) or (s.k == "turnin" and allObjsIn(s.q, j))) then
+      add(j, { plan = j })
+      if s.k == "turnin" then wload = wload - 1 end
+      count = count + 1
+      if count >= Next.WINDOW then break end
+    elseif st == "todo" then
       -- (a pick-up whose earlier chain quest isn't handed in is not offered yet: it waits where the plan has it)
       if Next.KIND[s.k] and wpos(s) and (s.k ~= "accept" or ((not E.Available or E.Available(j)) and wload + ((j == pfAny) and 0 or reserve) < cap)) then
         -- (a slot is freed only by a plan hand-in: an inserted one is a prize the solve may leave)
@@ -809,6 +827,7 @@ local function gatherWindow(c)
           add(j, { prize = Next.Prize(list, s, planned), opt = true })
         else
           add(j, { plan = j })
+          if s.q and s.k == "accept" then inWin[s.q] = true end
           count = count + 1
         end
         if count >= Next.WINDOW then break end
@@ -1228,7 +1247,10 @@ local function kindOf(st, skipRejoin)
     local d2 = ep and st.w and st.w[3] == ep[3] and (st.w[1] - ep[1]) ^ 2 + (st.w[2] - ep[2]) ^ 2
     if d2 and d2 <= Next.HOLD_NEAR ^ 2 then return "here" end
     if d2 and d2 <= (2 * Next.HOLD_NEAR) ^ 2 then return "nearby" end
-    return "zone"
+    -- "in this zone" only when you are in its zone: riding in from Shen'dralas, a Feralas quest read "in this zone"
+    local s = st.step and BeelineData and BeelineData.steps and BeelineData.steps[st.step]
+    local m = ns.State and ns.State.Position and ns.State.Position()
+    return (s and m and s.m == m) and "zone" or "way"
   end
   local rj = Next.rejoin
   if not skipRejoin and rj and st.step and st.step >= rj.at then return "rejoin" end

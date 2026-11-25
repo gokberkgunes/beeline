@@ -209,10 +209,12 @@ end
 -- finished ones ticked; quests picked up inside; and the ones you could have brought but didn't. The plan's own step
 -- is the first line of the timeline below. Walking out brings the normal card back.
 Card.DUNGEON_BARS = 12 -- bars at most; quests past that are one line each in the note
--- with more than this many quests to do in there, the card is compact: a quest of one objective is one bar (what to
--- get, its count) with no name above it, and at most DUNGEON_BARS_COMPACT bars
-Card.DUNGEON_COMPACT = 3
-Card.DUNGEON_BARS_COMPACT = 8
+-- with more than this many quests to do in there, the card is compact: one bar a quest and no names above them - a
+-- quest of one objective is what to get and its count, one of several is its name and the parts done ("Legends of
+-- Maraudon 1/4") - and at most DUNGEON_BARS_COMPACT bars, the rest on the "Also:" line. (A bar an objective and a name
+-- above each quest, with 6 quests in Maraudon, filled half the screen: a player)
+Card.DUNGEON_COMPACT = 2
+Card.DUNGEON_BARS_COMPACT = 5
 local TICK = Style.GlyphTag("icon-check", 12) .. " "
 local function namesOf(list, max)
   local t, seen, u = {}, {}, {}
@@ -250,10 +252,17 @@ function Card.FillDungeon(name, id, bar, look)
     local title = Style.Hex(C.gold) .. q.name .. "|r"
     if q.ready then
       lines[#lines + 1] = TICK .. "|cff5cdc7a" .. q.name .. "|r |cff8e99ad- done|r"
-    elseif cur.nbars + math.max(1, #q.objectives) > maxBars then
+    elseif cur.nbars + (compact and 1 or math.max(1, #q.objectives)) > maxBars then
       local n = 0
       for _, o in ipairs(q.objectives) do if not o.finished then n = n + 1 end end
       over[#over + 1] = q.name .. (n > 0 and string.format(" |cff8e99ad(%d left)|r", n) or "")
+    elseif compact and #q.objectives > 1 then
+      -- one bar for the quest: its name and how many of its parts are done (each part's share of the bar as far as it got)
+      local fin, frac = 0, 0
+      for _, o in ipairs(q.objectives) do
+        if o.finished then fin = fin + 1; frac = frac + 1 elseif o.need > 0 then frac = frac + o.have / o.need end
+      end
+      local b = bar(); b:Set(frac / #q.objectives, kind.color, q.name, string.format("%d/%d", fin, #q.objectives)); b:Show()
     else
       if not (compact and #q.objectives <= 1) then head(title) end
       if #q.objectives == 0 then local b = bar(); b:Set(0, kind.color, compact and (q.name .. " - see your quest log") or "See your quest log", ""); b:Show() end

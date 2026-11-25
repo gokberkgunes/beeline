@@ -459,10 +459,20 @@ function Pins.OnPlanned(i)
   -- corpse target has no path of its own: not "nothing to judge")
   if t.corpse then return -1 end
   local P = t.path
-  if not (P and P.pts and #P.pts >= 2) then return nil end
+  -- no live path to judge by: the step's baked trail is drawn whole only when it can be yours - the plan's own next
+  -- step (a step taken out of order has a trail from a step you never went to) and you in its zone. A report: a quest
+  -- pulled forward in Feralas while you rode in from Shen'dralas drew a trail from the plan's last spot, far south of
+  -- you, ending at the pin
+  local function whole()
+    local s = BeelineData and BeelineData.steps and BeelineData.steps[i]
+    local m = ns.State.Position()
+    if not (s and m == s.m and ns.Engine.planned == i) then return -1 end
+    return nil
+  end
+  if not (P and P.pts and #P.pts >= 2) then return whole() end
   local px, py, pinst = HBD:GetPlayerWorldPosition()
   if not px then return -1 end -- no position yet (a loading screen): nothing until there is one
-  if pinst ~= t.winst then return nil end
+  if pinst ~= t.winst then return whole() end
   local best, bd = nil, math.huge
   for j = math.max(1, P.cursor or 1), #P.pts - 1 do
     local a, b = P.pts[j], P.pts[j + 1]

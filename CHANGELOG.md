@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.1 - 2026-11-24
+- The card in a dungeon is much smaller: one bar for each quest (a quest with several parts shows how many are done, "Legends of Maraudon 1/4"), at most five, the rest on the "Also:" line.
+- The world map no longer draws a dotted walking path that starts nowhere near you. A quest taken out of the plan's order drew the plan's own path to it, from where the plan expected you to be.
+- The card no longer sends you to the zone after next for a few pick-ups first. From Searing Gorge it sent a warlock to Nethergarde for two Blasted Lands quests, then to the Hinterlands (the plan's next zone), and the plan came back to the Blasted Lands for their work: about 10 minutes of flying for nothing. It now weighs each quest's work and hand-in, not only its pick-up.
+- A side quest from another zone no longer says "in this zone".
+
 ## 2.7.0 - 2026-11-24
 - Every built-in plan is rebuilt on QuestieDB 1.1.5, which corrects quest givers, hand-ins, objectives and prerequisites. Hours to 60 are about the same as before.
 - Your class quests where you start are now in the plan: the class letter at level 1 (Hallowed Rune, Simple Letter, Etched Sigil...) and a priest's two quests at level 5 (In Favor of the Light and Garments of the Light, and the other races' versions). They are picked up and handed in on your way.
