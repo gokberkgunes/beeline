@@ -10,6 +10,7 @@
 -- ns.db when its page shows and writes it on change (FR_SETTINGS), never on open. Our own frames only (no taint):
 -- Options > AddOns has a small page with a button that opens this window.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.C
 local Options = {}

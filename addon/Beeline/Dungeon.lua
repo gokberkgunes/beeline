@@ -5,6 +5,7 @@
 -- (ns.DUNGEON_QUESTS, DungeonQuests.lua - made from QuestieDB by tools/dungeon-quests.js). The card shows that while
 -- you're inside (UI/Card.lua); the engine's "Run <dungeon>" steps ask here too (Engine.InDungeon).
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Dungeon = {}
 ns.Dungeon = Dungeon
 

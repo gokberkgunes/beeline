@@ -4,6 +4,7 @@
 -- Along a path it steers for a spot a little way ahead on the line (Nav.Aim), so it turns into a corner over the
 -- yards before it instead of swinging round on the corner itself.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.Bee.C -- (the arrow keeps Beeline's look in every skin)
 local HBD = LibStub("HereBeDragons-2.0")
@@ -355,6 +356,32 @@ local function corpseTarget(i)
   return true
 end
 
+-- The trip to the shown step can change while the step stays (a flight path learned mid-ride, a shorter way, a leg
+-- done): the arrow keeps the trip's first leg it was built for (aimed), and is built again when that leg changes.
+-- Nothing is planned for it: the leg is compared when the step's trip is worked out anyway (Engine.TravelFor's fresh
+-- answers, Arrow.TripChanged) and when the card's step is announced again (FR_STEP, the trip then remembered).
+local function tripKey(t)
+  if not t then return "-" end
+  local l = (t.legs and t.legs[1]) or t
+  return tostring(l.how or t.how) .. ":" .. tostring(t.m) .. ":" .. (t.x and math.floor(t.x * 1000) or "-") .. ":" .. (t.y and math.floor(t.y * 1000) or "-")
+end
+Arrow.TripKey = tripKey
+local aimed, building, retargetDue -- { step, key }: the trip's first leg the target was built for
+-- (Engine.TravelFor: a trip worked out afresh for step s) -> true when the arrow will be built again for it
+function Arrow.TripChanged(s, trip)
+  if building or retargetDue or not (aimed and aimed.step == s) or aimed.key == tripKey(trip) then return false end
+  local i = ns.Engine.Shown()
+  if not (i and BeelineData and BeelineData.steps[i] == s) then return false end
+  retargetDue = true
+  C_Timer.After(0, function()
+    retargetDue = nil
+    local j = ns.Engine.Shown()
+    if not (f and j and BeelineData and BeelineData.steps[j] == s) then return end
+    Arrow.SetTarget(j, true)
+    ns.Fire("FR_STEP", j) -- (the card's lines and the map pin follow the same leg)
+  end)
+  return true
+end
 local waiting -- (a target asked for while a route change's passes run: { force })
 function Arrow.SetTarget(i, force)
   -- while a route change's passes run over frames, the arrow's trip (a search across the world, 25-50 ms at level 50)
@@ -370,10 +397,18 @@ function Arrow.SetTarget(i, force)
   if target and target.corpse then target = nil end -- alive again: the step's target is built afresh
   local s = i and BeelineData and BeelineData.steps[i]
   -- (the same step, not just the same number: a stop inserted before it moves the number on)
-  if target and s and target.index == i and target.step == s and not force then
+  -- (and the same first leg of its trip: one learned mid-ride, say, builds the target again)
+  if target and s and target.index == i and target.step == s and not force
+    and not (aimed and aimed.step == s and ns.Engine.TravelFor and aimed.key ~= tripKey(ns.Engine.TravelFor(s))) then
     f:SetShown(visible(i)); noteHidden(not visible(i) and hiddenReason(i, s) or nil)
     return
   end
+  building = true
+  local ok, err = pcall(Arrow.Build, i, s)
+  building = false
+  if not ok then error(err, 0) end
+end
+function Arrow.Build(i, s)
   -- on a flight there is nothing to steer: the step's flight master is behind you and the step is the taxi's job.
   -- Pointing anywhere would read as "go back" (or as a trip planned from the sky). Landing re-targets.
   local step = s
@@ -397,10 +432,18 @@ function Arrow.SetTarget(i, force)
   -- zone crossing on the way (the road, not a line over the mountains; the next zone re-targets)
   local endM, endX, endY = m, x, y -- (where the ride ends: the step, or the flight master for a flight)
   local trip = s and ns.Engine.TravelFor and ns.Engine.TravelFor(s)
+  aimed = step and s == step and { step = step, key = tripKey(trip) } or nil -- (not on a flight, in a dungeon, a game spot)
+  local onward -- (past the ride's crossing: on to where that ride ends)
   if trip and trip.how == "aboard" then m, x, y = nil, nil, nil -- sailing: nothing to point at until you land
   elseif trip then
     local l1 = trip.legs and trip.legs[1]
     local how = (l1 and l1.how) or trip.how or "ride"
+    -- where this ride ends is the card's leg's own end (Travel.Plan: em, ex, ey) - the flight master it rides to, the
+    -- place it rides into - never a flight master another guess picked (a "fly" step's TravelPlan: "fly to Feralas,
+    -- then ride" while the trip rides straight to Un'Goro; standing at that flight master read the crossing as behind
+    -- you, and the arrow turned to him)
+    if how == "ride" and l1 and l1.em and l1.ex then endM, endX, endY = l1.em, l1.ex, l1.ey end
+    local passed = false
     -- a ride with no crossing on the way points at the step itself: keep it the step (its radius, its arrival)
     local isStep = s.k ~= "fly" and how == "ride" and trip.m == s.m and trip.x == s.x and trip.y == s.y
     local useTrip = not isStep
@@ -411,7 +454,7 @@ function Arrow.SetTarget(i, force)
       -- the crossing reached: carry on toward the step until the next zone takes over (a gate inside one zone
       -- would otherwise hold the arrow on a spot you are standing on)
       local P = Arrow.passed
-      if P and P.index == i and P.step == step and cx and ci == P.inst and math.sqrt((cx - P.wx) ^ 2 + (cy - P.wy) ^ 2) < 30 then useTrip = false end
+      if P and P.index == i and P.step == step and cx and ci == P.inst and math.sqrt((cx - P.wx) ^ 2 + (cy - P.wy) ^ 2) < 30 then useTrip, passed = false, true end
       -- the planner's own walking path to the step beats "crossing, then straight": follow it while you are on it
       if useTrip and s.wp and px then
         local sx, sy, si = HBD:GetWorldCoordinatesFromZone(s.x, s.y, s.m)
@@ -422,6 +465,10 @@ function Arrow.SetTarget(i, force)
     if useTrip then
       m, x, y, label = trip.m, trip.x, trip.y, (l1 and l1.text) or trip.text
       leg = how
+    elseif passed and endX and not (endM == s.m and endX == s.x and endY == s.y) then
+      -- past the crossing of a ride that does not end at the step (a "fly" step's ride into the zone, the ride to a
+      -- flight master): on to the ride's end, still the card's leg - not the step's own flight master
+      m, x, y, label, leg, onward = endM, endX, endY, (l1 and l1.text) or trip.text, "ride", true
     end
   end
   -- a quest giver or hand-in who walks a route (Patrol.lua): the nearest point of the route, not where it spawns (the
@@ -438,6 +485,7 @@ function Arrow.SetTarget(i, force)
     target = { index = i, step = step, m = m, x = x, y = y, r = leg and 8 or patrol and math.max(s.r or 12, 20) or s.r, leg = leg, patrol = patrol or nil, zone = s.zone, wx = wx, wy = wy, winst = winst, label = label or ns.Card.Plain((ns.Card.Describe(s))) }
     target.path = (not label) and buildPath(s, m, wx, wy) or nil
     if leg == "ride" and endM and endX then local a, b, c = HBD:GetWorldCoordinatesFromZone(endX, endY, endM); if a then target.endW = { a, b, c } end end
+    target.passing = onward -- (the ride's end itself: no crossing left to pass)
     -- the live line (Nav.lua) is for exactly this target: the step itself (with its planned floor height) or a waypoint
     target.key = wx and (i .. ":" .. math.floor(wx) .. ":" .. math.floor(wy)) or nil
     target.z = (not leg) and (m == s.m) and not patrol and s.z or nil
@@ -462,7 +510,8 @@ function Arrow.SetTarget(i, force)
     target = nil; f:Hide(); ns.Fire("FR_DISTANCE", nil)
     if ns.GameNav then ns.GameNav.Follow(nil) end
     if ns.Nav then ns.Nav.Want(nil) end
-    noteHidden(not step and "no step" or unknown and "no known spot for this step" or inDungeon and ("inside " .. inDungeon .. " (no coordinates in a dungeon)") or ns.Is(UnitOnTaxi, "player") and "on a flight" or (trip and trip.how == "aboard") and "aboard (boat or tram, or somewhere no trip starts from)" or step.k == "hearth" and "hearth step (nowhere to walk)" or ("no position for this step: " .. tostring(step.k) .. " " .. tostring(step.text)))
+    noteHidden(not step and "no step" or unknown and "no known spot for this step" or inDungeon and ("inside " .. inDungeon .. " (no coordinates in a dungeon)") or ns.Is(UnitOnTaxi, "player") and "on a flight" or (trip and trip.how == "aboard") and "aboard (boat or tram, or somewhere no trip starts from)"
+      or (trip and trip.legs and trip.legs[1] and (trip.legs[1].how == "hearth" or trip.legs[1].how == "spell")) and "the trip starts with your hearthstone or a teleport (nowhere to walk)" or step.k == "hearth" and "hearth step (nowhere to walk)" or ("no position for this step: " .. tostring(step.k) .. " " .. tostring(step.text)))
   end
 end
 

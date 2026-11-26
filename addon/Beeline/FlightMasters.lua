@@ -34,7 +34,7 @@ ns.FLIGHT_BY = {
     [1452] = { { 0.6233, 0.3661, "Maethrya", "Everlook, Winterspring" } },
     [1453] = { { 0.7129, 0.7223, "Dungar Longdrink", "Stormwind, Elwynn" } },
     [1455] = { { 0.5550, 0.4774, "Gryth Thurden", "Ironforge, Dun Morogh" } },
-    [2482] = { { 0.6871, 0.4680, "Fayran Elthas", "Summit of Eternity, Mount Hyjal" }, { 0.5501, 0.8274, "Bluebell", "Tainted Foothills, Mount Hyjal" } },
+    [2482] = { { 0.6871, 0.4680, "Fayran Elthas", "Summit of Eternity, Mount Hyjal" }, { 0.5502, 0.8273, "Bluebell", "Tainted Foothills, Mount Hyjal" } },
     [2548] = { { 0.6060, 0.8154, "Gretchen Mayberry", "Farholde Keep, Riverglades" } },
   },
   Horde = {
@@ -65,7 +65,7 @@ ns.FLIGHT_BY = {
     [1454] = { { 0.4512, 0.6389, "Doras", "Orgrimmar, Durotar" } },
     [1456] = { { 0.4700, 0.4983, "Tal", "Thunder Bluff, Mulgore" } },
     [1458] = { { 0.6325, 0.4856, "Michael Garrett", "Undercity, Tirisfal" } },
-    [2482] = { { 0.6871, 0.4680, "Fayran Elthas", "Summit of Eternity, Mount Hyjal" }, { 0.5501, 0.8274, "Bluebell", "Tainted Foothills, Mount Hyjal" } },
+    [2482] = { { 0.6871, 0.4680, "Fayran Elthas", "Summit of Eternity, Mount Hyjal" }, { 0.5502, 0.8273, "Bluebell", "Tainted Foothills, Mount Hyjal" } },
     [2548] = { { 0.5959, 0.4508, "Grakna", "Rog'mar, Riverglades" } },
   },
 }

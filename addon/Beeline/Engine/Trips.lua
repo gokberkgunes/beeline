@@ -1,6 +1,7 @@
 -- Trip planning for a step (Engine.TravelFor, TravelPlan, TravelTarget): how to get to it when it is more than a walk.
 -- Part of the route engine; loaded right after Engine.lua (it registers no events).
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end
@@ -10,6 +11,15 @@ local planIndex = Engine._planIndex
 -- where a travel step without coordinates should point: the flight master in the zone you're in
 function Engine.TravelTarget(s)
   if not s or s.x or s.k ~= "fly" then return nil end
+  -- the live trip the card leads with, when there is one: its leg's waypoint (the crossing a ride heads for, the
+  -- flight master or pier of the trip) - one answer for card, arrow and map pin. TravelPlan's own guess below ("fly to
+  -- Feralas, then ride") is only for when no trip is planned. Aboard, or a hearth / teleport first: nowhere to walk.
+  local trip = Engine.TravelFor and Engine.TravelFor(s)
+  if trip then
+    if not (trip.m and trip.x) then return nil end
+    local l1 = trip.legs and trip.legs[1]
+    return trip.m, trip.x, trip.y, (l1 and l1.how == "fly" and l1.npc) or trip.fm or nil
+  end
   local m, px, py = ns.State.Position()
   local plan = Engine.TravelPlan(s)
   if plan and (plan.ride or not plan.via or plan.via == m) then return plan.m, plan.x, plan.y, nil end
@@ -112,6 +122,8 @@ function Engine.TravelFor(s)
   if m and tripSame(m, pm, fx, fy, L, n, onTaxi, aboard, bind, last, bm, rejoin) then return m[1] end
   local v = Engine.TravelForUncached(s)
   tripMemo[s] = { v, pm, fx, fy, L, n, onTaxi, aboard, bind, last, bm, rejoin }
+  -- (a fresh answer: the arrow follows when its first leg is not the one it points along - UI/Arrow.lua)
+  if ns.Arrow and ns.Arrow.TripChanged then ns.Arrow.TripChanged(s, v) end
   return v
 end
 function Engine.TravelForUncached(s)

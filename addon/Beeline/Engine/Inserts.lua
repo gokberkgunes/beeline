@@ -1,6 +1,7 @@
 -- The route engine, adding a stop where it costs least, and side trips merged into your route. Loaded right after
 -- Engine.lua, so its event handlers run in the same order as before the split.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Engine = ns.Engine
 local State = ns.State
 local function steps() return BeelineData and BeelineData.steps or {} end

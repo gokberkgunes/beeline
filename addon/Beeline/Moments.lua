@@ -16,6 +16,7 @@
 -- once, a few seconds later (one timer at a time), and a capture (the report's gather, a few ms) happens at most once
 -- per Moments.COOLDOWN for the automatic ones. tests/_perf.lua prices both ("moment check", "moment saved").
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Moments = {}
 ns.Moments = Moments
 
@@ -268,12 +269,28 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- the hooks: FR_STEP (the card changed: compare, and look again once it settled) and the arrow's hidden reason
 Moments.last, Moments.pending = nil, nil
+-- a quest handed in this moment: its step reads "done" until the log's next read moves the card on (State: a fraction
+-- of a second, longer while a route change's passes run). Looked at in that gap, the card "showed a done step" it was
+-- about to leave (a report: What Niby Commands, handed in to Impsy right after its hand-in was added, the look 3 s
+-- after that). Such a step is looked at once more, a settle later, and kept only if the card still shows it.
+Moments.handedIn = {} -- [quest] = when it was handed in
+function Moments.NoteHandedIn(id) if id then Moments.handedIn[id] = now() end end
+ns.On("QUEST_TURNED_IN", function(id) Moments.NoteHandedIn(id) end)
+function Moments.JustHandedIn(q) local t = q and Moments.handedIn[q]; return t ~= nil and now() - t < Moments.SETTLE end
 function Moments.Look()
   Moments.pending = nil
   if quiet() then return nil end
   local i = ns.Engine.CardAt()
   if not i then return nil end
   local tag, why = Moments.CheckStep(i)
+  if tag == "done" then
+    local s = BeelineData.steps[i]
+    if s and Moments.JustHandedIn(s.q) and C_Timer and C_Timer.After then
+      Moments.pending = true
+      C_Timer.After(Moments.SETTLE, function() local ok, err = pcall(Moments.Look); if not ok and ns.LogError then pcall(ns.LogError, "moment", err) end end)
+      return nil
+    end
+  end
   if not tag then tag, why = Moments.CheckFlip() end
   if not tag then tag, why = Moments.CheckHeadsOut(i) end
   if tag then Moments.Capture(tag, why, true) end

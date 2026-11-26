@@ -4,6 +4,7 @@
 -- PC; the planner adds them to its walking model as extra ways to go - a trail only gets used where it is shorter than
 -- what the model knew, so wandering, detours and suboptimal walking cost nothing. Turn off in options.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Trails = {}
 ns.Trails = Trails
 

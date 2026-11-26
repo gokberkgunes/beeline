@@ -5,6 +5,7 @@
 -- legs, in full, after that.
 -- Built only when asked (a click on "?"): nothing here runs per frame. The card's line is memoized per step.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Explain = {}
 ns.Explain = Explain
 

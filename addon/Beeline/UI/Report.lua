@@ -4,6 +4,7 @@
 -- Anonymous by design: no character name, realm or account.
 -- Short form (fits a Discord message) leaves out the completed quests; Full adds them.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Report = {}
 ns.Report = Report
 local Style = ns.Style

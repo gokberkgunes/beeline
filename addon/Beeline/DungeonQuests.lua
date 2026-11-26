@@ -46,11 +46,12 @@ ns.DUNGEONS = {
 }
 ns.DUNGEON_QUESTS = {
   [33] = { -- Shadowfang Keep
-    ids = "1013 1014 1098",
+    ids = "1013 1014 1098 78261",
     open = {
       { 1013, "The Book of Ur", 16, "H", nil, "Keeper Bel'dugur, Undercity" },
       { 1014, "Arugal Must Die", 18, "H", nil, "Dalar Dawnweaver, Silverpine Forest" },
       { 1098, "Deathstalkers in Shadowfang", 18, "H", nil, "High Executor Hadrec, Silverpine Forest" },
+      { 78261, "The Horn of Xelthos", 1, nil, 8, "Dead Drop, Silverpine Forest" },
     },
   },
   [34] = { -- The Stockade
@@ -115,10 +116,11 @@ ns.DUNGEON_QUESTS = {
     },
   },
   [70] = { -- Uldaman
-    ids = "17 1139 1192 1956 2200 2201 2202 2204 2240 2278 2279 2280 2283 2284 2318 2339 2398 2418 2848 2855 8780 8787",
+    ids = "17 1139 1192 1360 1956 2200 2201 2202 2204 2240 2278 2279 2280 2283 2284 2318 2339 2342 2361 2398 2418 2848 2855 8780 8787",
     open = {
       { 17, "Uldaman Reagent Run", 38, "A", nil, "Ghak Healtouch, Loch Modan", any = { 2500 } },
       { 1139, "The Lost Tablets of Will", 35, "A", nil, "Advisor Belgrum, Ironforge", any = { 762 } },
+      { 1360, "Reclaimed Treasures", 33, "A", nil, "Krom Stoutarm, Ironforge" },
       { 1956, "Power in Uldaman", 35, nil, 128, "Tabetha, Dustwallow Marsh", any = { 1955 } },
       { 2200, "Back to Uldaman", 37, "A", nil, "Talvash del Kissel, Ironforge", any = { 2199 } },
       { 2201, "Find the Gems", 37, "A", nil, "Remains of a Paladin", true, any = { 2200 } },
@@ -132,6 +134,8 @@ ns.DUNGEON_QUESTS = {
       { 2284, "Necklace Recovery, Take 2", 37, "H", nil, "Dran Droffers, Orgrimmar", any = { 2283 } },
       { 2318, "Translating the Journal", 37, "H", nil, "Remains of a Paladin", true, any = { 2284 } },
       { 2339, "Find the Gems and Power Source", 37, "H", nil, "Jarkal Mossmeld, Badlands", any = { 2338 } },
+      { 2342, "Reclaimed Treasures", 33, "H", nil, "Patrick Garrett, Undercity" },
+      { 2361, "Restoring the Necklace", 37, "A", nil, "Talvash del Kissel, Ironforge", any = { 2204 } },
       { 2398, "The Lost Dwarves", 35, "A", nil, "Prospector Stormpike, Ironforge" },
       { 2418, "Power Stones", 30, nil, nil, "Rigglefuzz, Badlands" },
     },
@@ -220,7 +224,7 @@ ns.DUNGEON_QUESTS = {
     },
   },
   [229] = { -- Blackrock Spire
-    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016 84149 84153 84154 84157 84161 84162 84164 84167 84168 84172 84174 84175 84176 84179 84187 84192 96075 97448",
+    ids = "4701 4724 4729 4734 4735 4742 4764 4768 4788 4862 4866 4867 4903 4974 4981 4982 4983 5001 5002 5047 5081 5102 5124 5127 5160 5166 5167 5306 6502 6569 6602 6821 7761 8907 8911 8912 8915 8919 8920 8931 8934 8935 8938 8940 8941 8942 8951 8957 8966 8989 8994 8995 9016 84149 84153 84154 84157 84161 84162 84164 84167 84168 84172 84174 84175 84176 84179 84187 84192 96075 97448",
     open = {
       { 4701, "Put Her Down", 55, "A", nil, "Helendis Riverhorn, Burning Steppes" },
       { 4724, "The Pack Mistress", 55, "H", nil, "Galamav the Marksman, Badlands" },
@@ -232,6 +236,7 @@ ns.DUNGEON_QUESTS = {
       { 4768, "The Darkstone Tablet", 57, "H", nil, "Shadowmage Vivian Lagrave, Badlands" },
       { 4788, "The Final Tablets", 40, nil, nil, "Prospector Ironboot, Tanaris", any = { 5065 } },
       { 4862, "En-Ay-Es-Tee-Why", 55, nil, nil, "Kibler, Burning Steppes" },
+      { 4866, "Mother's Milk", 55, nil, nil, "Ragged John, Burning Steppes" },
       { 4867, "Urok Doomhowl", 55, nil, nil, "Warosh", true },
       { 4903, "Warlord's Command", 55, "H", nil, "a drop inside", true },
       { 4974, "For The Horde!", 55, "H", nil, "Thrall, Orgrimmar", any = { 4941 } },
@@ -334,7 +339,7 @@ ns.DUNGEON_QUESTS = {
     ids = "7509 7635",
   },
   [289] = { -- Scholomance
-    ids = "4771 5341 5343 5382 5384 5466 5515 5529 7629 7668 8258 8829 8932 8936 8939 8943 8956 8959 8969 8992 8999 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9020 9022 84165 84169 84173 84177 84184 84186 84191 84194 84195 84196 84200 84202 84203 84208 84210 97169",
+    ids = "4771 5341 5343 5382 5384 5466 5515 5529 7629 7668 8258 8829 8932 8936 8939 8943 8956 8959 8969 8992 8999 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9020 9022 84165 84169 84173 84177 84184 84186 84191 84194 84195 84196 84198 84200 84202 84203 84208 84210 97169",
     open = {
       { 4771, "Dawn's Gambit", 57, nil, nil, "Betina Bigglezink, Eastern Plaguelands", any = { 5531 } },
       { 5341, "Barov Family Fortune", 52, "H", nil, "Alexi Barov, Tirisfal Glades" },

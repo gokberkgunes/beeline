@@ -2,6 +2,7 @@
 -- the drop link, Back / Finish / Leave, and what feeds the rows (the companion's ready signal and change note, special
 -- side trips, a hand-in ready nearby).
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.C
 local Card = ns.Card
@@ -103,7 +104,7 @@ function Card.BuildFooter(frame)
   f.change:SetScript("OnLeave", function() GameTooltip:Hide() end)
   -- a special reward not done yet (the Cozy Sleeping Bag): one line, Do it now, dismiss
   footRow("special", C.gold, { "Do it now", 70, function() local r = f.special.route; if r then ns.EnterDungeonRoute(r.id) end end, "Switch to this side trip now. \"Back to plan\" on the card returns you." },
-    { function() Card.HideSpecial(f.special) end, "Hide this (it stays under Side trips). A stop for it in another zone shows it there." })
+    { function() Card.HideSpecial(f.special) end, "Hide this (it stays in the Beeline window, under side trips). A stop for it in another zone shows it there." })
   -- errands: bags nearly full, with the nearest vendor that can help
   footRow("errand", C.info, nil, { function() ns.Errands.Dismiss() end, "Hide until it changes" })
   -- a finished quest whose hand-in is close by (Engine.ReadyNearby): one line, Do it now
@@ -282,7 +283,7 @@ function Card.LayoutFooter(top)
       local best = ns.ZoneChoices().best
       if best then f.home.carryOn = best; line = "Click: back to your plan, in " .. Style.ShortZone(best.zone) .. ". Progress here is kept." end
     end
-    f.home.tip[2] = line or "Click: pick another zone to work from, or a side trip. Progress here is kept." -- (the table kept: no new one per layout)
+    f.home.tip[2] = line or "Click: pick another zone to work from. Side trips are in the same window. Progress here is kept." -- (the table kept: no new one per layout)
     f.home:ClearAllPoints(); f.home:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD + 4, -top + 1)
   end
   local undo = Card.UndoShown()

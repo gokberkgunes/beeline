@@ -1,6 +1,7 @@
 -- Routes: the routes in the plan, which one you are on, entering and leaving zones and side trips, a route's steps.
 -- Split out of Core.lua; loaded right after it.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 
 -- Several planned paths (BeelineRoutes) or one route (BeelineData). Progress flags are kept per route.
 function ns.Routes() return BeelineRoutes or (BeelineData and { BeelineData }) or {} end

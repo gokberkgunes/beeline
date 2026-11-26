@@ -57,9 +57,9 @@ are. Open any flight master's map once so the addon knows your flight paths.
 | Command | What it does |
 |---|---|
 | `/bee` | Show or hide the card |
-| `/bee list` | The whole route |
-| `/bee paths` | Where to? - the zones you could go to now |
-| `/bee dungeons` | Side trips: class quests, bonus items, dungeons |
+| `/bee list` | The Beeline window on your route (its sidebar has the rest: zones, side trips, log check) |
+| `/bee home` | Home base - the zones you could go to now |
+| `/bee dungeons` · `/bee class` · `/bee attune` · `/bee items` | Side trips: dungeons, class quests, attunements, special items |
 | `/bee skip` · `/bee back` · `/bee undo` | Move through the steps by hand |
 | `/bee logcheck` | Quests in your log the route won't use |
 | `/bee why` | Why the addon did what it just did |

@@ -1,0 +1,28 @@
+## Interface: 16001
+## Title: Beeline - walk maps: Kalimdor
+## Notes: The map line's walk grids for every zone of Kalimdor. Loaded by Beeline when you are there.
+## Author: noopz
+## Version: dev
+## Dependencies: Beeline
+## Group: Beeline
+## LoadOnDemand: 1
+Nav1411.lua
+Nav1412.lua
+Nav1413.lua
+Nav1438.lua
+Nav1439.lua
+Nav1440.lua
+Nav1441.lua
+Nav1442.lua
+Nav1443.lua
+Nav1444.lua
+Nav1445.lua
+Nav1446.lua
+Nav1447.lua
+Nav1448.lua
+Nav1449.lua
+Nav1450.lua
+Nav1451.lua
+Nav1452.lua
+Nav2482.lua
+Nav2652.lua

@@ -2,6 +2,7 @@
 -- The card itself: UI/Card.lua; its secure buttons: UI/Card/Secure.lua; its footer: UI/Card/Footer.lua.
 -- Dead simple: the headline is the current action, at most one sub-line, the reasons behind the "?" button.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.C
 local Card = {}
@@ -27,8 +28,14 @@ function Card.Describe(s)
     -- one who walks a route (Patrol.lua): not at the pin, somewhere along the route the map draws
     if detail and ns.Patrol and ns.Patrol.For(s) then detail = detail .. " · walks a route, see the map" end
   elseif s.k == "obj" then
-    title = Style.Hex(kind.color) .. (s.text or "Objective") .. "|r"
+    -- who the item comes from (the plan's from: "Shadowforge mobs", a vendor, the pack it comes in) goes beside the quest:
+    -- "A Dwarf and His Tools · from Shadowforge mobs". The title then drops the mobs the planner listed in its words
+    -- ("Collect 8 Tough Wolf Meat (Ragged Timber Wolf, Ragged Young Wolf)"), not where it is done ("(in Uldaman)")
+    local text = s.text or "Objective"
+    if s.from then text = text:gsub(" %((.-)%)$", function(inner) if not inner:find("^in ") then return "" end end) end
+    title = Style.Hex(kind.color) .. text .. "|r"
     detail = s.name and (qc .. s.name .. "|r") or nil
+    if s.from then detail = (detail and (detail .. "  ·  ") or "") .. "from " .. s.from end
   elseif s.k == "fly" and s.boat then
     -- the planner names the town the boat docks at ("Boat to Auberdine"); dest is only the zone
     title = Style.Hex(kind.color) .. (s.text or ((kind.verb or "") .. " " .. (s.dest or ""))) .. "|r"
@@ -96,6 +103,8 @@ function Card.TripHead(s)
   local trip = ns.Engine.TravelFor(s)
   local legs = trip and (trip.legs or { trip })
   if not (legs and legs[1]) then return nil end
+  -- (the trip there you skipped: the step heads the card, the trip is a line under it)
+  if s.k ~= "fly" and ns.Engine.SkippedTripInto and ns.Engine.SkippedTripInto(s) then return nil end
   if s.k == "fly" or #legs > 1 or trip.how == "aboard" or TRIP_LONG[legs[1].how] then return trip, legs end
   return nil
 end

@@ -4,6 +4,7 @@
 -- boat steps at that pier.
 -- Learned piers live in BeelineDB.docks (shared by your characters).
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Boats = {}
 ns.Boats = Boats
 

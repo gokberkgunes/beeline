@@ -14,6 +14,7 @@
 -- A waypoint of your own (you set a pin on the world map) is yours: the marker leaves it alone until you clear it.
 -- Only on a change of the arrow's target: nothing per frame.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local GameNav = {}
 ns.GameNav = GameNav
 local HBD = LibStub("HereBeDragons-2.0")

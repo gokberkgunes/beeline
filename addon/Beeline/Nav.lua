@@ -1,8 +1,9 @@
 -- Navigation: the walking line from where you really stand to what the arrow points at (the step, or the first
 -- waypoint of a trip on this map), along streets, bridges and ramps - never through a wall.
 --
--- Data: one byte per map square (4 yd in a city, 8 outdoors), baked from the planner's walk maps by tools/navgrid.js
--- into Nav/Nav<map>.lua (BeelineNavData[map]) and unpacked here the first time you need the zone. A square's
+-- Data: one byte per map square (4 yd in a city, 8 outdoors, 16 in the six biggest zones), baked from the planner's
+-- walk maps by tools/navgrid.js into Nav<map>.lua (BeelineNavData[map]: the cities in this addon, outdoor zones in a
+-- load-on-demand addon per continent, Nav.Load) and unpacked here the first time you need the zone. A square's
 -- byte says from which of its 8 neighbours you can step into it; the few places with more than one level (a bridge
 -- over the canal, an upper floor) are overlay nodes with their own links.
 -- Search: A* from the target back to you, a couple of milliseconds per frame. What it has explored stays: when you
@@ -80,8 +81,50 @@ for d = 1, 8 do FROMBIT[(-DR[d] + 1) * 3 + (-DC[d] + 1)] = 2 ^ (d - 1) end
 
 local clock = debugprofilestop or function() return GetTime() * 1000 end
 
-function Nav.Data(m) return BeelineNavData and BeelineNavData[m] or nil end
-function Nav.Has(m) return Nav.Data(m) ~= nil end
+-- Where the data is. The cities' grids are in this addon (Nav/Nav<map>.lua). Every outdoor zone's is in its
+-- continent's load-on-demand addon (Beeline_NavEK, Beeline_NavKalimdor: about 3 MB each), loaded the first time a
+-- line needs one of its maps - not at login, and only the continent you are on. Nav/Index.lua (BeelineNavIndex) says
+-- which addon holds a map and its rectangle, so the map for a walk is picked without loading anything. Loading is
+-- one frame's work (Nav.loadMs) and is never done in combat: until it is, the planned path stays on the map.
+Nav.loaded = {} -- addon -> true (loaded), false (it failed or isn't installed: not asked again)
+Nav.loadMs = {} -- addon -> how long its loading took
+local function indexOf(m) return m and BeelineNavIndex and BeelineNavIndex[m] or nil end
+local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
+Nav.InCombat = inCombat -- (the tests)
+-- load a continent's walk maps: true when they are here, false when they never will be, nil when not now (combat)
+function Nav.Load(addon)
+  if Nav.loaded[addon] ~= nil then return Nav.loaded[addon] end
+  if Nav.InCombat() then return nil end
+  local load = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
+  if not load then Nav.loaded[addon] = false; return false end
+  local t0 = clock()
+  local ok, done = pcall(load, addon)
+  Nav.loadMs[addon] = clock() - t0
+  Nav.loaded[addon] = (ok and done) and true or false
+  return Nav.loaded[addon]
+end
+-- map m's packed grid, its continent's addon loaded first when it is not here yet. nil: no grid for m, or not now
+function Nav.Data(m)
+  local D = m and BeelineNavData and BeelineNavData[m]
+  if D then return D end
+  local I = indexOf(m)
+  if not (I and I[1]) then return nil end
+  if Nav.Load(I[1]) then return BeelineNavData and BeelineNavData[m] or nil end
+  return nil
+end
+-- is there a grid for m (here, or in an addon that can still be loaded)?
+function Nav.Has(m)
+  if m and BeelineNavData and BeelineNavData[m] then return true end
+  local I = indexOf(m)
+  return (I and I[1] and Nav.loaded[I[1]] ~= false) and true or false
+end
+-- m's instance and rectangle in world yards (left, top, right, bottom), without loading anything
+function Nav.Bounds(m)
+  local D = m and BeelineNavData and BeelineNavData[m]
+  if D then return D.inst, D.left, D.top, D.right, D.bottom end
+  local I = indexOf(m)
+  if I then return I[2], I[3], I[4], I[5], I[6] end
+end
 
 -- a packed byte grid (tools/navgrid.js packBase): rows of tokens (run / copy from the row above / literal) -> the rows
 local function unpackRows(s, codes, W, pause)
@@ -593,15 +636,17 @@ function Nav.Path(S, from, sx, sy, pause)
 end
 
 -- which grid serves a walk from (px, py) to (tx, ty) in instance inst: the map you are on if it holds both ends,
--- else the target's map, else any that does
+-- else the target's map, else any that does (by the index: nothing is loaded to choose)
 function Nav.MapFor(px, py, tx, ty, inst, here, there)
   local function fits(m)
-    local D = m and Nav.Data(m)
-    return D and D.inst == inst and Nav.Inside(D, px, py) and Nav.Inside(D, tx, ty)
+    if not Nav.Has(m) then return false end
+    local i, l, t, r, b = Nav.Bounds(m)
+    return i == inst and px <= l and px >= r and py <= t and py >= b and tx <= l and tx >= r and ty <= t and ty >= b
   end
   if fits(here) then return here end
   if fits(there) then return there end
   for m in pairs(BeelineNavData or {}) do if fits(m) then return m end end
+  for m in pairs(BeelineNavIndex or {}) do if fits(m) then return m end end
   return nil
 end
 
@@ -783,6 +828,13 @@ local function plan(L)
   local here = ns.State.Position()
   local m = Nav.MapFor(px, py, L.wx, L.wy, L.inst, here, L.m)
   if not m then L.none = true; if live == L then setPath(nil) end; return end
+  -- (its continent's walk maps not loaded yet, and not now - in combat: the planned path meanwhile, and tick() tries
+  -- again once the fight is over; an addon that won't load is a zone without a walk map)
+  if not Nav.Data(m) then
+    if Nav.Has(m) then L.loading = true else L.none = true end
+    if live == L then setPath(nil) end
+    return
+  end
   local t0 = clock()
   local N = Nav.Grid(m, pause)
   -- the height you are at: where the last line had you, when you are still near it (a bridge stays a bridge)
@@ -801,7 +853,7 @@ local function plan(L)
   setPath(P)
 end
 local function start(L)
-  L.waiting, L.none = nil, nil
+  L.waiting, L.none, L.loading = nil, nil, nil
   L.job = coroutine.create(plan)
   L.at = GetTime()
   frame:Show()
@@ -822,7 +874,7 @@ function Nav.Want(t)
 end
 function Nav.Live() return live end
 -- is a line on its way (or drawn) for the current target? (false: no walk map holds both ends, or no way on it)
-function Nav.Coming() return live ~= nil and not live.none and not live.failedAt and not live.waiting end
+function Nav.Coming() return live ~= nil and not live.none and not live.failedAt and not live.waiting and not live.loading end
 -- the line for the target with this key, or nil (none yet, no data for this zone, no way)
 function Nav.PathFor(key) return live and live.key == key and live.path or nil end
 function Nav.Clear() Nav.Want(nil) end
@@ -878,6 +930,8 @@ local function tick(el)
     local _, off = Nav.Advance(P, px, py)
     if off > Nav.STRAY_YD then rejoin(L, px, py)
     elseif P.cursor ~= was or not wasLeft or abs(wasLeft - P.left) > 4 then ns.Fire("FR_NAVPROGRESS", L.key, P) end
+  elseif L.loading then
+    if not Nav.InCombat() then start(L) end
   elseif L.none then
     -- no grid held both ends: look again once you have moved on (a zone border)
     if not L.from or (px - L.from[1]) ^ 2 + (py - L.from[2]) ^ 2 > 2500 then L.from = { px, py }; start(L) end
@@ -935,8 +989,9 @@ function Nav.Report()
       (abs(md[3] - D.left) > 2 or abs(md[4] - D.top) > 2 or abs(md[1] - (D.left - D.right)) > 2) and " - THEY DIFFER: the plan's coordinates for this map are off" or " (the same)")
   elseif zm then add("map %s: %s", tostring(zm), D and "walk map present" or "no walk map shipped - the line falls back to the planned path") end
   local s = Nav.stats or {}
+  for a, ok in pairs(Nav.loaded) do add("walk maps %s: %s", a, ok and ("loaded in " .. f(Nav.loadMs[a]) .. " ms") or "would not load (not installed?)") end
   if live then
-    add("line: %s; last search on map %s: %s squares in %s ms over %s frames (unpack %s ms), %s yd in %s points, re-read %s times", live.path and "drawn" or (live.job and "being found" or (live.none and "no walk map holds both ends" or "none")), tostring(s.map), tostring(s.expansions), f(s.searchMs), tostring(s.frames), f(s.unpackMs), f(s.len), tostring(s.points), tostring(s.rejoined or 0))
+    add("line: %s; last search on map %s: %s squares in %s ms over %s frames (unpack %s ms), %s yd in %s points, re-read %s times", live.path and "drawn" or (live.job and "being found" or (live.none and "no walk map holds both ends" or (live.loading and "waits for the fight to end to load this continent's walk maps" or "none"))), tostring(s.map), tostring(s.expansions), f(s.searchMs), tostring(s.frames), f(s.unpackMs), f(s.len), tostring(s.points), tostring(s.rejoined or 0))
   else add("line: nothing to walk to") end
   if ns.Pins and ns.Pins.Sweep then add("stray frames on the minimap hidden just now: %d", ns.Pins.Sweep()) end
   return out

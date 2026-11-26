@@ -9,6 +9,7 @@
 --             bars - Card.FillDungeon; the plan's step waits in the timeline below
 -- its words: UI/Card/Text.lua; its secure buttons: UI/Card/Secure.lua; its footer: UI/Card/Footer.lua
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.C
 local Card = ns.Card

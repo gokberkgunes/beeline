@@ -1,6 +1,7 @@
 -- Live character state: completed quests, quests in the log (queried by ID, so collapsed log headers don't hide them),
 -- objective progress, position, flight paths. Writes a snapshot for the PC planner on logout / reload / turn-ins.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local State = {}
 ns.State = State
 
@@ -216,7 +217,9 @@ end
 ns.On("QUEST_ACCEPTED", function() C_Timer.After(0.5, function() pcall(State.NoteLog) end) end)
 ns.On("PLAYER_LOGIN", function() C_Timer.After(5, function() pcall(State.NoteLog) end) end)
 -- what is in your bags: [itemID] = how many (the backpack and your bags, not the bank). nil when the game won't say
-function State.BagItems()
+-- only: a set of item ids - the others are left out unasked (the slot's info is the dear call: a table, a link, per
+-- slot - and a full bag of a level-50 holds ~80)
+function State.BagItems(only)
   local C = type(C_Container) == "table" and C_Container or nil
   local slots = (C and C.GetContainerNumSlots) or GetContainerNumSlots
   local idAt = (C and C.GetContainerItemID) or GetContainerItemID
@@ -226,7 +229,7 @@ function State.BagItems()
     local n = call(slots, bag)
     for slot = 1, type(n) == "number" and n or 0 do
       local id = call(idAt, bag, slot)
-      if type(id) == "number" and id > 0 then
+      if type(id) == "number" and id > 0 and (not only or only[id]) then
         local count = 1
         local info = C and C.GetContainerItemInfo and call(C.GetContainerItemInfo, bag, slot)
         if type(info) == "table" and type(info.stackCount) == "number" and info.stackCount > 0 then count = info.stackCount end

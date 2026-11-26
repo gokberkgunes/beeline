@@ -1,5 +1,6 @@
--- Whole-route list: steps grouped under their hub/section headers, done steps dimmed with a tick,
--- the current one highlighted; mouse wheel scrolls; click a step to jump to it.
+-- The Route view of the Beeline window (UI/Window.lua): which path you follow, then your steps grouped under their
+-- hub/section headers, the current one highlighted; mouse wheel scrolls; click a step to jump to it. "Show done" (a
+-- toggle at the right of the line under the title) lists the whole plan, done steps dimmed with a tick.
 local _, ns = ...
 local Style = ns.Style
 local C = Style.C
@@ -7,7 +8,8 @@ local List = {}
 ns.List = List
 
 local f
-local ROW, VISIBLE = 18, 24
+local ROW, MAXROWS = 18, 28
+local vis = 20 -- the rows that fit under the header (List.DrawHeader)
 local rows = {}
 local entries = {} -- { header = text } or { index = i }
 local scrollToCurrentSoon = function() end -- set once scrollToCurrent exists (below)
@@ -54,37 +56,41 @@ local function rebuild()
   end
 end
 
-local function build()
-  f = CreateFrame("Frame", "BeelineList", UIParent)
-  f:SetSize(420, ROW * VISIBLE + 84)
-  f:SetPoint("CENTER")
-  Style.Window(f, "BeelineList")
-  f.title = Style.WindowTitle(f, 13, 12, -10)
-  f.sub = Style.Text(f, 10, C.sub); f.sub:SetPoint("TOPLEFT", 80, -12); f.sub:Hide()
-  local close = Style.CloseButton(f)
-  -- which path you're following: name + badges, the zones in order, level/hours, and a button to change it
-  f.paths = CreateFrame("Frame", nil, f); f.paths:SetPoint("TOPLEFT", 10, -32); f.paths:SetPoint("TOPRIGHT", -10, -32); f.paths:SetHeight(60)
+-- the Route view of the Beeline window (UI/Window.lua): its panel is handed over the first time it is shown, and the
+-- rows are made then (never at login)
+local function build(panel)
+  f = panel
+  local IW = ns.Window.INNER
+  -- which path you're following: name + badges, the zones in order, level/hours
+  f.paths = CreateFrame("Frame", nil, f); f.paths:SetPoint("TOPLEFT", 0, 0); f.paths:SetPoint("TOPRIGHT", -8, 0); f.paths:SetHeight(60)
   f.paths.bg = Style.RowBg(f.paths, 10, 0.06, C.gold)
   f.pathLabel = Style.Text(f.paths, 9, C.dim, "OUTLINE"); f.pathLabel:SetPoint("TOPLEFT", 10, -8); f.pathLabel:SetText("FOLLOWING")
   f.pathName = Style.Text(f.paths, 12, C.text, "OUTLINE"); f.pathName:SetPoint("LEFT", f.pathLabel, "RIGHT", 6, 0); f.pathName:SetWordWrap(false)
   f.pathFast = Style.Pill(f.paths, "MOST ENJOYABLE", C.good)
-  f.logc = Style.Button(f, "Log check", 74, 18, function() ns.Fire("FR_TOGGLE_LOGCHECK") end, "Which quests in your log are worth keeping, and which to drop")
-  f.logc:SetPoint("TOPRIGHT", -32, -8)
-  f.dung = Style.Button(f, "Side trips", 70, 18, function() ns.Fire("FR_TOGGLE_DUNGEONS") end, "Special rewards (like the Cozy Sleeping Bag) and dungeon routes - each a side trip that keeps your path")
-  f.dung:SetPoint("RIGHT", f.logc, "LEFT", -4, 0)
-  f.change = Style.Button(f, "Home base", 88, 18, function() ns.Fire("FR_TOGGLE_PATHS") end, "The zones you could go to now, and your planned paths")
-  f.change:SetPoint("RIGHT", f.dung, "LEFT", -4, 0)
-  f.hide = Style.Button(f, ns.db.hideDone ~= false and "Show done" or "Hide done", 70, 18, function(self)
-    ns.db.hideDone = (ns.db.hideDone == false); self.label:SetText(ns.db.hideDone ~= false and "Show done" or "Hide done")
+  -- "Show done": a small toggle at the right of the line under the title (the view's own, not the window's)
+  f.showDone = CreateFrame("Button", nil, f); f.showDone:SetSize(ns.Window.ACTION_W, 22)
+  f.showDone:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", 0, ns.Window.TOP - 46)
+  Style.Check(f.showDone)
+  f.showDone.text = Style.Text(f.showDone, 10, C.sub); f.showDone.text:SetPoint("LEFT", f.showDone.box, "RIGHT", 4, 0); f.showDone.text:SetText("Show done")
+  f.showDone.sync = function(self)
+    local on = ns.db.hideDone == false
+    local c = on and C.text or C.sub
+    self.text:SetTextColor(c[1], c[2], c[3]); Style.PaintCheck(self, on)
+  end
+  f.showDone:SetScript("OnClick", function(self)
+    ns.db.hideDone = (ns.db.hideDone == false); List.Intro()
     rebuild(); scrollToCurrentSoon(); List.Draw(true)
-  end, "Done steps hidden, the list starting where you are - or the whole plan with what you've done")
-  f.hide:SetPoint("RIGHT", f.change, "LEFT", -4, 0)
-  f.pathChips = CreateFrame("Frame", nil, f.paths); f.pathChips:SetPoint("TOPLEFT", 10, -26); f.pathChips:SetSize(380, 18)
+  end)
+  f.showDone:HookScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:SetText("Show done", 1, 1, 1); GameTooltip:AddLine("Off: done steps hidden, the list starting where you are. On: the whole plan, with what you've done.", 0.72, 0.76, 0.84, true); GameTooltip:Show() end)
+  f.showDone:HookScript("OnLeave", GameTooltip_Hide)
+  f.showDone:sync()
+  f.pathChips = CreateFrame("Frame", nil, f.paths); f.pathChips:SetPoint("TOPLEFT", 10, -26); f.pathChips:SetSize(IW - 28, 18)
   f.pathMeta = Style.Text(f.paths, 10, C.sub); f.pathMeta:SetWordWrap(false)
   -- the plan's details (when and from what it was planned) on hovering that line, not in it
   f.metaHit = CreateFrame("Frame", nil, f.paths); f.metaHit:EnableMouse(true)
   f.metaHit:RegisterForDrag("LeftButton") -- (the window still drags from here)
-  f.metaHit:SetScript("OnDragStart", function() f:StartMoving() end); f.metaHit:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+  local win = ns.Window.Frame()
+  f.metaHit:SetScript("OnDragStart", function() win:StartMoving() end); f.metaHit:SetScript("OnDragStop", function() win:StopMovingOrSizing() end)
   f.metaHit:SetScript("OnEnter", function(self)
     local lines = List.MetaTip()
     if #lines == 0 then return end
@@ -93,9 +99,9 @@ local function build()
     GameTooltip:Show()
   end)
   f.metaHit:SetScript("OnLeave", GameTooltip_Hide)
-  for k = 1, VISIBLE do
+  for k = 1, MAXROWS do
     local r = CreateFrame("Button", nil, f); r:SetHeight(ROW)
-    r:SetPoint("RIGHT", -14, 0)
+    r:SetPoint("RIGHT", -12, 0)
     r.hl = Style.Fill(r, "BACKGROUND"); r.hl:SetAllPoints()
     r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(12, 12); r.icon:SetPoint("LEFT", 14, 0)
     r.text = Style.Text(r, 11, C.text); r.text:SetPoint("LEFT", r.icon, "RIGHT", 7, 0); r.text:SetPoint("RIGHT"); r.text:SetWordWrap(false); r.text:SetJustifyV("MIDDLE")
@@ -115,17 +121,16 @@ local function build()
   end
   -- scrollbar: the wheel, or drag / click it (Style.ScrollGrip)
   f.track, f.thumb = Style.ScrollTrack(f, 3, 0.04)
-  f.track:SetPoint("BOTTOMRIGHT", -6, 14)
+  f.track:SetPoint("BOTTOMRIGHT", 2, 4)
   f.offset = 0
   f:EnableMouseWheel(true)
   f:SetScript("OnMouseWheel", function(_, d) List.Scroll(-d * 3) end)
   -- drag it, or click to jump
-  f.grip = Style.ScrollGrip(f, f.track, f.thumb, function(fr) local n = #entries; f.offset = math.floor(fr * math.max(0, n - VISIBLE) + 0.5); List.Draw("rows") end)
-  f:Hide()
+  f.grip = Style.ScrollGrip(f, f.track, f.thumb, function(fr) local n = #entries; f.offset = math.floor(fr * math.max(0, n - vis) + 0.5); List.Draw("rows") end)
 end
 
 function List.Scroll(d)
-  f.offset = math.max(0, math.min(#entries - VISIBLE, f.offset + d))
+  f.offset = math.max(0, math.min(#entries - vis, f.offset + d))
   List.Draw("rows")
 end
 
@@ -144,13 +149,13 @@ local function drawPass()
   -- only redraw, so a stale list would put every header after the new stop one row off and lose the last step
   -- (with done steps hidden, the list changes as you play: rebuilt when it changed)
   if (full and ns.db.hideDone ~= false) or (data and data.steps) ~= builtFor or (data and data.steps and #data.steps) ~= builtN then
-    rebuild(); f.offset = math.max(0, math.min(#entries - VISIBLE, f.offset))
+    rebuild(); f.offset = math.max(0, math.min(#entries - vis, f.offset))
   end
   if full then List.DrawHeader(data) end
   List.DrawRows(data)
 end
 function List.Draw(mode)
-  if not f or not f:IsShown() then return end
+  if not (f and ns.Window.IsShown("route")) then return end
   local data = BeelineData
   local E = ns.Engine
   local sig = table.concat({ tostring(data), tostring(data and data.steps), tostring(data and data.steps and #data.steps), tostring(E.Shown and E.Shown()),
@@ -165,13 +170,11 @@ function List.Draw(mode)
   E.ReadPass(drawPass)
 end
 function List.DrawHeader(data)
-  f.title:SetText("Route")
   local list = ns.MainRoutes()
   local main = data and data.branch and ns.RouteById(data.parent) or data
   local idx = 1; for i, r in ipairs(list) do if r == main then idx = i end end
   local m = data and data.meta or {}
   local done, total = ns.Engine.Progress()
-  f.sub:SetText("")
   if data then
     f.pathName:SetText(data.special and ("Side trip: " .. (data.dungeonName or data.title)) or data.dungeon and ("Dungeon route: " .. (data.dungeonName or data.title)) or data.zoneRoute and ("Home base: " .. Style.ShortZone(data.zoneName or "")) or data.branch and ("Path " .. idx .. ": " .. (data.title or "")) or (#list <= 1 and "Your plan") or ("Path " .. idx .. " of " .. #list))
     f.pathName:SetWidth(math.min(300, f.pathName:GetStringWidth() + 2))
@@ -190,30 +193,29 @@ function List.DrawHeader(data)
     end
     -- (a stop in a capital on the way is not a zone you go to)
     do local kept = {}; for _, z in ipairs(legs) do if not (ns.IsCapital and ns.IsCapital(z)) and kept[#kept] ~= z then kept[#kept + 1] = z end end; if #kept > 0 then legs = kept end end
-    local hc = Style.Chips(f.pathChips, legs, 396, 5)
+    local hc = Style.Chips(f.pathChips, legs, ns.Window.INNER - 32, 5)
     f.pathChips:SetHeight(hc)
     f.pathMeta:ClearAllPoints(); f.pathMeta:SetPoint("TOPLEFT", f.pathChips, "BOTTOMLEFT", 0, -6); f.pathMeta:SetPoint("RIGHT", f.paths, "RIGHT", -10, 0)
     -- (a side trip or dungeon route has no level to reach)
     f.pathMeta:SetText(List.MetaText(data.dungeon and { hours = m.hours } or m, done, total))
-    f.pathMeta:SetWordWrap(true); f.pathMeta:SetWidth(396)
+    f.pathMeta:SetWordWrap(true); f.pathMeta:SetWidth(ns.Window.INNER - 32)
     f.metaHit:ClearAllPoints(); f.metaHit:SetAllPoints(f.pathMeta); f.metaHit:Show()
     f.paths:SetHeight(26 + hc + 10 + f.pathMeta:GetStringHeight() + 8)
   else
-    f.pathName:SetText("No route loaded"); f.pathFast:Hide(); Style.Chips(f.pathChips, {}, 396); f.pathMeta:SetText(""); f.metaHit:Hide(); f.paths:SetHeight(30)
+    f.pathName:SetText("No route loaded"); f.pathFast:Hide(); Style.Chips(f.pathChips, {}, ns.Window.INNER - 32); f.pathMeta:SetText(""); f.metaHit:Hide(); f.paths:SetHeight(30)
   end
-  -- (a built-in plan has one path: its zone routes are what you pick from, so the button shows without the companion)
-  f.change:SetShown((#list > 1 or #ns.ZoneRoutes() > 0) and not (data and data.dungeon and not data.special))
-  f.dung:SetShown(#ns.DungeonRoutes() > 0)
   -- the step rows sit under the header, whatever its height
-  local top = 32 + f.paths:GetHeight() + 8
-  for k, r in ipairs(rows) do r:ClearAllPoints(); r:SetPoint("TOPLEFT", 10, -top - (k - 1) * ROW); r:SetPoint("RIGHT", -14, 0) end
-  f.track:ClearAllPoints(); f.track:SetPoint("TOPRIGHT", -6, -top); f.track:SetPoint("BOTTOMRIGHT", -6, 14)
-  f:SetHeight(top + ROW * VISIBLE + 16)
+  -- (as many as fit in the panel under it: the window keeps its size)
+  local top = f.paths:GetHeight() + 8
+  vis = math.max(1, math.min(MAXROWS, math.floor(((f:GetHeight() or 0) - top - 4) / ROW)))
+  for k, r in ipairs(rows) do r:ClearAllPoints(); r:SetPoint("TOPLEFT", 0, -top - (k - 1) * ROW); r:SetPoint("RIGHT", -12, 0) end
+  f.track:ClearAllPoints(); f.track:SetPoint("TOPRIGHT", 2, -top); f.track:SetPoint("BOTTOMRIGHT", 2, 4)
+  f.offset = math.max(0, math.min(#entries - vis, f.offset))
 end
 function List.DrawRows(data)
   local cur = ns.Engine.Shown()
   for k, r in ipairs(rows) do
-    local e = entries[f.offset + k]
+    local e = k <= vis and entries[f.offset + k]
     r.index = nil
     if not e then r:Hide()
     elseif e.header then
@@ -241,8 +243,8 @@ function List.DrawRows(data)
   end
   local n = math.max(1, #entries)
   local h = f.track:GetHeight()
-  f.thumb:SetHeight(math.max(16, h * math.min(1, VISIBLE / n)))
-  f.thumb:ClearAllPoints(); f.thumb:SetPoint("TOPRIGHT", f.track, "TOPRIGHT", 0, -(h - f.thumb:GetHeight()) * (f.offset / math.max(1, n - VISIBLE)))
+  f.thumb:SetHeight(math.max(16, h * math.min(1, vis / n)))
+  f.thumb:ClearAllPoints(); f.thumb:SetPoint("TOPRIGHT", f.track, "TOPRIGHT", 0, -(h - f.thumb:GetHeight()) * (f.offset / math.max(1, n - vis)))
 end
 
 -- The header's line: where the plan takes you and what's left of it - "To level 43  ·  about 37 h left  ·  26 of 893
@@ -290,23 +292,31 @@ local function scrollToCurrent()
   if not f then return end
   local cur = ns.Engine.Shown()
   f.offset = 0
-  for k, e in ipairs(entries) do if e.index == cur then f.offset = math.max(0, math.min(#entries - VISIBLE, k - 4)); break end end
+  for k, e in ipairs(entries) do if e.index == cur then f.offset = math.max(0, math.min(#entries - vis, k - 4)); break end end
 end
 
 scrollToCurrentSoon = function() scrollToCurrent() end
+-- the line under the title says which list it is
+function List.Intro()
+  f.showDone:sync()
+  ns.Window.SetIntro(ns.db.hideDone ~= false and "Your steps from where you are, under the zones they're in" or "Your whole plan, with what you've done")
+end
 local function open()
-  rebuild(); f:Show()
+  List.Intro()
+  rebuild()
   scrollToCurrent()
   List.Draw(true)
 end
-function List.Toggle()
-  if not f then return end -- (a key pressed while loading)
-  if f:IsShown() then f:Hide(); return end
-  ns.Engine.ReadPass(open) -- (the list, the done count and the zones ahead ask each step's status once between them)
-end
+-- the Beeline window on the Route view; closed when it is on it already
+function List.Toggle() ns.Window.Toggle("route") end
+function List.Frame() return f end
 
-ns.On("FR_LOADED", build)
+ns.Window.Register("route", { label = "Route", icon = "btn-list", color = C.gold, title = "Route", group = 1, order = 1,
+  tip = "Your steps from where you are, under the zones they're in",
+  build = build,
+  -- (the list, the done count and the zones ahead ask each step's status once between them)
+  show = function() ns.Engine.ReadPass(open) end })
 ns.On("FR_TOGGLE_LIST", function() List.Toggle() end)
 ns.On("FR_STEP", function() List.Draw() end)
 -- another path or "Back to my path": show where you are on it, not its first step
-ns.On("FR_ROUTE_CHANGED", function() if f and f:IsShown() then rebuild(); scrollToCurrent(); List.Draw(true) end end)
+ns.On("FR_ROUTE_CHANGED", function() if f and ns.Window.IsShown("route") then rebuild(); scrollToCurrent(); List.Draw(true) end end)

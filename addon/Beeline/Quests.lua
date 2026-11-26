@@ -1,5 +1,6 @@
 -- Quest dialogs: suggest the best quest reward for this character (highlight + chat line). Never clicks anything.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Q = {}
 ns.Quests = Q
 

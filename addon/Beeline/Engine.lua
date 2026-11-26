@@ -2,6 +2,7 @@
 -- Steps (from Route.lua): { id, k = kind, q = questID, name, npc, m = uiMapID, x, y (0-1), r = arrive radius, match = objective
 --   text, text, note, warn, minLevel, level, lvl (planned level here), xp, to (destination map), bind, fp, item, target, sec }
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Engine = {}
 ns.Engine = Engine
 local State = ns.State -- (State.lua loads first: the .toc)
@@ -436,7 +437,7 @@ local function planIndex()
   if c and c.gen == (list._gen or 0) then return c, list end
   -- (binds: the bind stops in order; trainAfter[i]: the lowest level a training stop after step i is for;
   -- trainLo[i]: the lowest level training stop i names ("level 34/36" is 34) - read once, not on every status)
-  c = { gen = list._gen or 0, idx = {}, eff = {}, accept = {}, turnin = {}, at = {}, binds = {}, trainAfter = {}, trainLo = {} }
+  c = { gen = list._gen or 0, idx = {}, eff = {}, accept = {}, acceptMore = {}, turnin = {}, at = {}, binds = {}, trainAfter = {}, trainLo = {} }
   local nxt, train
   for i = #list, 1, -1 do
     local s = list[i]
@@ -451,7 +452,11 @@ local function planIndex()
     if tonumber(s.lvl) then nxt = s.lvl end
     c.eff[i] = nxt
     if s.q and s.q > 0 then
-      if s.k == "accept" then c.accept[s.q] = i elseif s.k == "turnin" and not s.inserted then c.turnin[s.q] = i end -- (the first of each: this runs backwards)
+      if s.k == "accept" then
+        -- (a quest picked up at more than one step - a stop added for its giver: the others, Engine.PreReachable)
+        if c.accept[s.q] then local m = c.acceptMore[s.q]; if not m then m = {}; c.acceptMore[s.q] = m end; m[#m + 1] = c.accept[s.q] end
+        c.accept[s.q] = i
+      elseif s.k == "turnin" and not s.inserted then c.turnin[s.q] = i end -- (the first of each: this runs backwards)
     end
   end
   local last -- the last steps of a plan, with no stamped step after them: the level before
@@ -460,6 +465,20 @@ local function planIndex()
   return c, list
 end
 Engine._planIndex = planIndex -- (Engine/Trips.lua)
+-- you skipped the plan's own trip into step s's zone (the flight to the Hinterlands, then its quests one by one - tester):
+-- the card heads the step itself, not that trip again ("Fly to Aerie Peak" stayed the headline at every skip, as if the
+-- skip did nothing). Back from s through its visit (steps with no zone go with it) to the trip that starts it.
+local TRIP_INTO = { fly = true, hearth = true, boat = true }
+function Engine.SkippedTripInto(s)
+  if not (s and s.zone and ns.char and ns.char.skipped) then return false end
+  local c, list = planIndex(); local i = c.idx[s]; if not i then return false end
+  for j = i - 1, math.max(1, i - 200), -1 do
+    local t = list[j]
+    if TRIP_INTO[t.k] and t.dest then return t.dest == s.zone and ns.char.skipped[key(j)] == true end
+    if t.zone and t.zone ~= s.zone then return false end
+  end
+  return false
+end
 -- the level the plan has you at, at step i (nil on a plan without levels)
 function Engine.PlanLevel(i) return (planIndex()).eff[i] end
 -- the level training stop i is for: the lowest its text names ("Train level 34/36 spells": 34), or its until_ when higher -
@@ -921,8 +940,34 @@ local function pendingPre(p, depth)
   return not State.IsCompleted(p) and (State.OnQuest(p) or (depth < 6 and Engine.WaitsOnLog(p, depth + 1)))
 end
 -- the prerequisites q still needs (ns.QUEST_PRE: all of g, one of s), each one you can still get on this route: in
--- your log, or with a hand-in on the route
-local function preGettable(p) return State.IsCompleted(p) or State.OnQuest(p) or (planIndex()).turnin[p] ~= nil end
+-- your log, or with a hand-in on the route. On a zone you picked, a hand-in on it is enough (its pick-up may be on the
+-- main route). On any other plan the quest's pick-up must still be ahead: one with every pick-up step passed over -
+-- behind you, cut by its own chain - is never taken, so it is never handed in either (They Call Him Smiling Jim
+-- skipped and James Hyal's pick-up behind you: Suspicious Hoofprints, which needs one of them, stayed on the card -
+-- mutate --play 7). One the giver didn't offer you is off the route only until your next level (Availability): its
+-- chain stays. A quest the plan has no pick-up step for (an item starts it, or the plan never has it) is taken as
+-- gettable, as before. (reachDepth: a loop in the quest data can't recurse for ever - past it, gettable)
+local reachDepth = 0
+local function pickUpAhead(c, p)
+  local a = c.accept[p]
+  if not a then return true end
+  if ns.Avail and ns.Avail.Unavailable(p) then return true end
+  if Engine.Status(a) ~= "done" then return true end
+  local more = c.acceptMore[p]
+  if more then for n = 1, #more do if Engine.Status(more[n]) ~= "done" then return true end end end
+  return false
+end
+local function preGettable(p)
+  if State.IsCompleted(p) or State.OnQuest(p) then return true end
+  local c = planIndex()
+  if BeelineData and BeelineData.zoneRoute then return c.turnin[p] ~= nil end
+  if reachDepth > 12 then return true end
+  reachDepth = reachDepth + 1
+  local ok, v = pcall(pickUpAhead, c, p)
+  reachDepth = reachDepth - 1
+  if not ok then error(v, 0) end
+  return v
+end
 function Engine.PreReachable(q)
   local pre = ns.QUEST_PRE and ns.QUEST_PRE[q]
   if not pre then return true end
@@ -934,12 +979,14 @@ function Engine.PreReachable(q)
   end
   return true
 end
--- on a zone you picked, a quest not in your log whose prerequisites are not met and can't be got on this route (none in
--- your log, none handed in on it): the giver never has it for you here, so none of its steps is left - its pick-up, its
--- objectives, its hand-in, and the trips to them (cutting only the pick-up left trips to its objectives).
+-- a quest not in your log whose prerequisites are not met and can't be got on this route (none in your log, none still
+-- to be picked up and handed in on it - Engine.PreReachable): the giver never has it for you, so none of its steps is
+-- left - its pick-up, its objectives, its hand-in, and the trips to them (cutting only the pick-up left trips to its
+-- objectives). A zone you picked first (its prerequisites on the level 32 route), then the built-in plan too (an
+-- earlier quest skipped, the other way in behind you).
 -- (A quest the game showed on offer anyway - Availability - is taken as offered.)
-function Engine.ZoneUnreachable(q)
-  if not (BeelineData and BeelineData.zoneRoute and ns.QUEST_PRE and ns.QUEST_PRE[q]) then return false end
+function Engine.Unreachable(q)
+  if not (BeelineData and ns.QUEST_PRE and ns.QUEST_PRE[q]) then return false end
   if ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[q] then return false end
   return not State.PrereqsMet(q) and not Engine.PreReachable(q)
 end
@@ -994,7 +1041,7 @@ local function statusRaw(i)
   elseif Engine.Outlevelled(s) or Engine.Breadcrumbed(s) or Engine.Excluded(s) or (Engine.asTaken ~= s and Engine.BehindYou(s)) then return "done" end
   -- its earlier chain quest you skipped or said you're not doing: the game never offers it, so none of its steps is
   -- left (the ones of a quest you have are yours to do)
-  if s.q and s.q > 0 and not State.OnQuest(s.q) and not State.IsCompleted(s.q) and (Engine.ChainCut(s.q) or Engine.ZoneUnreachable(s.q)) then return "done" end
+  if s.q and s.q > 0 and not State.OnQuest(s.q) and not State.IsCompleted(s.q) and (Engine.ChainCut(s.q) or Engine.Unreachable(s.q)) then return "done" end
   local k = s.k
   if k == "hearth" then
     local can, why = Engine.HearthUsable(i)
@@ -1014,7 +1061,7 @@ local function statusRaw(i)
     local pre = ns.QUEST_PRE and ns.QUEST_PRE[s.q]
     if pre and not (ns.char and ns.char.avail and ns.char.avail.seen and ns.char.avail.seen[s.q]) then
       if BeelineData and BeelineData.zoneRoute then
-        -- (one whose prerequisites can't be got here at all is cut above, every step of it: Engine.ZoneUnreachable)
+        -- (one whose prerequisites can't be got here at all is cut above, every step of it: Engine.Unreachable)
         if not State.PrereqsMet(s.q) then return "wait" end
       elseif Engine.WaitsOnLog(s.q) then return "wait" end
     end

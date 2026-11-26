@@ -3,18 +3,20 @@
 --   on the route, but gray by the time you get there         -> suggest abandoning
 --   finished, but not on the route                           -> hand it in if you pass by
 --   on the route                                             -> keep (and when it comes up)
--- Nothing is abandoned unless you click Abandon and confirm. Opened from the route list or /bee logcheck.
+-- Nothing is abandoned unless you click Abandon and confirm. The Log check view of the Beeline window (UI/Window.lua):
+-- opened from its sidebar, the card's "N off-route" line, /bee logcheck (FR_TOGGLE_LOGCHECK).
 -- Below the quests: the quest items in your bags that nothing needs any more (LogCheck.Leftovers) - a list of what is
 -- safe to delete. Deleting is yours to do: the addon never destroys an item.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Style = ns.Style
 local C = Style.C
 local LogCheck = {}
 ns.LogCheck = LogCheck
 
-local f, recount
+local f, recount -- f: the view's panel (made the first time it is shown)
 -- BTNS: the column the buttons take on the right (Bring back / Keep + Abandon); the text keeps clear of it and wraps
-local W, PAD, ROW, BTNS = 560, 14, 34, 176
+local W, PAD, ROW, BTNS = ns.Window.INNER + 2 * ns.Window.PAD, ns.Window.PAD, 34, 176
 local rows = {}
 
 local call = ns.Util.Call
@@ -85,9 +87,11 @@ local function keepReason(e)
   if e.title and e.title:find("^Camping") then return "Camping - benefits later" end
 end
 -- a zone route for your level with this quest on it (the zone you'd pick as home base to do it): its route, or nil
-function LogCheck.ZoneFor(q)
+-- (routes: ns.ZoneRoutesAt() asked once by the caller - Classify, for the whole log, not a walk and a sort over all the
+-- plan's zone routes for each quest)
+function LogCheck.ZoneFor(q, routes)
   if not (ns.ZoneRoutesAt and ns.QuestIds) then return nil end
-  for _, r in ipairs(ns.ZoneRoutesAt()) do if ns.QuestIds(r)[q] and r ~= BeelineData then return r end end
+  for _, r in ipairs(routes or ns.ZoneRoutesAt()) do if ns.QuestIds(r)[q] and r ~= BeelineData then return r end end
 end
 function LogCheck.Classify()
   local here = BeelineData
@@ -95,6 +99,7 @@ function LogCheck.Classify()
   local path = here and (here.branch or here.dungeon or here.zoneRoute) and ns.ResolvePath((here.dungeon or here.zoneRoute) and ns.char.returnTo or here.parent) or here
   local myLevel = UnitLevel("player")
   local list = {}
+  local dungeons, zones -- (the dungeon routes, the zone routes at your level: looked up once, when a quest needs them)
   for _, e in ipairs(LogCheck.Entries()) do
     local q = ns.State.Quest(e.id)
     local done = q and q.complete
@@ -102,7 +107,7 @@ function LogCheck.Classify()
     local where = here
     if not i and path ~= here then i, planLvl = findIn(path, e.id); where = path end
     local inDungeon = false
-    if not i then for _, r in ipairs(ns.DungeonRoutes()) do if ns.QuestIds(r)[e.id] then inDungeon = r.dungeonName; break end end end
+    if not i then dungeons = dungeons or ns.DungeonRoutes(); for _, r in ipairs(dungeons) do if ns.QuestIds(r)[e.id] then inDungeon = r.dungeonName; break end end end
     local verdict, why
     local keep = keepReason(e)
     local gray, via = grayRule(e, myLevel)
@@ -135,7 +140,8 @@ function LogCheck.Classify()
     else
       -- (not "drop": another zone's route has it: picking that zone as home base brings it along; a side quest: its
       -- stops are fitted in; else it's simply yours)
-      local zr = LogCheck.ZoneFor(e.id)
+      zones = zones or (ns.ZoneRoutesAt and ns.ZoneRoutesAt()) or {}
+      local zr = LogCheck.ZoneFor(e.id, zones)
       if zr then
         verdict, why = "yours", "In " .. Style.ShortZone(zr.zoneName) .. ": pick it as home base and this joins your route"
         list[#list + 1] = { e = e, verdict = verdict, why = why, zone = zr }
@@ -163,10 +169,23 @@ end
 -- route still plans. Quests of the other side or another class don't count. Anything that is not a quest item by the
 -- game's own filing (cloth, meat, a potion some quest also asks for) is never listed.
 -- bags: [itemID] = count (default: your bags) -> { { id, name, count, why, quests = { id... } } }, by name
+-- (your bags: their quest items only, read once until they change - BAG_UPDATE. Opening the log check read every
+-- slot's info each time: ~80 slots of a level-50's bags, a table and a link each - 7-9 ms in a player's game, 1.3 in
+-- the simulator, which had no bags)
+local bagMemo
+local function questBags(items)
+  local read = ns.State.BagItems
+  if not read then return nil end
+  if not (bagMemo and bagMemo.read == read and bagMemo.items == items) then bagMemo = { read = read, items = items, v = read(items) } end
+  return bagMemo.v
+end
+ns.On("BAG_UPDATE", function() bagMemo = nil end, true)
+local function nameAndClass(...) return (...), (select(12, ...)) end -- (GetItemInfo's name and classID)
+ns.On("BAG_UPDATE_DELAYED", function() bagMemo = nil end, true)
 function LogCheck.Leftovers(bags)
   local items = ns.QUEST_ITEMS
   if not items then return {} end
-  bags = bags or (ns.State.BagItems and ns.State.BagItems())
+  bags = bags or questBags(items)
   if type(bags) ~= "table" then return {} end
   local State, Engine = ns.State, ns.Engine
   local nope, had = (ns.char and ns.char.nope) or {}, (ns.char and ns.char.hadQuest) or {}
@@ -181,19 +200,21 @@ function LogCheck.Leftovers(bags)
     return true
   end
   -- the quests a route still plans: a step of your route that is still to do, and whatever your other routes hold
-  local wanted
+  -- (per quest, its own steps only - stepsOf: the whole plan's statuses, ~2,500, were worked out for the first one)
+  local path, dungeons
   local function planned(q)
-    if not wanted then
-      wanted = {}
-      local here = BeelineData
-      for i, s in ipairs((here and here.steps) or {}) do
-        if s.q and s.q > 0 and not wanted[s.q] and (Engine.Status(i) ~= "done" or (ns.Avail and ns.Avail.Unavailable(s.q))) then wanted[s.q] = true end
+    local here = BeelineData
+    local steps = here and here.steps
+    if steps then
+      for _, i in ipairs(stepsOf(steps, q)) do
+        if Engine.Status(i) ~= "done" or (ns.Avail and ns.Avail.Unavailable(q)) then return true end
       end
-      local path = here and (here.branch or here.dungeon) and ns.ResolvePath and ns.ResolvePath(here.dungeon and ns.char.returnTo or here.parent) or nil
-      for _, s in ipairs((path and path ~= here and path.steps) or {}) do if s.q and s.q > 0 then wanted[s.q] = true end end
-      for _, r in ipairs((ns.DungeonRoutes and ns.DungeonRoutes()) or {}) do for q2 in pairs((ns.QuestIds and ns.QuestIds(r)) or {}) do wanted[q2] = true end end
     end
-    return wanted[q]
+    if path == nil then path = here and (here.branch or here.dungeon) and ns.ResolvePath and ns.ResolvePath(here.dungeon and ns.char.returnTo or here.parent) or false end
+    if path and path ~= here and path.steps and stepsOf(path.steps, q)[1] then return true end
+    dungeons = dungeons or (ns.DungeonRoutes and ns.DungeonRoutes()) or {}
+    for _, r in ipairs(dungeons) do if ns.QuestIds and ns.QuestIds(r)[q] then return true end end
+    return false
   end
   local out = {}
   for id, count in pairs(bags) do
@@ -213,11 +234,15 @@ function LogCheck.Leftovers(bags)
           if #reasons < 2 then reasons[#reasons + 1] = Engine.QuestName(q) .. " (" .. why .. ")" end
         end
       end
-      -- the game's own word on it, when it has one: only a quest item
-      local classID = ns.GetItemInfo and select(12, ns.GetItemInfo(id))
-      if type(classID) == "number" and classID ~= 12 then free = false end
+      -- the game's own word on it, when it has one: only a quest item (asked only of one that is free otherwise, once)
+      local name
+      if free and #quests > 0 and ns.GetItemInfo then
+        local classID
+        name, classID = nameAndClass(ns.GetItemInfo(id))
+        if type(classID) == "number" and classID ~= 12 then free = false end
+      end
       if free and #quests > 0 then
-        local name = (ns.GetItemInfo and ns.GetItemInfo(id)) or e[1]
+        name = name or e[1]
         out[#out + 1] = { id = id, name = type(name) == "string" and name or e[1], count = count, quests = quests,
           why = "From " .. table.concat(reasons, ", ") .. (#quests > 2 and (" and " .. (#quests - 2) .. " more") or "") }
       end
@@ -303,7 +328,7 @@ local function row(k)
   -- a quest another zone's route has: go there (that zone as home base)
   r.go = Style.Button(r, "Go", 44, 18, function(self)
     local z = self:GetParent().zone; if not (z and ns.Paths and ns.Paths.Pick) then return end
-    ns.Paths.Pick({ zone = z.zoneName, route = z }); f:Hide()
+    ns.Paths.Pick({ zone = z.zoneName, route = z }); ns.Window.Hide()
   end, "Make that zone your home base: this quest joins its route")
   r.go:SetPoint("RIGHT", r, "RIGHT", -4, 0)
   r.keep = Style.Button(r, "Keep", 44, 18, function(self)
@@ -321,35 +346,49 @@ local function row(k)
   return r
 end
 
-local function build()
-  f = CreateFrame("Frame", "BeelineLogCheck", UIParent)
-  f:SetSize(W, 200); f:SetPoint("CENTER", 0, 40)
-  Style.Window(f, "BeelineLogCheck")
-  f.title = Style.WindowTitle(f, 15, PAD, -12); f.title:SetText("Quest log check")
-  local close = Style.CloseButton(f)
-  f.sum = Style.Text(f, 11, C.sub); f.sum:SetPoint("TOPLEFT", PAD, -34); f.sum:SetWidth(W - 2 * PAD - 120)
+local function build(panel)
+  f = panel
+  f.sum = Style.Text(f, 11, C.sub); f.sum:SetPoint("TOPLEFT", 0, 0); f.sum:SetWidth(W - 2 * PAD - 8); f.sum:SetJustifyH("LEFT")
+  -- (the view's action: at the right of the line under the title)
   f.all = Style.Button(f, "Abandon gray", 100, 20, function()
     local drop = {}; for _, x in ipairs(LogCheck.Classify()) do if x.verdict == "drop" then drop[#drop + 1] = { id = x.e.id, title = x.e.title, why = x.why } end end
     if #drop == 0 then return end
     local names = ""; for _, e in ipairs(drop) do names = names .. "\n" .. e.title end
     local dlg = StaticPopup_Show("BEELINE_DROPALL", #drop, names); if dlg then dlg.data = drop end
   end, "Abandon the gray quests and the ones you refused (asks first, listing them)")
-  f.all:SetPoint("TOPRIGHT", -PAD, -34)
-  -- the list scrolls: at most MAXH tall, mouse wheel, a thumb
-  Style.ScrollList(f, W, 60)
-  f:Hide()
+  f.all:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", 0, ns.Window.TOP - 46)
+  -- the list scrolls: mouse wheel, a thumb
+  Style.ScrollList(f, W - 2 * PAD, 60)
 end
 
+-- (a row's text set again only when it changed, and its height measured only then: the text layout is the dear part
+-- of a redraw in the game, and the log check redraws ~25 rows on every open and log update)
+local function put(fs, text) if fs._bt ~= text then fs._bt, fs._bh = text, nil; fs:SetText(text) end end
+local function height(fs) local h = fs._bh; if not h then h = fs:GetStringHeight(); fs._bh = h end return h end
+local function rowHeight(r) return math.max(ROW, height(r.title) + height(r.why) + 9) end
+-- (and a row anchored again only when it moved: an anchor set is a layout pass for the game)
+local function place(r, y)
+  if r._y ~= y then r._y = y; r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", 0, -y) end
+  r:Show()
+end
+-- (Bring back: beside Abandon on a quest row, at the right edge on a won't-do row)
+local function backAt(r, beside)
+  if r._backBeside == beside then return end
+  r._backBeside = beside
+  r.back:ClearAllPoints()
+  if beside then r.back:SetPoint("RIGHT", r.btn, "LEFT", -4, 0) else r.back:SetPoint("RIGHT", r, "RIGHT", -4, 0) end
+end
 function LogCheck.Draw()
-  if not f or not f:IsShown() then return end
+  if not (f and ns.Window.IsShown("logcheck")) then return end
+  ns.Window.SetIntro("Which quests in your log are worth keeping, and which to drop")
   local list = LogCheck.Classify()
   local drops, off = 0, 0; for _, x in ipairs(list) do if x.verdict == "drop" then drops = drops + 1 elseif x.verdict == "offroute" then off = off + 1 end end
   local parts = {}
   if drops > 0 then parts[#parts + 1] = string.format("%d gray or refused can go.", drops) end
   if off > 0 then parts[#parts + 1] = string.format("%d off your route: yours to keep.", off) end
-  f.sum:SetText(string.format("%d quests in your log (max %d).  %s", #list, ns.State.MaxLog() or 40, #parts > 0 and table.concat(parts, " ") or "Everything here is on your route."))
+  put(f.sum, string.format("%d quests in your log (max %d).  %s", #list, ns.State.MaxLog() or 40, #parts > 0 and table.concat(parts, " ") or "Everything here is on your route."))
   f.all:SetShown(drops > 0); f.all.label:SetText(string.format("Abandon %d", drops))
-  local top = 34 + math.max(f.sum:GetStringHeight(), 22) + 10
+  local top = math.max(height(f.sum), 14) + 10
   local y = 0 -- inside the scrolling list
   for k, x in ipairs(list) do
     local r = row(k)
@@ -357,15 +396,15 @@ function LogCheck.Draw()
     local c = COLORS[x.verdict]
     r.edge:SetVertexColor(c[1], c[2], c[3], 0.9)
     local qc = Style.QuestColor(x.e.level)
-    r.title:SetText(string.format("%s[%s] %s|r  |cff8e99ad%s|r", Style.Hex(qc), x.e.level or "?", x.e.title, x.e.zone or ""))
-    r.why:SetText(Style.Hex(c) .. x.why .. "|r")
+    put(r.title, string.format("%s[%s] %s|r  |cff8e99ad%s|r", Style.Hex(qc), x.e.level or "?", x.e.title, x.e.zone or ""))
+    put(r.why, Style.Hex(c) .. x.why .. "|r")
     local noped = ns.Nope(x.e.id)
     r.btn:SetShown(x.verdict == "drop" or x.verdict == "offroute"); r.keep:SetShown((x.verdict == "drop" or x.verdict == "offroute") and not noped)
     r.zone = x.zone
     r.go:SetShown(x.zone ~= nil)
-    r.back:SetShown(noped and true or false); r.back:ClearAllPoints(); r.back:SetPoint("RIGHT", r.btn, "LEFT", -4, 0)
-    local h = math.max(ROW, r.title:GetStringHeight() + r.why:GetStringHeight() + 9); r:SetHeight(h)
-    r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y); r:Show()
+    r.back:SetShown(noped and true or false); backAt(r, true)
+    local h = rowHeight(r); r:SetHeight(h)
+    place(r, y)
     y = y + h + 2
   end
   -- the quests you said you won't do that aren't in your log (dropped before you took them): Bring back for each
@@ -374,19 +413,19 @@ function LogCheck.Draw()
   f.nopeHdr = f.nopeHdr or Style.Text(f.content, 12, C.gold, "OUTLINE")
   f.nopeHdr:SetShown(#extra > 0)
   if #extra > 0 then
-    f.nopeHdr:ClearAllPoints(); f.nopeHdr:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y - 6); f.nopeHdr:SetText("You said you won't do these (" .. #extra .. ")")
+    f.nopeHdr:ClearAllPoints(); f.nopeHdr:SetPoint("TOPLEFT", f.content, "TOPLEFT", 0, -y - 6); f.nopeHdr:SetText("You said you won't do these (" .. #extra .. ")")
     y = y + 26
   end
   for i, n in ipairs(extra) do
     local r = row(#list + i)
     r.data, r.reason = { id = n.q, title = n.name }, nil
     Style.Paint(r.edge, C.muted, 0.9)
-    r.title:SetText(n.name)
-    r.why:SetText("|cff8c94a8" .. (n.ready and "Finished when you dropped it: its hand-in is off your route" or "Off your route and future plans") .. "|r")
+    put(r.title, n.name)
+    put(r.why, "|cff8c94a8" .. (n.ready and "Finished when you dropped it: its hand-in is off your route" or "Off your route and future plans") .. "|r")
     r.btn:Hide(); r.keep:Hide(); r.go:Hide() -- (a reused row: no Go left over from a quest row)
-    r.back:Show(); r.back:ClearAllPoints(); r.back:SetPoint("RIGHT", r, "RIGHT", -4, 0)
-    local h = math.max(ROW, r.title:GetStringHeight() + r.why:GetStringHeight() + 9); r:SetHeight(h)
-    r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y); r:Show()
+    r.back:Show(); backAt(r, false)
+    local h = rowHeight(r); r:SetHeight(h)
+    place(r, y)
     y = y + h + 2
   end
   -- quest items in your bags that nothing needs any more: what is safe to delete (yours to do - nothing is deleted here)
@@ -396,45 +435,42 @@ function LogCheck.Draw()
   f.leftSub = f.leftSub or Style.Text(f.content, 10, C.sub)
   f.leftHdr:SetShown(#left > 0); f.leftSub:SetShown(#left > 0)
   if #left > 0 then
-    f.leftHdr:ClearAllPoints(); f.leftHdr:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y - 6); f.leftHdr:SetText("Safe to delete from your bags (" .. #left .. ")")
+    f.leftHdr:ClearAllPoints(); f.leftHdr:SetPoint("TOPLEFT", f.content, "TOPLEFT", 0, -y - 6); f.leftHdr:SetText("Safe to delete from your bags (" .. #left .. ")")
     f.leftSub:ClearAllPoints(); f.leftSub:SetPoint("TOPLEFT", f.leftHdr, "BOTTOMLEFT", 0, -3); f.leftSub:SetWidth(W - 2 * PAD - 14); f.leftSub:SetJustifyH("LEFT"); f.leftSub:SetWordWrap(true)
-    f.leftSub:SetText("Quest items nothing on your route or in your log needs any more. Deleting is yours to do: drag one out of your bags.")
-    y = y + 26 + math.max(f.leftSub:GetStringHeight(), 12) + 4
+    put(f.leftSub, "Quest items nothing on your route or in your log needs any more. Deleting is yours to do: drag one out of your bags.")
+    y = y + 26 + math.max(height(f.leftSub), 12) + 4
   end
   for i, x in ipairs(left) do
     local r = row(#list + #extra + i)
     r.data, r.reason = nil, nil
     Style.Paint(r.edge, C.muted, 0.9)
-    r.title:SetText(x.name .. (x.count > 1 and ("  |cff8e99adx" .. x.count .. "|r") or ""))
-    r.why:SetText("|cff8c94a8" .. x.why .. "|r")
+    put(r.title, x.name .. (x.count > 1 and ("  |cff8e99adx" .. x.count .. "|r") or ""))
+    put(r.why, "|cff8c94a8" .. x.why .. "|r")
     r.btn:Hide(); r.keep:Hide(); r.back:Hide(); r.go:Hide()
-    local h = math.max(ROW, r.title:GetStringHeight() + r.why:GetStringHeight() + 9); r:SetHeight(h)
-    r:ClearAllPoints(); r:SetPoint("TOPLEFT", f.content, "TOPLEFT", PAD, -y); r:Show()
+    local h = rowHeight(r); r:SetHeight(h)
+    place(r, y)
     y = y + h + 2
   end
   for k, r in ipairs(rows) do if k > #list + #extra + #left then r:Hide() end end
-  -- the window: the header, then the list up to MAXH (scrolling beyond)
-  local MAXH = math.min(560, (UIParent:GetHeight() or 800) / f:GetScale() - top - 140)
-  local view = math.min(y, MAXH)
+  -- the summary, then the list (scrolling in a window that keeps its size)
   f.content:SetHeight(math.max(y, 1))
-  f.scroll:ClearAllPoints(); f.scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -top); f.scroll:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -top); f.scroll:SetHeight(view)
-  f.track:ClearAllPoints(); f.track:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -top); f.track:SetHeight(view)
-  f:SetHeight(top + view + 10)
+  f.scroll:ClearAllPoints(); f.scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -top); f.scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -8, 4)
+  f.track:ClearAllPoints(); f.track:SetPoint("TOPRIGHT", f, "TOPRIGHT", 2, -top); f.track:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 2, 4)
   f.setScroll(f.scroll:GetVerticalScroll())
 end
 
-function LogCheck.Toggle()
-  if not f then return end -- (a key pressed while loading)
-  if f:IsShown() then f:Hide(); return end
-  f:Show(); LogCheck.Draw()
-end
+-- the Beeline window on the Log check; closed when it is on it already
+function LogCheck.Toggle() ns.Window.Toggle("logcheck") end
+function LogCheck.Frame() return f end
 
-ns.On("FR_LOADED", build)
+ns.Window.Register("logcheck", { label = "Log check", icon = "icon-check", color = C.info, title = "Quest log check", group = 3, order = 20,
+  tip = "Which quests in your log are worth keeping, and which to drop",
+  build = build, show = function() f.setScroll(0); LogCheck.Draw() end })
 ns.On("FR_TOGGLE_LOGCHECK", function() LogCheck.Toggle() end)
 -- (open, it follows your log: once for a burst of log updates - a kill or a loot sends two or three - not for each)
 local redrawDue = false
 ns.On("QUEST_LOG_UPDATE", function()
-  if redrawDue or not (f and f:IsShown()) then return end
+  if redrawDue or not ns.Window.IsShown("logcheck") then return end
   redrawDue = true
   C_Timer.After(0.2, function() redrawDue = false; LogCheck.Draw() end)
 end)

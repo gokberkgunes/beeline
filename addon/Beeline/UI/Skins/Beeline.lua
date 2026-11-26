@@ -427,7 +427,7 @@ function S.Chips(holder, zones, width, max)
   return y + lineH
 end
 
--- The addon's windows (the route window, Home base with its side trips tab, the quest log check, news, options, the bug
+-- The addon's windows (the Beeline window with its sidebar of views, news, options, the bug
 -- report) share one shell: on the dialog layer, kept on screen, dragged anywhere, the skin's panel and the scale,
 -- Escape closes it. Style.Window(f, name) gives frame f that shell; name is its global name (Escape closes it through
 -- UISpecialFrames). Style.WindowTitle: its title; Style.CloseButton(f): the close button at the top right.

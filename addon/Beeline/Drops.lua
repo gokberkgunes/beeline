@@ -8,6 +8,7 @@
 -- skinning a corpse you already looted, and again when you reopen a corpse you left items in. So each loot slot's
 -- sources (GetLootSourceInfo) are read, only creature sources count, and each corpse counts once.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Drops = {}
 ns.Drops = Drops
 

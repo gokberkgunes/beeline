@@ -4,6 +4,7 @@
 -- wall - and never through a zone far above your level. Shortest trip by time (Dijkstra). The planner routes over
 -- the same data with the same rules (tools/travel.js), so the plan and the arrow agree.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Travel = {}
 ns.Travel = Travel
 local HBD = LibStub("HereBeDragons-2.0")
@@ -355,8 +356,10 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
   local function add(n) N[#N + 1] = n; adj[#N] = {}; return #N end
   local function edge(u, v, c, how)
     -- (the towns are looked up once for the whole build, below: not for each of 9,000 roads)
-    if how == "ride" and N[u].w and N[v].w and throughCached(N[u], N[v]) then c = c + Travel.HOSTILE_SEC end
-    local au, av = adj[u], adj[v]; au[#au + 1] = { v, c, how }; av[#av + 1] = { u, c, how }
+    -- (e[5]: the hostile town's toll in c - a cost of the route's choice, not seconds: Travel.Plan's 5th result)
+    local pen
+    if how == "ride" and N[u].w and N[v].w and throughCached(N[u], N[v]) then c = c + Travel.HOSTILE_SEC; pen = Travel.HOSTILE_SEC end
+    local au, av = adj[u], adj[v]; au[#au + 1] = { v, c, how, nil, pen }; av[#av + 1] = { u, c, how, nil, pen }
   end
   local hostile = Travel.HostileTowns()
   -- (whether a crossing is in a camp only changes with your faction's list of camps: memoized across graph rebuilds, perf)
@@ -522,8 +525,9 @@ local function planTrip(from, to, opts, G)
   local ext = {}
   local function push(u, e) local l = ext[u]; if not l then l = {}; ext[u] = l end; l[#l + 1] = e end
   local function edge(u, v, c, how)
-    if how == "ride" and N[u].w and N[v].w then Travel.HostileTowns(); if throughCached(N[u], N[v]) then c = c + Travel.HOSTILE_SEC end end
-    push(u, { v, c, how }); push(v, { u, c, how })
+    local pen
+    if how == "ride" and N[u].w and N[v].w then Travel.HostileTowns(); if throughCached(N[u], N[v]) then c = c + Travel.HOSTILE_SEC; pen = Travel.HOSTILE_SEC end end
+    push(u, { v, c, how, nil, pen }); push(v, { u, c, how, nil, pen })
   end
   -- you and the target join the network at the key points of their own map (anywhere on the continent if the map
   -- has none - a dungeon map, a map the walk maps don't cover)
@@ -573,9 +577,9 @@ local function planTrip(from, to, opts, G)
   -- Dijkstra, on the time you spend playing: a flight or a boat is time you can look away, so its seconds count at
   -- Travel.AFK_WEIGHT. secs: the real time, for the plan's clock; afk: the seconds of it on a flight or boat
   -- (heap ordered by distance, then node number: ties break as a plain linear scan would, deterministically)
-  local dist, prev, how, done, kindOf, secs, afk = {}, {}, {}, {}, {}, {}, {}
+  local dist, prev, how, done, kindOf, secs, afk, toll = {}, {}, {}, {}, {}, {}, {}, {}
   for i = 1, #N do dist[i] = math.huge end
-  dist[1], secs[1], afk[1] = 0, 0, 0
+  dist[1], secs[1], afk[1], toll[1] = 0, 0, 0, 0
   local hd, hi, hn = {}, {}, 0
   local function less(p, q) return hd[p] < hd[q] or (hd[p] == hd[q] and hi[p] < hi[q]) end
   local function hpush(dv, iv)
@@ -616,7 +620,7 @@ local function planTrip(from, to, opts, G)
             local away = (e[3] == "fly" or e[3] == "boat") and c or 0
             local cost = c - away + away * AFK
             if not done[v] and dist[u] + cost < dist[v] then
-              dist[v], prev[v], how[v], kindOf[v], secs[v], afk[v] = dist[u] + cost, u, e[3], e[4], secs[u] + c, afk[u] + away
+              dist[v], prev[v], how[v], kindOf[v], secs[v], afk[v], toll[v] = dist[u] + cost, u, e[3], e[4], secs[u] + c, afk[u] + away, toll[u] + (e[5] or 0)
               hpush(dist[v], v)
             end
           end
@@ -694,7 +698,8 @@ local function planTrip(from, to, opts, G)
         end
         local say, warn = text, nil
         if #passes > 0 then warn = "passes " .. table.concat(passes, ", ") .. " (the other faction: guards will attack)"; text = text .. " - " .. warn end
-        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id, npc = npc, zone = fm and fm:match(", (.+)$") or nil }
+        -- (em, ex, ey: where the ride ends - the arrow carries on there once past the crossing it points at)
+        legs[#legs + 1] = { sm = f.m, sx = f.x, sy = f.y, how = "ride", m = tm, x = tx, y = ty, em = n.m, ex = n.x, ey = n.y, text = text, say = say, warn = warn, hostile = #passes > 0 or nil, toId = n.id, npc = npc, zone = fm and fm:match(", (.+)$") or nil }
       end
     elseif c.how == "hearth" then
       -- nothing to point at: use the hearthstone (sm/sx/sy: where you land, for the flight-path note)
@@ -766,8 +771,10 @@ local function planTrip(from, to, opts, G)
       end
     end
   end
-  -- the trip's real seconds, its seconds on a flight or boat, and what it costs you in time spent playing
-  return legs, secs[2], afk[2], dist[2]
+  -- the trip's seconds, its seconds on a flight or boat, what it costs you in time spent playing, and the hostile
+  -- towns' toll in those seconds (HOSTILE_SEC a town ridden through: a cost of choosing the route, not time - the pick
+  -- audit's judge takes it out)
+  return legs, secs[2], afk[2], dist[2], toll[2]
 end
 
 -- the note on a leg for a flight path you don't have where it starts (first leg: "before you go", it starts where you
@@ -837,12 +844,12 @@ function Travel.Plan(from, to, opts)
   local hit = frameMemo[key]
   if hit then
     from.w = from.w or world(from.m, from.x, from.y); to.w = to.w or world(to.m, to.x, to.y) -- (as the search leaves them)
-    return copyLegs(hit[1]), hit[2], hit[3], hit[4]
+    return copyLegs(hit[1]), hit[2], hit[3], hit[4], hit[5]
   end
   Travel.searches = Travel.searches + 1
-  local legs, secs, afk, dist = planTrip(from, to, opts, G)
-  frameMemo[key] = { copyLegs(legs), secs, afk, dist }
-  return legs, secs, afk, dist
+  local legs, secs, afk, dist, toll = planTrip(from, to, opts, G)
+  frameMemo[key] = { copyLegs(legs), secs, afk, dist, toll }
+  return legs, secs, afk, dist, toll
 end
 
 -- A trip inside one zone is a walk - unless a flight you know lands so much nearer the spot that flying is clearly

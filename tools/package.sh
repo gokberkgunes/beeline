@@ -31,6 +31,16 @@ cp -r addon/ForeverRoute dist/pkg/
 grep -q "^## X-Beeline-Stub: 1" dist/pkg/ForeverRoute/ForeverRoute.toc || { echo "package: addon/ForeverRoute is not the empty one"; exit 1; }
 [ "$(ls dist/pkg/ForeverRoute | xargs)" = "Bindings.xml Core.lua ForeverRoute.toc" ] || { echo "package: addon/ForeverRoute has more than its TOC, Core.lua and Bindings.xml"; exit 1; }
 for d in dist/pkg/Beeline_Plans_*/; do cp LICENSES/GPL-3.0.txt "$d/LICENSE-GPL-3.0.txt"; cp NOTICE "$d/NOTICE"; done
+# the outdoor zones' walk maps for the map line: one load-on-demand addon per continent (tools/navgrid.js); their
+# hostile-spawn layer is from the quest data, so GPL as well
+nav=0
+for d in addon/Beeline_Nav*/; do
+  n=$(basename "$d"); cp -r "$d" dist/pkg/; nav=$((nav + 1))
+  sed -i "s/^## Version: .*/## Version: $VER/" "dist/pkg/$n/$n.toc"
+  grep -q '^## LoadOnDemand: 1' "dist/pkg/$n/$n.toc" || { echo "package: $n is not load-on-demand"; exit 1; }
+  cp LICENSES/GPL-3.0.txt "dist/pkg/$n/LICENSE-GPL-3.0.txt"; cp NOTICE "dist/pkg/$n/NOTICE"
+done
+[ "$nav" -eq 2 ] || { echo "package: expected the two walk-map addons (Beeline_NavEK, Beeline_NavKalimdor), found $nav"; exit 1; }
 if command -v zip >/dev/null; then (cd dist/pkg && zip -qr "../Beeline-$VER.zip" .)
 else powershell -NoProfile -Command "Compress-Archive -Path 'dist/pkg/*' -DestinationPath 'dist/Beeline-$VER.zip'"; fi
 echo "dist/Beeline-$VER.zip: $(ls dist/pkg | wc -l) addon folders"

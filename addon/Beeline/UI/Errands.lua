@@ -2,6 +2,7 @@
 -- with the nearest vendor that can do it on this map (from Vendors.lua, generated from the quest database).
 -- Hidden again once it's sorted, or dismissed until things change.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Errands = {}
 ns.Errands = Errands
 local HBD = LibStub("HereBeDragons-2.0")

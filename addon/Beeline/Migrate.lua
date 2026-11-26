@@ -7,6 +7,7 @@
 -- A whole 1.x ForeverRoute still installed by hand would run beside Beeline (two cards): it is turned off for the next
 -- /reload, and you're asked to reload.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Migrate = {}
 ns.Migrate = Migrate
 Migrate.OLD = "ForeverRoute"

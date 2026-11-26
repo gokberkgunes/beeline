@@ -1,0 +1,31 @@
+## Interface: 16001
+## Title: Beeline - walk maps: Eastern Kingdoms
+## Notes: The map line's walk grids for every zone of Eastern Kingdoms. Loaded by Beeline when you are there.
+## Author: noopz
+## Version: dev
+## Dependencies: Beeline
+## Group: Beeline
+## LoadOnDemand: 1
+Nav1416.lua
+Nav1417.lua
+Nav1418.lua
+Nav1419.lua
+Nav1420.lua
+Nav1421.lua
+Nav1422.lua
+Nav1423.lua
+Nav1424.lua
+Nav1425.lua
+Nav1426.lua
+Nav1427.lua
+Nav1428.lua
+Nav1429.lua
+Nav1430.lua
+Nav1431.lua
+Nav1432.lua
+Nav1433.lua
+Nav1434.lua
+Nav1435.lua
+Nav1436.lua
+Nav1437.lua
+Nav2548.lua

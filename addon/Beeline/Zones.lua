@@ -1,6 +1,7 @@
 -- Zones: your plan's next zone, the XP a zone still holds for you, what Where to? offers, the trip to a zone.
 -- Split out of Core.lua; loaded right after it.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 
 -- the planned route's next zone at your level: the first quest step on it you haven't done that isn't gray to you
 local QUEST_KIND = { accept = true, turnin = true, obj = true }

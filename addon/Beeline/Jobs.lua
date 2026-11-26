@@ -8,6 +8,7 @@
 --   ns.Jobs.Busy(kind), ns.Jobs.Cancel(kind), ns.Jobs.Settle(kind) (run them to their end now), ns.Jobs.Inside(kind)
 -- Jobs.SYNC: a route job runs to its end inside Post (tests, sims, replay: deterministic results).
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Jobs = { SYNC = false, ROUTE_MS = 8 }
 ns.Jobs = Jobs
 
@@ -40,16 +41,16 @@ Jobs._stale = function(job) return job.gen ~= nil and ns.Engine ~= nil and job.g
 local function resume(job, budget)
   if job.over then return true end
   if Jobs._stale(job) then abort(job, "stale"); return true end
-  local co0, t00, b0, cur0 = ns.sliceCo, ns.sliceT0, ns.sliceBudget, Jobs.current
+  local co0, t00, b0, ny0, cur0 = ns.sliceCo, ns.sliceT0, ns.sliceBudget, ns.noYield, Jobs.current
   if job.enter then job.enter(job) end
   local mark = job.timeAs and ns.MarkInto and ns.MarkInto(job.mark or {}) or nil; job.mark = mark -- (a slow slice says what it did: ns.Time)
   local t0 = debugprofilestop()
-  ns.sliceCo, ns.sliceT0, ns.sliceBudget = job.co, t0, budget or job.budget
+  ns.sliceCo, ns.sliceT0, ns.sliceBudget, ns.noYield = job.co, t0, budget or job.budget, 0
   Jobs.current = job
   job.slices = (job.slices or 0) + 1
   local ok, r = coroutine.resume(job.co, job.arg)
   Jobs.current = cur0
-  ns.sliceCo, ns.sliceT0, ns.sliceBudget = co0, t00, b0
+  ns.sliceCo, ns.sliceT0, ns.sliceBudget, ns.noYield = co0, t00, b0, ny0
   if job.timeAs and ns.Time then
     local ms = debugprofilestop() - t0
     -- (a slow slice records where it last paused; only then: a stack is not free)

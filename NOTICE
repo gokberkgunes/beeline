@@ -28,6 +28,7 @@ LICENSING
        addon/Beeline/FunCandidates.lua
        addon/Beeline/Vendors.lua
        addon/Beeline/TravelData.lua
+       addon/Beeline_NavEK/, addon/Beeline_NavKalimdor/   the outdoor walk maps (their hostile-spawn layer)
 
    A route the planner writes for your own character (addon/Beeline/Route.lua) is built from the same data.
 

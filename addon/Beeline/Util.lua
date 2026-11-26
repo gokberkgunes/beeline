@@ -9,6 +9,7 @@
 --   ns.Util.Sub(t, key)   t[key], made an empty table when it isn't one (a saved sub-table)
 --   ns.Nope(q)            you said you won't do quest q (its value: true, or how)
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Util = {}
 ns.Util = Util
 local HBD = LibStub("HereBeDragons-2.0")

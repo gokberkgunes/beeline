@@ -7,6 +7,7 @@
 --   lv  levels:   { t, lvl }                    each ding
 -- (t and the quest times are time(): seconds, comparable across sessions; a flight's secs is GetTime(), to 0.1 s)
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local T = {}
 ns.Timings = T
 

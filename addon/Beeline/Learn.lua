@@ -9,6 +9,7 @@
 --             to replay it; the companion turns new ones into tests and a report
 -- Everything is pcall-guarded and skips Forever's secret values: learning must never break the game.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Learn = {}
 ns.Learn = Learn
 

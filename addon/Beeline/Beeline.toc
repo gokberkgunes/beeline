@@ -43,8 +43,7 @@ TravelData.lua
 News.lua
 Breadcrumbs.lua
 Travel.lua
-Nav\Nav1429.lua
-Nav\Nav1437.lua
+Nav\Index.lua
 Nav\Nav1453.lua
 Nav\Nav1454.lua
 Nav\Nav1455.lua
@@ -75,6 +74,7 @@ UI\Arrow.lua
 UI\GameNav.lua
 UI\Pins.lua
 UI\Zones.lua
+UI\Window.lua
 UI\List.lua
 UI\Paths.lua
 UI\Dungeons.lua

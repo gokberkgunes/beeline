@@ -54,9 +54,23 @@ ns._tickers = {}
 -- Its long loops call ns.MaybeYield(), which pauses it there when the frame's slice is used up - and does nothing
 -- anywhere else (a call outside the job, a test). ns.Call(f, ...) is pcall outside the job; inside it, a plain call (a
 -- pause can't cross a pcall in Lua 5.1; an error ends the job, which says so)
-ns.sliceCo, ns.sliceT0, ns.sliceBudget = nil, 0, 1
+-- A pause is only made where it can be resumed: never from under a pcall. In the game's Lua 5.1 a yield under one fails
+-- ("attempt to yield across metamethod/C-call boundary") and the pcall takes that for the work's error - a join's trips
+-- priced under FindPlace's pcall(ChooseStart), in the login's catch-up job, did. The addon's files call ns.PCall for
+-- pcall (each has local pcall = ns.PCall): inside a job's slice it counts how deep in pcalls the job is (ns.noYield),
+-- and ns.MaybeYield holds its pause until the job is out of them; outside a slice it is pcall. (A table.sort comparator
+-- or a gsub callback is the same kind of boundary: no pause from inside one)
+ns.sliceCo, ns.sliceT0, ns.sliceBudget, ns.noYield = nil, 0, 1, 0
 function ns.MaybeYield()
-  if ns.sliceCo and debugprofilestop() - ns.sliceT0 >= ns.sliceBudget and coroutine.running() == ns.sliceCo then coroutine.yield() end
+  if ns.sliceCo and ns.noYield == 0 and debugprofilestop() - ns.sliceT0 >= ns.sliceBudget and coroutine.running() == ns.sliceCo then coroutine.yield() end
+end
+local rawPcall = pcall
+local function outOf(d, ...) ns.noYield = d; return ... end
+function ns.PCall(f, ...)
+  if not ns.sliceCo then return rawPcall(f, ...) end
+  local d = ns.noYield
+  ns.noYield = d + 1
+  return outOf(d, rawPcall(f, ...))
 end
 function ns.Call(f, ...)
   if ns.sliceCo and coroutine.running() == ns.sliceCo then return true, f(...) end
@@ -494,7 +508,7 @@ BINDING_NAME_BEELINE_SKIP = "Skip current step"
 BINDING_NAME_BEELINE_BACK = "Look at previous step"
 BINDING_NAME_BEELINE_UNDO = "Undo last skip / done"
 BINDING_NAME_BEELINE_TOGGLE = "Show / hide the card"
-BINDING_NAME_BEELINE_LIST = "Show the whole route"
+BINDING_NAME_BEELINE_LIST = "Show your route (the Beeline window)"
 _G["BINDING_NAME_CLICK BeelineTargetButton:LeftButton"] = "Beeline Targeting"
 
 SLASH_BEELINE1 = "/bee"
@@ -506,7 +520,11 @@ SlashCmdList.BEELINE = function(msg)
   elseif msg == "home" or msg == "paths" then ns.Fire("FR_TOGGLE_PATHS")
   elseif msg == "why" then ns.WhyPrint(15)
   elseif msg == "save" then if ns.Card and ns.Card.Save then ns.Card.Save() else ReloadUI() end
-  elseif msg == "dungeons" or msg == "dungeon" or msg == "trips" or msg == "bag" then ns.Fire("FR_TOGGLE_DUNGEONS")
+  elseif msg == "dungeons" or msg == "dungeon" or msg == "trips" then ns.Fire("FR_TOGGLE_DUNGEONS")
+  -- (the other side trips: the Beeline window on their view)
+  elseif msg == "class" then ns.Dungeons.Toggle("class")
+  elseif msg == "attune" or msg == "raids" then ns.Dungeons.Toggle("attune")
+  elseif msg == "items" or msg == "bag" then ns.Dungeons.Toggle("reward")
   elseif msg == "card reset" then ns.db.uiScale, ns.db.scale = nil, 1; ns.Fire("FR_SETTINGS"); ns.db.hidden = nil; if ns.Card and ns.Card.ResetPos then ns.Card.ResetPos() end
   elseif msg == "target reset" then if ns.Card and ns.Card.ResetTarget then ns.Card.ResetTarget() else ns.db.targetPos = nil end
   elseif msg == "storage" then ns.Storage.Print()
@@ -543,7 +561,7 @@ SlashCmdList.BEELINE = function(msg)
   elseif msg == "snapshot" then ns.State.Snapshot("manual"); ns.Print("snapshot saved - written to disk on /reload or logout.")
   elseif msg == "options" or msg == "config" then ns.Fire("FR_OPEN_OPTIONS")
   else
-    ns.Print("/bee - card · /bee list - whole route · /bee home - home base (pick a zone) · /bee dungeons - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee skin · /bee options")
+    ns.Print("/bee - card · /bee list - your route · /bee home - home base (pick a zone) · /bee dungeons · /bee class · /bee attune · /bee items - side trips · /bee logcheck - what to abandon · /bee rejoin - pick the built-in plan up at your level · /bee report - copy a bug report · /bee news - what changed · /bee log - recent errors · /bee nav - where the game says you, the step and the minimap are · /bee skip · /bee back · /bee undo · /bee lock · /bee arrow · /bee demo · /bee skin · /bee options")
   end
 end
 -- /fr (ForeverRoute's old command) still works, with a one-time note, unless another addon has it: then it's theirs.

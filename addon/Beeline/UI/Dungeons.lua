@@ -1,9 +1,11 @@
--- "Side trips": a group's going - pick its dungeon and get a route that picks up every quest for it (and does the whole
--- chain that unlocks them), takes you there, then hands everything in. Every party dungeon with a quest for your race
--- and class is here (tools/dungeon-routes.js), the ones for your level first; what you've done drops out. Special
--- rewards (class quests, one-off items) after them. Your leveling path is kept as it was; the card shows "Back to plan"
--- while you're on one. The Home base window's third tab (UI/Paths.lua): Dungeons.Draw draws into the frame it hands
--- over. Opened from the tab, the route list or /bee dungeons (FR_TOGGLE_DUNGEONS).
+-- The side trips, four views of the Beeline window (UI/Window.lua), one per kind of trip: Class quests, Dungeons (a
+-- group's going - pick its dungeon and get a route that picks up every quest for it, does the chain that unlocks them,
+-- takes you there, then hands everything in; dungeon keys under them), Attunements and Special items (the Cozy Sleeping
+-- Bag and other items worth a trip). Every party dungeon with a quest for your race and class is listed
+-- (tools/dungeon-routes.js), the ones for your level first; what you've done drops out, and a kind with nothing left
+-- for you has no sidebar item. Your leveling path is kept as it was; the card shows "Back to plan" while you're on one.
+-- The four views share one panel. Opened from the sidebar, /bee dungeons (FR_TOGGLE_DUNGEONS), /bee class, /bee
+-- attune, /bee items.
 local _, ns = ...
 local Style = ns.Style
 local C = Style.C
@@ -14,6 +16,10 @@ ns.Dungeons = Dungeons
 -- loot redraws the window and changes none of it; asking the game each time is most of a redraw)
 local progCache = {}
 function Dungeons.Forget() progCache = {} end
+-- the name players know a dungeon by, first (the list said only "The Temple of Atal'Hakkar": looking for the Sunken
+-- Temple, you didn't see it - tester)
+Dungeons.KNOWN_AS = { ["The Temple of Atal'Hakkar"] = "Sunken Temple (Temple of Atal'Hakkar)" }
+function Dungeons.DisplayName(r) local n = r.dungeonName or r.title; return Dungeons.KNOWN_AS[n] or n end
 for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED" }) do ns.On(e, function() progCache = {} end) end
 local function progressOf(r)
   local c = progCache[r]
@@ -29,8 +35,22 @@ local function progressOf(r)
   return done, total, inLog
 end
 
-local host, W -- the frame the Home base window hands over, and its width
+local panel, host, W -- the side trips' panel, the frame in its scrolling list the cards go in, and its width
 local cards = {}
+-- the views: which trips each lists (a special trip by its group, Dungeons.GROUPS; "dungeon" a dungeon route)
+Dungeons.VIEWS = {
+  class = { kinds = { class = true }, label = "Class quests", title = "Class quests", icon = "icon-train", order = 10,
+    intro = "Quests for your class: each a side trip that keeps your plan", empty = "No class quests left for you in this plan." },
+  dungeons = { kinds = { dungeon = true, key = true }, label = "Dungeons", title = "Dungeons", icon = "icon-kill", order = 11,
+    intro = "A group's going? Pick its dungeon: its quests, the run, the hand-ins. Your plan waits.", empty = "No dungeons in this plan." },
+  attune = { kinds = { attune = true }, label = "Attunements", title = "Raids & attunements", icon = "icon-accept", order = 12,
+    intro = "Attunements for raids and dungeons: each a side trip that keeps your plan", empty = "No attunements left for you in this plan." },
+  reward = { kinds = { reward = true }, label = "Special items", title = "Special items", icon = "icon-loot", order = 13,
+    intro = "Items worth a trip, like the Cozy Sleeping Bag: each a side trip that keeps your plan", empty = "No special items left for you in this plan." },
+}
+Dungeons.view = "dungeons" -- the side trips view on screen (or shown last)
+-- a trip's kind: its group (class, attune, key, reward) or "dungeon"
+function Dungeons.Kind(r) return r.special and Dungeons.Group(r).key or "dungeon" end
 
 local function card(k)
   if cards[k] then return cards[k] end
@@ -55,28 +75,46 @@ end
 -- ask the game about: all of them at once is several times dearer)
 Dungeons.all = false
 function Dungeons.Reset() Dungeons.all = false end
--- the window it is drawn in redraws (the list's height changes the window's scroll)
-function Dungeons.Redraw() if ns.Paths and ns.Paths.Draw then ns.Paths.Draw() end end
+-- the side trips view on screen, or nil
+local function shownView() local v = ns.Window.view; return Dungeons.VIEWS[v] and ns.Window.IsShown(v) and v or nil end
+-- redraws the view on screen (none: nothing)
+function Dungeons.Redraw()
+  local v = shownView()
+  if not (v and panel) then return end
+  ns.Window.SetIntro(Dungeons.VIEWS[v].intro)
+  local h = Dungeons.Draw(v)
+  host:SetHeight(math.max(h, 1)); panel.content:SetHeight(math.max(h, 1))
+  panel.setScroll(panel.scroll:GetVerticalScroll())
+end
 
--- the frame to draw in (w wide), handed over once when the Home base window is built
-function Dungeons.Attach(into, w)
-  host, W = into, w
+-- the panel (made the first time a side trips view is shown): a scrolling list the cards go in
+local function build(p)
+  panel = p
+  W = ns.Window.INNER - 8
+  Style.ScrollList(p, ns.Window.INNER, 60)
+  p.scroll:SetPoint("TOPLEFT", 0, 0); p.scroll:SetPoint("BOTTOMRIGHT", -8, 4)
+  p.track:SetPoint("TOPRIGHT", 2, 0); p.track:SetPoint("BOTTOMRIGHT", 2, 4)
+  host = CreateFrame("Frame", nil, p.content); host:SetPoint("TOPLEFT", 0, 0); host:SetSize(W, 10)
   host.back = Style.Button(host, "Back to plan", 130, 20, function() ns.LeaveDungeonRoute(); Dungeons.Redraw() end)
   host.empty = Style.Text(host, 11, C.dim)
   host.heads = {}
 end
--- draws the list into the frame from its top; returns its height
-function Dungeons.Draw()
+function Dungeons.Host() return host end
+function Dungeons.Cards() return cards end -- (tests)
+-- draws view's list (default: the one shown last) into the frame from its top; returns its height
+function Dungeons.Draw(view)
   local f = host
   if not f then return 0 end
-  local list, finished, more, prog = Dungeons.List(nil, Dungeons.all)
+  view = view or Dungeons.view
+  local V = Dungeons.VIEWS[view] or Dungeons.VIEWS.dungeons
+  local list, finished, more, prog = Dungeons.List(nil, Dungeons.all, view)
   local yc = 0
   local onDungeon = BeelineData and BeelineData.dungeon
   f.back:ClearAllPoints(); f.back:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0); f.back:SetShown(onDungeon and true or false)
   if onDungeon then yc = yc + 28 end
   for k, c in ipairs(cards) do if k > #list then c:Hide() end end
   f.empty:SetShown(#list == 0)
-  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", 0, -yc); f.empty:SetText(finished > 0 and "You've done every dungeon's quests and side trip in this plan." or "No dungeons or side trips in this plan."); yc = yc + 24 end
+  if #list == 0 then f.empty:ClearAllPoints(); f.empty:SetPoint("TOPLEFT", 0, -yc); f.empty:SetText(finished > 0 and "You've done every one of these in this plan." or V.empty); yc = yc + 24 end
   local myLevel = UnitLevel("player") or 1
   for _, h in pairs(f.heads) do h:Hide() end
   local function head(key, text)
@@ -84,17 +122,19 @@ function Dungeons.Draw()
     h:ClearAllPoints(); h:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -yc); h:SetText(text); h:Show()
     yc = yc + 20
   end
+  -- (headings only when the view lists more than one kind: Dungeons with its keys)
+  local kinds = 0; do local seen = {}; for _, r in ipairs(list) do local kd = Dungeons.Kind(r); if not seen[kd] then seen[kd] = true; kinds = kinds + 1 end end end
   local lastKind
   for k, r in ipairs(list) do
     local g = r.special and Dungeons.Group(r) or nil
     local kind = g and g.key or "dungeon"
-    if kind ~= lastKind then head(kind, g and g.head or "Dungeons"); lastKind = kind end
+    if kind ~= lastKind then if kinds > 1 then head(kind, g and g.head or "Dungeons") end; lastKind = kind end
     local c = card(k)
     if g then c.special:Set(g.pill) end
     c.route = r
     local isCur = (BeelineData == r)
     local zc = Style.ZoneColor(r.dungeonName or r.title)
-    c.name:SetText(r.dungeonName or r.title); c.name:SetTextColor(zc[1], zc[2], zc[3])
+    c.name:SetText(Dungeons.DisplayName(r)); c.name:SetTextColor(zc[1], zc[2], zc[3])
     c.quick:ClearAllPoints(); c.quick:SetPoint("LEFT", c.name, "RIGHT", 8, 0); c.quick:SetShown(r.variant == "quick")
     c.special:ClearAllPoints(); c.special:SetPoint("LEFT", c.name, "RIGHT", 8, 0); c.special:SetShown(r.special and true or false)
     local tag = (r.variant == "quick" and c.quick) or (r.special and c.special) or nil
@@ -104,6 +144,13 @@ function Dungeons.Draw()
     local mins = r.meta and r.meta.hours and math.floor(tonumber(r.meta.hours) * 60 + 0.5)
     -- (planned with nothing done: with some done it's quicker, so "up to")
     c.time:SetText(mins and ((done > 0 and "up to " or "~") .. mins .. " min") or "")
+    -- the name, its pills and the time on one line: a long name gives way ("...") - "Seal of Ascension (Upper Blackrock
+    -- Spire key)" ran its DUNGEON KEY pill under the minutes (tester)
+    local pills = 0
+    for _, p in ipairs({ c.quick, c.special, c.cur }) do if p:IsShown() then pills = pills + (p:GetWidth() or 0) + 8 end end
+    c.name:SetWidth(0)
+    local room = W - 28 - (c.time:GetStringWidth() or 0) - 12 - pills
+    c.name:SetWidth(math.max(40, math.min(c.name:GetStringWidth() or 0, room)))
     local need = tonumber(r.needsLevel) or 0
     local lvlText = string.format("Quests around level %s", r.questLevel or "?")
     if need > myLevel then lvlText = lvlText .. "  ·  |cffff8c4dsome need level " .. need .. "|r" end
@@ -139,7 +186,7 @@ end
 -- above it, then the ones below), then the special rewards; a route with nothing left for you (every quest done) is
 -- left out and counted. Without all: only the dungeons around your level (at most 6; the 3 nearest when none is).
 -- Returns the list, how many were left out as done, how many dungeons more "all" would list, and each listed route's
--- progress ({ done, total, in your log }).
+-- progress ({ done, total, in your log }). view (a key of Dungeons.VIEWS): only that view's kinds; nil: every kind.
 local SHOWN = 6
 -- the side trips that aren't dungeons, by what they get you (the plan's group = ..., tools/reviewed-<faction>.json), in
 -- the window's order: a heading and a tag each
@@ -152,7 +199,8 @@ Dungeons.GROUPS = {
 local groupBy = {}; for i, g in ipairs(Dungeons.GROUPS) do g.order = i; groupBy[g.key] = g end
 -- (a plan from before trips had a group: special rewards, as they all were)
 function Dungeons.Group(r) return groupBy[r.group] or groupBy.reward end
-function Dungeons.List(level, all)
+function Dungeons.List(level, all, view)
+  local kinds = view and Dungeons.VIEWS[view] and Dungeons.VIEWS[view].kinds
   level = level or (UnitLevel and UnitLevel("player")) or 1
   -- 0: around your level (from 4 below to 4 above), 1: above it, 2: below it (gray to you: little XP)
   local function band(r) local q = tonumber(r.questLevel) or 0; return (q > level + 4 and 1) or (q < level - 4 and 2) or 0 end
@@ -164,7 +212,9 @@ function Dungeons.List(level, all)
     prog[r] = { done, total, inLog }; into[#into + 1] = r
   end
   local cand = {}
-  for _, r in ipairs(ns.DungeonRoutes()) do if r.special then keep(r, spec) else cand[#cand + 1] = r end end
+  for _, r in ipairs(ns.DungeonRoutes()) do
+    if not kinds or kinds[Dungeons.Kind(r)] then if r.special then keep(r, spec) else cand[#cand + 1] = r end end
+  end
   local more = 0
   if all then for _, r in ipairs(cand) do keep(r, dung) end
   else
@@ -188,20 +238,61 @@ function Dungeons.List(level, all)
   return dung, finished, more, prog
 end
 
--- the Home base window on this tab, or closed when it is on it already
-function Dungeons.Toggle()
-  local P = ns.Paths
-  if not (P and P.Show) then return end
-  if P.IsShown("trips") then P.Hide(); return end
-  Dungeons.Reset() -- (opened again: the ones for your level)
-  P.Show("trips")
+-- which views have something for you: { dungeons = true, class = false, ... } - worked out once per change to your
+-- quests (a hand-in, a pick-up) or the routes loaded; the sidebar asks each time the window opens
+local availMemo, availFor, availProg
+function Dungeons.Available()
+  local routes = ns.Routes and ns.Routes()
+  if availMemo and availFor == routes and availProg == progCache then return availMemo end
+  local out = { dungeons = false, class = false, attune = false, reward = false }
+  for _, r in ipairs(ns.DungeonRoutes()) do
+    local kd = Dungeons.Kind(r)
+    local v = (kd == "dungeon" or kd == "key") and "dungeons" or kd
+    if not out[v] then
+      -- (a dungeon is listed even with its quests done - "All dungeons"; a trip only while it has something left)
+      if kd == "dungeon" then out[v] = true
+      else
+        -- (anything left: the first quest not done says so - no counting, no quest log asked)
+        local any, left = false, false
+        for q in pairs(ns.QuestIds(r)) do if q > 0 then any = true; if not ns.State.IsCompleted(q) then left = true; break end end end
+        out[v] = left or not any
+      end
+    end
+  end
+  availMemo, availFor, availProg = out, routes, progCache
+  return out
+end
+
+-- the Beeline window on a side trips view (default Dungeons), or closed when it is on it already
+function Dungeons.Toggle(view)
+  view = Dungeons.VIEWS[view] and view or "dungeons"
+  if ns.Window.IsShown(view) then ns.Window.Hide(); return end
+  Dungeons.Show(view)
+end
+function Dungeons.Show(view)
+  view = Dungeons.VIEWS[view] and view or "dungeons"
+  if not ns.Window.IsShown() then Dungeons.Reset() end -- (opened again: the ones for your level)
+  ns.Window.Show(view)
+end
+for key, V in pairs(Dungeons.VIEWS) do
+  ns.Window.Register(key, { label = V.label, icon = V.icon, color = C.gold, title = V.title, tip = V.intro, group = 2, order = V.order, panel = "trips",
+    build = build, avail = function() return Dungeons.Available()[key] end,
+    show = function(k)
+      if Dungeons.view ~= k then Dungeons.Reset(); if panel then panel.setScroll(0) end end -- (another view: the ones for your level, from the top)
+      Dungeons.view = k
+      Dungeons.Redraw()
+    end })
 end
 
 ns.On("FR_TOGGLE_DUNGEONS", function() Dungeons.Toggle() end)
 -- (open, it follows your log: once for a burst of log updates - a kill or a loot sends two or three - not for each)
+-- and your route: a trip picked or left anywhere else (the card's "Back to plan") - the list kept FOLLOWING and its own
+-- "Back to plan" on a trip you had left (tester)
 local redrawDue = false
-ns.On("QUEST_LOG_UPDATE", function()
-  if redrawDue or not (ns.Paths and ns.Paths.IsShown and ns.Paths.IsShown("trips")) then return end
+local function redrawSoon()
+  if redrawDue or not shownView() then return end
   redrawDue = true
   C_Timer.After(0.2, function() redrawDue = false; Dungeons.Redraw() end)
-end)
+end
+ns.On("QUEST_LOG_UPDATE", redrawSoon)
+ns.On("FR_ROUTE_CHANGED", function() if shownView() then Dungeons.Redraw() end end) -- (rare: at once)

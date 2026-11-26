@@ -4,6 +4,7 @@
 -- isn't the plan's next step. Detours (a dungeon group, a trip to town) need no rules: the solve starts from where you
 -- are. Design: docs/research/live-routing.md.
 local _, ns = ...
+local pcall = ns.PCall or pcall -- (a job never pauses under it: Core.lua)
 local Next = {}
 ns.Next = Next
 local HBD = LibStub("HereBeDragons-2.0")
@@ -191,13 +192,19 @@ end
 -- trip is priced, then along its own. Built once per list generation; stops are step tables, so a price survives
 -- the plan moving on.
 local wayMemo = setmetatable({}, { __mode = "k" })
+-- a grid cell's key: a number (a string made for every cell a walk passes was the index's dearest part)
+local function cellKey(cx, cy, inst) return ((tonumber(inst) or -1) * 4096 + cx + 2048) * 4096 + cy + 2048 end
 local function walkable(a, b) return a.w[3] == b.w[3] and (a.st.m == b.st.m or yd(a.w, b.w) < 900) end
 local function way(list)
   local W = wayMemo[list]
   if W and W.gen == (list._gen or 0) then return W end
   W = { gen = list._gen or 0, stops = {}, at = {}, gaps = {}, grid = {}, ver = 0 }
   local trips, bind = {}, nil
+  -- (built in the solve's slices: a level-50's plan is ~3,500 steps, and the first price after the plan changed - a
+  -- login, a stop added - indexed all of it in one slice of 20-40 ms. A pause here is safe: W is kept only once it is
+  -- whole, and only for the list generation it started on)
   for j, s in ipairs(list) do
+    if j % 64 == 0 then ns.MaybeYield() end
     if isTrip(s) then trips[#trips + 1] = s
     else
       local w = wpos(s)
@@ -219,18 +226,20 @@ local function way(list)
     end
   end
   local C = Next.DEFER_CELL
-  local function put(w, k)
-    local key = math.floor(w[1] / C) .. ":" .. math.floor(w[2] / C) .. ":" .. tostring(w[3])
-    local c = W.grid[key]
-    if not c then c = {}; W.grid[key] = c end
+  local grid = W.grid
+  local function putXY(x, y, inst, k)
+    local key = cellKey(math.floor(x / C), math.floor(y / C), inst)
+    local c = grid[key]
+    if not c then c = {}; grid[key] = c end
     if c[#c] ~= k then c[#c + 1] = k end
   end
+  local function put(w, k) putXY(w[1], w[2], w[3], k) end
   -- (a walk across a zone passes the cells between its ends: a stop half way along is on the way)
   local function line(x, y, k)
     put(x, k); put(y, k)
     if x[3] ~= y[3] then return end
     local n = math.floor(yd(x, y) / (C / 2))
-    for t = 1, n do put({ x[1] + (y[1] - x[1]) * t / (n + 1), x[2] + (y[2] - x[2]) * t / (n + 1), x[3] }, k) end
+    for t = 1, n do putXY(x[1] + (y[1] - x[1]) * t / (n + 1), x[2] + (y[2] - x[2]) * t / (n + 1), x[3], k) end
   end
   W.line = line
   local ports = (ns.Travel and ns.Travel.Ports) or function() return {} end
@@ -241,6 +250,7 @@ local function way(list)
     for _, p in ipairs(ports(y.st.m)) do if p[3] == y.w[3] then line(p, y.w, k) end end
   end
   for k, g in ipairs(W.gaps) do
+    if k % 8 == 0 then ns.MaybeYield() end
     if g.hearth then put(g.a.w, k); leg(g.hearth, g.b, k)
     else leg(g.a, g.b, k, g.pier) end
   end
@@ -340,7 +350,7 @@ function Next.DeferCost(list, s, from, behind)
     local seen, far = {}, {}
     for dx = -r, r do
       for dy = -r, r do
-        for _, k in ipairs(W.grid[(cx + dx) .. ":" .. (cy + dy) .. ":" .. tostring(p[3])] or {}) do
+        for _, k in ipairs(W.grid[cellKey(cx + dx, cy + dy, p[3])] or {}) do
           if not seen[k] and k >= first then
             seen[k] = true
             local g = W.gaps[k]
@@ -496,14 +506,43 @@ function Next.VisitHere(list, planned, from, pm, px, py, pinst)
 end
 -- (kept per step and list generation, like the memos below)
 local hubMemo = setmetatable({}, { __mode = "k" })
+-- (the plan's spots by cells of Next.HUB_YD, once per list generation and in the solve's slices: each hand-in looked at
+-- walked the whole plan, ~3,500 steps, for its neighbours - a ms or two apiece, none of it able to pause)
+local hubIdx = setmetatable({}, { __mode = "k" })
+local NOSPOTS = {}
+local function hubCells(list)
+  local R, gen = Next.HUB_YD, list._gen or 0
+  local H = hubIdx[list]
+  if H and H.gen == gen and H.R == R then return H end
+  local cells = {}
+  for j, t in ipairs(list) do
+    if j % 128 == 0 then ns.MaybeYield() end
+    local tw = wpos(t)
+    if tw then
+      local key = cellKey(math.floor(tw[1] / R), math.floor(tw[2] / R), tw[3])
+      local c = cells[key]
+      if not c then c = {}; cells[key] = c end
+      c[#c + 1] = tw
+    end
+  end
+  H = { gen = gen, R = R, cells = cells }
+  hubIdx[list] = H
+  return H
+end
 function isHub(list, s) -- (declared above: passReach)
   local m = hubMemo[s]
   if m ~= nil and m.list == list and m.gen == (list._gen or 0) then return m.hub end
   local w, n = wpos(s), 0
   if w then
-    for _, t in ipairs(list) do
-      local tw = wpos(t)
-      if tw and tw[3] == w[3] and (tw[1] - w[1]) ^ 2 + (tw[2] - w[2]) ^ 2 <= Next.HUB_YD ^ 2 then n = n + 1; if n >= Next.HUB_STEPS then break end end
+    local H = hubCells(list)
+    local R = H.R
+    local cx, cy = math.floor(w[1] / R), math.floor(w[2] / R)
+    for dx = -1, 1 do
+      for dy = -1, 1 do
+        for _, tw in ipairs(H.cells[cellKey(cx + dx, cy + dy, w[3])] or NOSPOTS) do
+          if (tw[1] - w[1]) ^ 2 + (tw[2] - w[2]) ^ 2 <= R ^ 2 then n = n + 1 end
+        end
+      end
     end
   end
   hubMemo[s] = { list = list, gen = list._gen or 0, hub = n >= Next.HUB_STEPS }
@@ -549,7 +588,7 @@ local function wayFit(W, p, first, reach)
   local best, seen = nil, {}
   for dx = -r, r do
     for dy = -r, r do
-      for _, k in ipairs(W.grid[(cx + dx) .. ":" .. (cy + dy) .. ":" .. tostring(p[3])] or {}) do
+      for _, k in ipairs(W.grid[cellKey(cx + dx, cy + dy, p[3])] or {}) do
         if not seen[k] and k >= first then
           seen[k] = true
           local d, near = gapDetour(W, k, W.gaps[k], p, false)
@@ -628,7 +667,12 @@ end
 -- objectives (Next.BehindPrize); an objective, that less the quest's other objectives. A stop of no quest (a flight
 -- path) pays no XP: it is worth the trip back for it, or, when the plan never comes back, the stop and carrying alone.
 function Next.Prize(list, s, from, behind)
-  local defer = behind and huge or Next.DeferCost(list, s, from)
+  -- (one from behind you - a quest you passed, a step below your place for a quest in your log - is left for good at
+  -- its own place, but not where the plan's way passes it again and the solve offers it then: a hand-in at a hub the
+  -- plan comes back to (DeferCost's behind: its later passes only). Priced as never coming back, three finished
+  -- hand-ins at Tarren Mill sent an undead priest across Hillsbrad and back before the plan's own Tarren Mill visit:
+  -- 11 min more of the way for 8 min of XP)
+  local defer = behind and Next.DeferCost(list, s, from, true) or Next.DeferCost(list, s, from)
   -- (a quest from behind you whose own place is still ahead in the plan - you are ahead of the plan's levels, so it
   -- reads "behind you": the card offers it again as the way passes it, so leaving it costs what DeferCost says, not its
   -- XP. Priced as never coming back, Hemet Nesingwary's pick-up in Thousand Needles came before the plan's hand-in
@@ -919,8 +963,24 @@ local function candidates(c)
     end
     return moreHere
   end
+  -- (the map the plan goes on in: its next own step to do with a place - where its trip takes you, when its next step
+  -- is one)
+  local nextMap
+  local function planMap()
+    if nextMap == nil then
+      nextMap = false
+      for j = planned, math.min(#list, planned + Next.SCAN) do
+        local t = list[j]
+        if t.m and not t.inserted and not t.unknown and E.Status(j) == "todo" then nextMap = t.m; break end
+      end
+    end
+    return nextMap
+  end
   local function leavesZone(s)
     if inMyZone(s) or not pathHasMoreHere() then return false end
+    -- (where the plan itself goes next is no leaving: from Stormwind, the flight path at Sentinel Hill the route took in
+    -- for the plan's trip to Westfall was never weighed, and the card rode past it to Agent Kearnen in the far corner)
+    if s.m and s.m == planMap() then return false end
     return not Next.ChainsInto(s.q, myMap, myZone)
   end
   local function add(j, extra)
@@ -1229,6 +1289,15 @@ end
 -- earlier quest is handed in there) can't come first: the plan comes back here for it anyway, so the trip back stays,
 -- and doing the rest now saves only what each of those stops costs the plan where it has them (dd and the stop):
 --   here first:  the steps here that don't wait (A), the way to k1, then the plan's own time from k1 to jn less A's saves
+-- So does a step of the visit you can't do now (it waits for your level, a log slot or its quest, which isn't picked
+-- up here): the plan comes back for it, and the visit's steps before the one you'd start at are in the plan's way too.
+-- (Troll shaman at 21, two levels behind: Jin'Zil's and the Bloodfury quests, red to you, wait in Stonetalon; Cenarius'
+-- Legacy before the trip to Ashenvale was priced as the whole visit done now, and those red steps' 22 min of work as
+-- gone from the trip back - here first looked 13 min shorter and lost 8.5.)
+-- A step already done is in neither: the visit here ends at its last step not done, and the plan's time between two
+-- steps leaves out what each done step between them took (its detour and the stop: saveOf), as the solve's clock does.
+-- (Orc warrior at 10: The New Horde, handed in, ended the Sen'jin visit in the Valley of Trials - its walk and the trip
+-- on from there were counted, and the hand-ins before the Far Watch errand looked 55 s shorter; they lost 180.)
 -- (Shen'dralas > Desolace > Shen'dralas: Fragments of the Pylons is picked up in Shen'dralas and worked in Desolace;
 -- priced as done before the trip, the Desolace block first looked 6 min shorter and lost 31.)
 -- -> true when here-first is no shorter (the plan's trip stands); false when it is, or the plan has no clock there
@@ -1239,7 +1308,7 @@ function Next.RejoinLoses(list, planned, j0, here)
   local k1 = nextLoc(planned + 1, j0 - 1)
   if not k1 then return false end
   local m, jend = list[j0].m, j0
-  for j = j0 + 1, math.min(#list, j0 + Next.REJOIN_SCAN) do local s = list[j]; if isTrip(s) or (s.m and s.m ~= m) then break end; jend = j end
+  for j = j0 + 1, math.min(#list, j0 + Next.REJOIN_SCAN) do local s = list[j]; if isTrip(s) or (s.m and s.m ~= m) then break end; if E.Status(j) ~= "done" then jend = j end end
   local jn = nextLoc(jend + 1, jend + 40)
   local ep
   -- (the errand's end: the plan's last stop elsewhere before it comes back here - not one of this visit's done steps)
@@ -1248,9 +1317,17 @@ function Next.RejoinLoses(list, planned, j0, here)
   -- (quests the errand moves on: a step of theirs from the trip to the errand's end, not done)
   local errandQ = {}
   for j = planned + 1, ep do local s = list[j]; if s.q and Next.KIND[s.k] and E.Status(j) ~= "done" then errandQ[s.q] = true end end
+  -- (pick-ups of this visit you can take now: a quest not in your log is worked here once one of them takes it)
+  local takeHere = {}
+  for j = ep + 1, jend do local s = list[j]; if s.k == "accept" and s.q and E.Status(j) == "todo" then takeHere[s.q] = true end end
   local function waits(j)
     local s = list[j]
-    if not (s.q and Next.KIND[s.k]) or E.Status(j) == "done" then return false end
+    if not (s.q and Next.KIND[s.k]) then return false end
+    local st = E.Status(j)
+    if st == "done" then return false end
+    -- (a step you can't do now - red to you or below its level, a full log, a dungeon left for later, a quest not
+    -- taken here - waits for the plan's own visit: it comes back here for it)
+    if st == "wait" or st == "full" or st == "later" or (st == "blocked" and not takeHere[s.q]) then return true end
     if errandQ[s.q] then return true end
     if s.k == "accept" and E.PrereqsOf then for _, x in ipairs(E.PrereqsOf(s.q) or {}) do if errandQ[x] then return true end end end
     return false
@@ -1260,18 +1337,24 @@ function Next.RejoinLoses(list, planned, j0, here)
   for _, j in ipairs({ k1, j0, jend, ep, jn }) do if not tonumber(list[j].dt) then return false end end
   local S = clockSums(list)
   local function at(j) local s = list[j]; return { w = wpos(s), st = s, m = s.m, x = s.x, y = s.y } end
-  local plan = travelSecs(here, at(k1)) + serviceOf(list[k1]) + S[jn] - S[k1]
+  local function span(a, b) -- (the plan's time from step a to step b, less the done steps between)
+    local t = S[b] - S[a]
+    for j = a + 1, b - 1 do if E.Status(j) == "done" then t = t - saveOf(list[j]) end end
+    return t
+  end
+  local plan = travelSecs(here, at(k1)) + serviceOf(list[k1]) + span(k1, jn)
   local first
   if back then
-    -- (the steps here first: j0, then each of the others at its own detour; the plan from k1 on without them)
-    local saved, walk, alast = saveOf(list[j0]), 0, j0
+    -- (the steps here first: j0, then each of the others at its own detour from the way on to k1; the plan from k1 on
+    -- without them)
+    local saved, walk = saveOf(list[j0]), 0
     for j = j0 + 1, jend do
-      if located(j) and E.Status(j) == "todo" and not waits(j) then local v = saveOf(list[j]); saved = saved + v; walk = walk + v; alast = j end
+      if located(j) and E.Status(j) == "todo" and not waits(j) then local v = saveOf(list[j]); saved = saved + v; walk = walk + v end
     end
-    first = travelSecs(here, at(j0)) + serviceOf(list[j0]) + walk + travelSecs(at(alast), at(k1)) + serviceOf(list[k1]) + (S[jn] - S[k1]) - saved
+    first = travelSecs(here, at(j0)) + serviceOf(list[j0]) + walk + travelSecs(at(j0), at(k1)) + serviceOf(list[k1]) + span(k1, jn) - saved
   else
-    first = travelSecs(here, at(j0)) + serviceOf(list[j0]) + (S[jend] - S[j0]) + travelSecs(at(jend), at(k1)) + serviceOf(list[k1])
-      + (S[ep] - S[k1]) + travelSecs(at(ep), at(jn)) + serviceOf(list[jn])
+    first = travelSecs(here, at(j0)) + serviceOf(list[j0]) + span(j0, jend) + travelSecs(at(jend), at(k1)) + serviceOf(list[k1])
+      + span(k1, ep) + travelSecs(at(ep), at(jn)) + serviceOf(list[jn])
   end
   if ns.Why then ns.Why("next", string.format("rejoin at step %d before the trip: %.0f s here first, %.0f s the plan's way%s", j0, first, plan, back and " (a step here waits on the trip: the plan comes back)" or "")) end
   return first >= plan
