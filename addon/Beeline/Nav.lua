@@ -89,6 +89,18 @@ local clock = debugprofilestop or function() return GetTime() * 1000 end
 Nav.loaded = {} -- addon -> true (loaded), false (it failed or isn't installed: not asked again)
 Nav.loadMs = {} -- addon -> how long its loading took
 local function indexOf(m) return m and BeelineNavIndex and BeelineNavIndex[m] or nil end
+-- The live line outdoors (the continents' walk maps) is off: lines there went round over mountains and to crossings on
+-- cliffs (3.1.0 reports), so out in the zones the planner's planned path is drawn and the arrow follows the plan and the
+-- trip, as in 3.0.0. true: on everywhere; a table { [uiMap] = true }: on for those zones only (the ones that pass
+-- tools/nav-audit.js). The cities' grids (in this addon, not a continent's) are not affected.
+-- Off everywhere outdoors for now (false); a table { [uiMap] = true } turns zones on once they pass the audit (node tools/nav-audit.js; install.sh checks each one listed still does).
+Nav.OUTDOOR = false -- (3.1.1: the outdoor walk maps are too coarse for walls and cliffs - Nethergarde, Blasted Lands; tools/nav-audit.js decides when a zone comes back)
+function Nav.Outdoor(m)
+  local o = Nav.OUTDOOR
+  return o == true or (type(o) == "table" and m ~= nil and o[m] == true)
+end
+-- an outdoor zone's grid (in a continent's addon) that is switched off
+local function off(m) local I = indexOf(m); return I ~= nil and I[1] and not Nav.Outdoor(m) or false end
 local function inCombat() return InCombatLockdown and InCombatLockdown() and true or false end
 Nav.InCombat = inCombat -- (the tests)
 -- load a continent's walk maps: true when they are here, false when they never will be, nil when not now (combat)
@@ -105,6 +117,7 @@ function Nav.Load(addon)
 end
 -- map m's packed grid, its continent's addon loaded first when it is not here yet. nil: no grid for m, or not now
 function Nav.Data(m)
+  if off(m) then return nil end
   local D = m and BeelineNavData and BeelineNavData[m]
   if D then return D end
   local I = indexOf(m)
@@ -114,6 +127,7 @@ function Nav.Data(m)
 end
 -- is there a grid for m (here, or in an addon that can still be loaded)?
 function Nav.Has(m)
+  if off(m) then return false end
   if m and BeelineNavData and BeelineNavData[m] then return true end
   local I = indexOf(m)
   return (I and I[1] and Nav.loaded[I[1]] ~= false) and true or false
@@ -309,6 +323,7 @@ end
 -- unpacked zones (the last Nav.KEEP used)
 local grids, gridUse, useN = {}, {}, 0
 function Nav.Grid(m, pause)
+  if off(m) then return nil end
   local N = grids[m]
   if not N then
     local D = Nav.Data(m); if not D then return nil end
@@ -638,6 +653,9 @@ end
 -- which grid serves a walk from (px, py) to (tx, ty) in instance inst: the map you are on if it holds both ends,
 -- else the target's map, else any that does (by the index: nothing is loaded to choose)
 function Nav.MapFor(px, py, tx, ty, inst, here, there)
+  -- (you or the step in an outdoor zone whose line is off: not another zone's walk map either - its rectangle takes in
+  -- the neighbours' land, and that ground is what is off)
+  if off(here) or off(there) then return nil end
   local function fits(m)
     if not Nav.Has(m) then return false end
     local i, l, t, r, b = Nav.Bounds(m)

@@ -1448,6 +1448,21 @@ local function solveStops(c)
   return true
 end
 
+-- the plan's step stands (keepPlanned), and the step the card then really shows is what is remembered as its pick. It
+-- remembered the plan's step while keepPlanned passed an added stop for the plan's next own step: the card held "the
+-- last pick" while each solve ran, then took the solve's answer - back and forth between the two (A Little Slime Goes a
+-- Long Way, a hand-in added in Ironforge, and The Sunken Temple in Feralas). stand: the plan's step itself stands, an
+-- added stop too - kept over a pick on another continent, or over one under its confusion price: passing it for the
+-- plan's next own step would put that very pick (Feralas) on the card after all.
+local function holdPlan(c, res, stand)
+  local list, planned = c.list, c.planned
+  local alt
+  if stand then Next.taken = nil else alt = keepPlanned(c) end
+  local shown = alt or planned
+  Next.res = res; last = { sig = c.sig, at = c.now, res = res, pick = shown, pickStep = list[shown] }
+  return alt
+end
+
 -- what goes on the card: the plan's step held, the pick on the card kept by a margin, a pick-up of this town first
 local function choosePick(c)
   local E, list, planned, px, py, pinst, byStep, P = c.E, c.list, c.planned, c.px, c.py, c.pinst, c.byStep, c.P
@@ -1456,8 +1471,7 @@ local function choosePick(c)
     local pw = wpos(list[planned])
     if pst and pst.w and pw and pst.w[3] ~= pinst and pw[3] == pinst then
       if ns.Why then ns.Why("next", "kept the plan's step " .. planned .. ": the solve put " .. tostring(pst.st and pst.st.name or pick) .. " on another continent first") end
-      Next.res = res; last = { sig = sig, at = now, res = res, pick = planned, pickStep = list[planned] }
-      return keepPlanned(c)
+      return holdPlan(c, res, true)
     end
   end
   -- the plan's next step is a trip: it stays on the card unless the pick is a prize close by (worth doing before you go)
@@ -1468,8 +1482,7 @@ local function choosePick(c)
     local opts = 0
     for _, st in ipairs(c.stops) do if st.opt then opts = opts + 1 end end
     if opts > 0 and ns.Why then ns.Why("next", "kept the plan's step " .. planned .. ": " .. opts .. " stop(s) close by weighed, none worth doing before it") end
-    Next.res = res; last = { sig = sig, at = now, res = res, pick = planned, pickStep = list[planned] }
-    return keepPlanned(c)
+    return holdPlan(c, res)
   end
   -- hysteresis: the step on the card stays unless the new pick beats keeping it by Next.MARGIN seconds
   -- (except an interrupt: an extra at its NPC, within Next.PASS_NEAR - said at once. A quest behind you is a choice,
@@ -1534,8 +1547,7 @@ local function choosePick(c)
       Next.confused = (Next.confused or 0) + 1
       if pickupFirst(planned) then savings()
       else
-        Next.res = res; last = { sig = sig, at = now, res = res, pick = planned, pickStep = list[planned] }
-        return keepPlanned(c)
+        return holdPlan(c, res, true)
       end
     end
   end
