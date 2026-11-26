@@ -514,6 +514,9 @@ end
 -- fires QUEST_LOG_UPDATE many times a minute; most change nothing at all.
 State.FULL_EVERY = 120 -- seconds: log changes this long after the last full look get one anyway (anything not read here)
 local pending, fullDue, lastFull = false, true, -1000
+-- the log's generation: a quest taken, finished, handed in or dropped moves it (Engine.InsertsDue: a finished quest's
+-- hand-in fitted in before the next solve, whatever refresh comes first)
+State.logGen = 0
 local function now() return GetTime and GetTime() or 0 end
 -- the quests in your log as last read (the cache) against the game now: "same", "counts" (only counts moved: the cache
 -- now has them) or "changed", "undone" (something done is not any more).
@@ -567,6 +570,7 @@ local function settle()
       return
     end
   end
+  if not fullDue then State.logGen = State.logGen + 1 end -- (refreshSoon moved it already)
   fullDue, lastFull = false, now()
   wipe(cache); logSet = nil
   if ns.Engine and ns.Engine.GrayForget then ns.Engine.GrayForget() end -- (the gray rule's chains: Engine.LeadsTo)
@@ -583,6 +587,7 @@ local function schedule()
 end
 -- something more than a count may have changed: the full look
 local function refreshSoon()
+  State.logGen = State.logGen + 1
   wipe(cache); logSet = nil
   if ns.Engine and ns.Engine.GrayForget then ns.Engine.GrayForget() end
   fullDue = true

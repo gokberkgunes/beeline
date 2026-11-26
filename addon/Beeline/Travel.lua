@@ -372,6 +372,17 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     camps.of[n] = v
     return v
   end
+  -- ... when its border has a crossing clear of every camp (both Blasted Lands / Swamp of Sorrows crossings are by the
+  -- Nethergarde miners' camps: without them a Horde player there had no way out). Once per list of camps and network
+  local function border(n) if n.m < (n.m2 or 0) then return n.m .. "/" .. n.m2 end return (n.m2 or 0) .. "/" .. n.m end
+  local nodes = net()
+  if camps.borderNet ~= nodes then
+    local cb = {}
+    for _, n in ipairs(nodes) do if n.kind == "cross" and not inCamp(n) then cb[border(n)] = true end end
+    for _, g in ipairs(gates) do cb[border({ m = g.a, m2 = g.b })] = true end -- (a gate of your side: the breach past Mor'shan Rampart)
+    camps.clearBorder, camps.borderNet = cb, nodes
+  end
+  local clearBorder = camps.clearBorder
   -- (built inside the solve's slices too, so it yields (perf: up to ~55 ms); all it makes is its own until it returns)
   local tick = 0
   local function pause() tick = tick + 1; if tick % 64 == 0 then ns.MaybeYield() end end
@@ -389,8 +400,8 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
     -- a flight master of the other faction is only a spot on the road for you
     if n.kind == "fp" and not ground and (not n.side or n.side:find(myLetter, 1, true)) and knowsFPKept(n.m, n.name) then c = setmetatable({ fp = true }, { __index = c }) end
     -- a border crossing inside the other faction's town or camp is no way for you: a crossing
-    -- is a chokepoint, and the border has another one clear of it (tools/travel.js does the same)
-    if not (n.kind == "cross" and inCamp(n)) then idx[n.id] = add(c) end
+    -- is a chokepoint, and the border has another one clear of it (tools/travel.js does the same) - when it has
+    if not (n.kind == "cross" and inCamp(n) and clearBorder[border(n)]) then idx[n.id] = add(c) end
   end
   for _, e in ipairs((Travel.NET and Travel.NET.edges) or {}) do
     pause()

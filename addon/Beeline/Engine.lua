@@ -1073,15 +1073,9 @@ local function statusRaw(i)
     local found = HandyNotes_ForeverBooksCharDB and HandyNotes_ForeverBooksCharDB.collected
     if s.book and type(found) == "table" and found[s.book] then return "done" end
   elseif k == "train" then
-    if s.until_ and UnitLevel("player") < s.until_ then return "wait" end
-    -- a later training stop on the route is already due at your level: that visit covers this one
-    local lvl = UnitLevel("player") or 1
-    local c = planIndex()
-    local L = c.trainAfter[i]
-    if L and L <= lvl then return "done" end
-    -- nothing to learn yet: the trainer has no spell of the stop's lowest level for you ("level 34/36" is for 34)
-    local lo = c.trainLo[i]
-    if lo and lo > lvl then return "wait" end
+    -- training is the player's call: the plans' training stops are never shown or travelled to (they stay in the plan
+    -- files so step numbers - and your saved progress - don't move)
+    return "done"
   end
   -- "Run <dungeon>": done while you're inside that dungeon (the entrance check can't see you once you're in, and a
   -- reload inside would otherwise leave it stuck). Leave early and it comes back.
@@ -1322,7 +1316,7 @@ local function worldReady() Engine.placeReady = true end -- (PLAYER_ENTERING_WOR
 -- out again on every refresh (7-8 ms). A done step comes back only through what resets it here (Engine.StateChanged:
 -- undo, back, a skip or jump, a quest dropped, a level, a bind, a dungeon, another route or place in the plan) - and
 -- for anything else, the run is checked again in the background after each refresh that used it (a slice a frame); a
--- step found not done there resets it and refreshes.
+-- step found not done there ends the run just before it (the steps before it were found done on the way) and refreshes.
 local doneRun = { list = nil, k = 0, step = nil, key = nil }
 Engine.doneRunMiss = 0 -- (the simulator: times the check found the run wrong)
 -- One generation for your route state (Engine.stateGen): Engine.StateChanged() after anything that can make a done step
@@ -1339,6 +1333,22 @@ local function settleRemoved()
   end
   wipe(removed)
 end
+-- The live solve's pick-up from behind you (Next.taken) reads "todo" only while it is the solve's pick: an extra, never
+-- the plan's own step - nor what reads "todo" only through it: the rest of its quest, a pick-up it unlocks. Inside the
+-- run of done steps it doesn't break the run (a pick from behind you made the next refresh look at the whole plan from
+-- its start: 2,000 statuses): Engine.Compute passes over an extra as it passes over a done step
+local function takenNow()
+  local taken = ns.Next and ns.Next.taken
+  if taken ~= nil and not Engine.BehindYou(taken, true) then taken = nil end
+  return taken
+end
+local function isExtra(list, i, taken) return taken ~= nil and (list[i] == taken or Engine.BehindYou(list[i], true)) end
+-- the run, now only up to just before step j (a step in it found not done: the ones before it were found done)
+local function cutRun(j)
+  if not (doneRun.list and j and j - 1 < doneRun.k) then return end
+  doneRun.k = math.max(0, j - 1)
+  doneRun.step = doneRun.list[doneRun.k]
+end
 local function doneKey(skipFrom, skipTo)
   local c = ns.char or {}
   local j = c.join
@@ -1352,8 +1362,8 @@ local function verifyDone(wrong)
   verify = nil
   if not wrong then return end
   Engine.doneRunMiss = Engine.doneRunMiss + 1
-  if not settling and ns.Why then ns.Why("donerun", "step " .. wrong .. " is not done after all: the plan is looked at from its start again") end
-  Engine.StateChanged()
+  if not settling and ns.Why then ns.Why("donerun", "step " .. wrong .. " is not done after all: the plan is looked at again from there") end
+  cutRun(wrong)
   if not settling then Engine.RefreshBg() end
 end
 local function verifyFail() verify = nil; if settling then Engine.doneRunMiss = Engine.doneRunMiss + 1 end; Engine.StateChanged() end
@@ -1366,35 +1376,51 @@ local function checkRun(list, k)
       if j % 16 == 0 then ns.MaybeYield() end
       if doneRun.list ~= list or doneRun.key ~= key then return nil end -- (reset meanwhile)
       if j > doneRun.skipFrom0 and j <= doneRun.skipTo0 then -- (the part of the plan your place in it passes)
-      elseif Engine.Status(j) ~= "done" then return j end
+      elseif Engine.Status(j) ~= "done" and not isExtra(list, j, takenNow()) then return j end
     end
     return nil
   end, { budget = 0.5, logAs = "donerun", done = verifyDone, fail = verifyFail, abort = verifyAbort })
 end
--- The run is kept from one login to the next (ns.char.doneRun: its last step's key, at the level, plan and addon
--- version it was found at): otherwise a login looked at the whole plan from its start again (most of a 300 ms
--- refresh). Taken back only where its last step still stands in the plan (looked up near where it was), and then
+-- The run is kept from one login to the next (ns.char.doneRun: its last step, at the level, plan and addon version it
+-- was found at): otherwise a login looked at the whole plan from its start again (most of a 300 ms refresh). Counted
+-- in the plan's own steps: the stops added as you played (hand-ins, side quests, flight paths: added) are not in
+-- the plan the next login reads - they come back only after its first refresh - and counted with them, the run kept
+-- never matched the plan at the next login. Taken back only where its last step still stands in the plan, and then
 -- checked in the background like any other run (checkRun)
-local function runStamp() return tostring(ns.VERSION) .. ":" .. tostring(BeelineData and (BeelineData.id or BeelineData.title)) .. ":" .. #steps() end
+local function own(t) return not (t.inserted or t.added) end
+local function ownSteps(list) local n = 0; for j = 1, #list do if own(list[j]) then n = n + 1 end end; return n end
+local function runStamp(list) return tostring(ns.VERSION) .. ":" .. tostring(BeelineData and (BeelineData.id or BeelineData.title)) .. ":" .. ownSteps(list) end
+-- step j's key among the plan's own steps (Engine.Key with the added stops left out): what it is, and which of its kind
+local function stepBase(t) return (t.k or "?") .. ":" .. tostring(t.q or "") .. ":" .. tostring(t.match or t.text or t.dest or t.name or t.npc or t.fp or t.bind or "") end
+local function ownKey(list, j)
+  local s = list[j]
+  local b, n = stepBase(s), 0
+  for i = 1, j do local t = list[i]; if own(t) and t.k == s.k and t.q == s.q and stepBase(t) == b then n = n + 1 end end
+  return b .. "#" .. n
+end
 function Engine.DoneRunSave()
   if not ns.char then return end
   local list = steps()
   if doneRun.list ~= list or doneRun.k <= 0 or list[doneRun.k] ~= doneRun.step then ns.char.doneRun = nil; return end
-  ns.char.doneRun = { v = runStamp(), lvl = UnitLevel and UnitLevel("player"), k = doneRun.k, step = key(doneRun.k) }
+  -- (up to its last own step: an added stop is not in the next login's plan)
+  local k = doneRun.k
+  while k > 0 and not own(list[k]) do k = k - 1 end
+  local n = 0
+  for j = 1, k do if own(list[j]) then n = n + 1 end end
+  if n <= 0 then ns.char.doneRun = nil; return end
+  ns.char.doneRun = { v = runStamp(list), lvl = UnitLevel and UnitLevel("player"), k = n, step = ownKey(list, k) }
 end
 local function doneRunLoad(list, runKey)
   local s = ns.char and ns.char.doneRun
   if ns.char then ns.char.doneRun = nil end -- (once: the run found from here on is this login's own)
-  if not (type(s) == "table" and type(s.k) == "number" and type(s.step) == "string" and s.v == runStamp() and s.lvl == (UnitLevel and UnitLevel("player"))) then return end
-  for d = 0, 60 do
-    for _, j in ipairs(d == 0 and { s.k } or { s.k - d, s.k + d }) do
-      if list[j] and key(j) == s.step then
-        doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, runKey, j, list[j]
-        doneRun.skipFrom0, doneRun.skipTo0 = 0, -1
-        return true
-      end
-    end
-  end
+  if not (type(s) == "table" and type(s.k) == "number" and type(s.step) == "string" and s.v == runStamp(list) and s.lvl == (UnitLevel and UnitLevel("player"))) then return end
+  -- (the s.k-th own step: step s.k, unless stops were added before it already)
+  local j, n = 0, 0
+  while n < s.k and j < #list do j = j + 1; if own(list[j]) then n = n + 1 end end
+  if n ~= s.k or j < 1 or ownKey(list, j) ~= s.step then return end
+  doneRun.list, doneRun.key, doneRun.k, doneRun.step = list, runKey, j, list[j]
+  doneRun.skipFrom0, doneRun.skipTo0 = 0, -1
+  return true
 end
 ns.On("PLAYER_LOGOUT", function() pcall(Engine.DoneRunSave) end)
 -- (tests and the simulator: the run checked at once, every time it is used)
@@ -1517,14 +1543,24 @@ function Engine.Compute()
   if doneRun.list == nil and not Engine.noPlace and ns.char and ns.char.doneRun then doneRunLoad(list, key) end -- (the last login's: checked below like any)
   local use = not Engine.noPlace and doneRun.list == list and doneRun.key == key and doneRun.k > 0 and list[doneRun.k] == doneRun.step
   if use then start = doneRun.k + 1 end
+  -- (the live solve's pick-up from behind you: an extra - takenNow, above. Inside the run, the run ends before it: the
+  -- look sees it, and the rest of its quest as they read now - as the look from the plan's start saw them, not a walk
+  -- from the start for it)
+  local taken = takenNow()
+  local function extra(i) return isExtra(list, i, taken) end
+  if use and taken ~= nil then
+    local ti = planIndex().idx[taken]
+    if ti and ti < start then start = ti end
+  end
   -- (Engine.CHECK_RUN_EVERY: every n-th use only - the sim's whole-plan runs: checking ~2,000 done steps every refresh
   -- was a third of its time, and a run that stays wrong is still caught)
   Engine.checkRunN = (Engine.checkRunN or 0) + 1
   if use and Engine.CHECK_RUN_NOW and Engine.checkRunN % (Engine.CHECK_RUN_EVERY or 1) == 0 then
-    for j = 1, doneRun.k do
+    for j = 1, start - 1 do
       local st = (skipFrom and j >= skipFrom and j <= skipTo) and "done" or Engine.Status(j)
-      if st ~= "done" then
-        Engine.doneRunMiss = Engine.doneRunMiss + 1; start = 1; use = false
+      if st ~= "done" and not extra(j) then
+        -- (looked at again from that step: the ones before it were just found done)
+        Engine.doneRunMiss = Engine.doneRunMiss + 1; start = j; use = false
         local t = list[j]; Engine.doneRunWhy = Engine.doneRunWhy or {}
         if #Engine.doneRunWhy < 12 then Engine.doneRunWhy[#Engine.doneRunWhy + 1] = string.format("#%d %s %s now %s", j, tostring(t.k), tostring(t.name or t.text or t.dest or ""):sub(1, 30), st) end
         break
@@ -1536,10 +1572,7 @@ function Engine.Compute()
   local found, sawExtra
   -- (the live solve's pick-up from behind you, Next.taken, reads "todo" only while it is the solve's pick: it is an
   -- extra, never the plan's own step - as that, once the solve moved on it read "done" again and the card showed a done
-  -- step. Nor what reads "todo" only through it: the rest of its quest, and a pick-up it unlocks)
-  local taken = ns.Next and ns.Next.taken
-  if taken ~= nil and not Engine.BehindYou(taken, true) then taken = nil end
-  local function extra(i) return taken ~= nil and (list[i] == taken or Engine.BehindYou(list[i], true)) end
+  -- step. Nor what reads "todo" only through it: the rest of its quest, and a pick-up it unlocks: takenNow, above)
   -- a step as the plan's look reads it: the part of the plan your place skips (the plan before the stretch you joined
   -- at) done - and a hand-in whose objective step is there, still to do, waits with it ("later": passed over, like a
   -- dungeon's). You start in that stretch, and the work you skip is not where you are. The hand-in comes back once the
@@ -1791,7 +1824,12 @@ function Engine.CardAt()
   return r.shownAt
 end
 -- a stop inserted at number at (Engine.InsertStop): the hold's number moves with it
-function Engine.RunShift(at) local r = lock; if r and r.shownAt and r.shownAt >= at then r.shownAt = r.shownAt + 1 end end
+function Engine.RunShift(at)
+  local r = lock; if r and r.shownAt and r.shownAt >= at then r.shownAt = r.shownAt + 1 end
+  -- (a stop put in inside the run of done steps: the run ends before it - before, its last step no longer stood at its
+  -- place and the next refresh looked at the whole plan from its start)
+  if doneRun.list == steps() and doneRun.k >= at then cutRun(at) end
+end
 -- fn now, or when the run ends
 function Engine.WhenIdle(fn) if Engine.Busy() then lock.idle[#lock.idle + 1] = fn; return true end; fn(); return false end
 -- a handler that acts on a step by its number: while a run is on, it runs when the run ends (with its arguments)
@@ -2035,6 +2073,11 @@ function Engine.RefreshInner()
     if batch then wipe(batch) end
     Engine.current = Engine.Compute()
   end
+  -- a quest finished since the hand-ins were fitted (one with nothing to do, taken this moment): its hand-in goes on the
+  -- route before the solve picks (Inserts.lua: Engine.InsertsDue) - not once FR_STATE comes, a card flip later
+  if Engine.InsertsDue and Engine.InsertsDue() and Engine.current and not Engine.Busy() then
+    if Engine.InsertsNow() then if batch then wipe(batch) end; Engine.current = Engine.Compute() end
+  end
   -- what to do next: the live solver's pick among the next stops you can do and finished quests near you (Next.lua),
   -- or, with it off, the old reordering - a later step you're working on or standing at (Engine.UpdateFocus)
   Engine.planned = Engine.current
@@ -2253,6 +2296,18 @@ local function loginCatchUp() -- (PLAYER_ENTERING_WORLD)
   loginDue = nil
   C_Timer.After(1, function() Engine.RefreshBg() end)
   C_Timer.After(3, function()
+    -- (in the game: the passes as route jobs, as a route change's, and the refresh after them a job too - a slice a
+    -- frame, the card holding its step meanwhile. All of it in this frame was 20-40 ms in the simulator and up to
+    -- 470 ms on a player's PC at level 50, the game's caches cold. Under ns.Jobs.SYNC - tests, simulated players,
+    -- replays - one frame, as it was)
+    if login and not ns.Jobs.SYNC then
+      Engine.Coalesce(function()
+        local ok, e = pcall(ns.State.ScanTaxi); if not ok then ns.LogError("taxi", e) end
+        for _, p in ipairs(Engine.PASSES) do Engine.Post(p[1], function() pass(p) end) end
+        Engine.Post("refresh", function() Engine.Refresh(); quiet = false end, function() quiet = false end)
+      end)
+      return
+    end
     Engine.Coalesce(function()
       if login then
         local ok, e = pcall(ns.State.ScanTaxi); if not ok then ns.LogError("taxi", e) end

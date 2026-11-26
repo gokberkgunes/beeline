@@ -62,6 +62,7 @@ Learn.lua
 Availability.lua
 ItemQuests.lua
 Next.lua
+Timings.lua
 UI\Style.lua
 UI\Skins\Beeline.lua
 UI\Skins\Blizzard.lua

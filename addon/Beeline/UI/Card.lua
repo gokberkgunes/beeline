@@ -465,6 +465,7 @@ function Card.Fill()
   if ns.Engine.view then
     setNote("Just looking - your progress isn't changed.", C.sub)
   else
+    Card.groundShown = nil
     local text, color = Card.StepNote(s, i, status, headTrip)
     -- a quest newer than the original game: the quest data for those is younger and can miss what unlocks them
     if s.k == "accept" and Card.IsNewQuest(s.q) then cur.fq:Show() end
@@ -473,8 +474,11 @@ function Card.Fill()
     -- plan farms them further away
     local also = Card.AlsoNote(s)
     if also then text = (text and text ~= "") and (text .. "\n" .. also) or also end
-    -- a quest the plan has earlier, taken up again here: a side quest first, then the plan (Card.SideQuestNote)
-    local side = Card.SideQuestNote(i)
+    -- (a quest the plan has earlier, taken up again here, says so in it: "Skipped earlier: +2.8k XP for ~12 min")
+    -- the one grounded line (Explain.Ground) in its place: why the card left the plan's step (a quest from behind you:
+    -- where, what it pays, how long), or what the plan's own odd step connects to later. A trip's lines have it already
+    local ground = Card.groundShown ~= i and ns.Explain and ns.Explain.Ground(i)
+    local side = ground and ("|cffffd25a" .. ground .. "|r") or nil
     if side then text = (text and text ~= "") and (side .. "\n" .. text) or side end
     -- live reordering picked this step because you are at it: that is exactly when its warnings and the full-log
     -- alert matter, so they stay, and the plan's own next step is a dim line under them

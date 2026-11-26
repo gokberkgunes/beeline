@@ -52,7 +52,7 @@ local function build()
     r:SetScript("OnClick", function(self) if self.z then ns.Engine.Look(self.z.first, nil, true) end end)
     f.rows[n] = r
   end
-  tab = CreateFrame("Button", nil, c); tab:SetSize(14, 40)
+  tab = CreateFrame("Button", nil, c); tab:SetSize(14, 40); f.tab = tab -- (f.tab: tests/card_controls_test.lua names it)
   Style.RowBg(tab, 6, 0.95, C.tab)
   tab.label = Style.Text(tab, 11, C.gold); tab.label:SetPoint("CENTER")
   tab:SetScript("OnClick", function() ns.db.zonesPanel = not ns.db.zonesPanel; Zones.Update() end)

@@ -124,7 +124,7 @@ function Explain.CardLine(i)
   elseif st then
     local n = st.n or st.quests or 0
     if st.name and n >= 2 then v = string.format("For %s and %s at your level", st.name, plural(n - 1, "more quest"))
-    elseif st.name and n == 1 then v = "For " .. st.name
+    elseif st.name and n == 1 then v = "One quest in " .. ns.Style.ShortZone(st.zone or "") .. ": " .. st.name
     elseif n > 0 then v = "For " .. plural(n, "quest") .. " at your level"
     elseif st.grind then v = "To level up there" end
   end
@@ -159,6 +159,141 @@ local function pickWhy(i)
   return why .. "."
 end
 
+-- Grounded lines (docs/research/route-feel.md, part 3): a step that looks odd says, in one short line, what it connects
+-- to later and what it saves - facts the player can check (a zone, a level, minutes, XP), never a bare "it's faster".
+-- The headline already names the step, so the line only grounds it. Explain.Ground(i) is the card's one line, in this
+-- order: why the card left the plan's step (Next.Ground), the plan's own odd step (its g, tools/why-lines.js), the trip
+-- out of the zone (Explain.CardLine). Explain.GroundLong(i) is the "?": the same in a sentence, numbers on both sides.
+Explain.LINE_MAX = 68
+local function short(t, n) t = tostring(t or ""); if #t <= n then return t end return (t:sub(1, n - 3):gsub("%s+%S*$", "")) .. "..." end
+local function zoneOf(t) return t and (t.zone or (t.m and ns.Util and ns.Util.MapName and ns.Util.MapName(t.m))) or nil end
+local function nameOf(t) return t and (t.name or t.dest or t.text or t.npc) or "your plan's step" end
+-- the line, shortened to fit: its " · ..." tail goes first, then the words
+local function fit(t)
+  if not t or #t <= Explain.LINE_MAX then return t end
+  local head = t:match("^(.-) · ") or t
+  return #head <= Explain.LINE_MAX and head or short(head, Explain.LINE_MAX)
+end
+-- the step a plan step's g connects to (by its id, after it in the route)
+local function gTarget(i, g)
+  local list = steps()
+  for j = i + 1, #list do local t = list[j]; if t.id == g.to and not t.inserted then return t, j end end
+end
+local function saves(secs) return (tonumber(secs) or 0) >= 60 and (" · saves ~" .. minutes(secs) .. " min") or "" end
+
+-- the plan's own odd step: its g -> short, why, fact
+local function planGround(i)
+  local s = steps()[i]
+  local g = s and s.g
+  if type(g) ~= "table" or not g.k then return nil end
+  local t = gTarget(i, g)
+  local z = ns.Style.ShortZone(zoneOf(t) or "")
+  local lv, sec, n = tonumber(g.lv), tonumber(g.s) or 0, tonumber(g.n) or 0
+  local here = zoneOf(s) and ns.Style.ShortZone(zoneOf(s))
+  if g.k == "carry" and t and lv then
+    return "For later: its work is in " .. z .. " at " .. lv .. saves(sec),
+      "Picked up now, on your way: its work is in " .. z .. " at level " .. lv .. ".",
+      string.format("Now: a stop on your way (~%d s). Later: a trip back here for it, ~%d min.", math.floor((tonumber(s.dd) or 0) + 8), minutes(sec))
+  elseif g.k == "later" and lv then
+    return "You're back here at level " .. lv .. " for it" .. saves(sec),
+      "Your plan comes back " .. (here and ("to " .. here) or "here") .. " at level " .. lv .. " for its work.",
+      string.format("Now: a stop on your way. Picked up then: ~%d min more of walking to the giver.", minutes(sec))
+  elseif g.k == "opens" and t and lv then
+    local q2 = (t.name == s.name) and "its next part" or short(t.name, 30)
+    local away = (t.m and s.m and t.m ~= s.m) and (" in " .. z) or ""
+    return "Hand-in opens " .. q2 .. away .. " at level " .. lv,
+      "Handed in now, it opens " .. (t.name or "a quest") .. ", which your plan takes at level " .. lv .. (away ~= "" and (" in " .. z) or "") .. ".",
+      string.format("Now: ~%d s off your way. Later: the hand-in on its own, before %s can start.", math.floor(sec), t.name or "it")
+  elseif g.k == "transit" and t then
+    return "On the way to " .. z .. saves(sec),
+      "Done here on your way to " .. z .. ".",
+      string.format("Now: ~%d min off your way. A trip back for it later: ~%d min.", math.max(0, minutes(tonumber(s.dd) or 0)), minutes(sec + (tonumber(s.dd) or 0)))
+  elseif g.k == "hearth" and sec >= 60 then
+    return (n > 0 and (n .. (n == 1 and " hand-in" or " hand-ins") .. " there · ") or "") .. "~" .. minutes(sec) .. " min quicker than the trip",
+      "Your hearthstone takes you " .. (z ~= "" and ("to " .. z) or "back") .. (n > 0 and (" for " .. n .. (n == 1 and " hand-in" or " hand-ins")) or "") .. ".",
+      string.format("The hearth: ~%d min sooner there than the trip.", minutes(sec))
+  elseif g.k == "bind" and lv then
+    return "You hearth back here at level " .. lv .. (n > 0 and (" to hand in " .. n) or ""),
+      "Your plan hearths back here at level " .. lv .. (n > 0 and (" to hand in " .. n .. " quests") or "") .. ".", nil
+  elseif g.k == "fp" and lv then
+    return "You fly back here at level " .. lv, "Your plan flies back here at level " .. lv .. ": this flight path makes that a flight.", nil
+  end
+end
+
+-- the card left the plan's step (Next.Ground) -> short, why, fact
+local function devGround(i)
+  local g = ns.Next and ns.Next.Ground and ns.Next.Ground(i)
+  if not g then return nil end
+  local list = steps()
+  local s, p = list[i], list[g.plan]
+  local pn = short(nameOf(p), 26)
+  local sv = saves(g.saves)
+  local both = (g.pickSecs and g.planSecs) and string.format("This way: ~%d min for the stops ahead. In your plan's order: ~%d min.", minutes(g.pickSecs), minutes(g.planSecs)) or nil
+  local k = g.k
+  if g.behind and g.away then
+    local z = ns.Style.ShortZone(zoneOf(s) or "another zone")
+    local trip = g.trip and (", ~" .. minutes(g.trip) .. " min there") or ""
+    return "In " .. z .. ": +" .. Explain.Xp(g.xp or 0) .. " XP" .. trip,
+      "A quest you skipped earlier, still worth XP at your level, in " .. z .. ".",
+      string.format("~%d min there and ~%d min of work, for ~%s XP. Then: %s.", minutes(g.trip or 0), minutes(g.work or 0), Explain.Xp(g.xp or 0), nameOf(p))
+  elseif g.behind or k == "here" or k == "nearby" or k == "zone" then
+    return "Skipped earlier: +" .. Explain.Xp(g.xp or 0) .. " XP for ~" .. minutes(g.work or 0) .. " min",
+      "A quest you skipped earlier, still worth XP at your level" .. (k == "zone" and ": done before you leave the zone." or ", close by."),
+      string.format("~%d min of work for ~%s XP. Then: %s.", minutes(g.work or 0), Explain.Xp(g.xp or 0), nameOf(p))
+  elseif (k == "visit" or k == "early") and g.later and (g.ahead or 0) > 0 then
+    return "Your plan comes back here for it at " .. g.later .. sv,
+      "Your plan has this later, at level " .. g.later .. ": done now, that trip back goes.", both
+  elseif k == "visit" or k == "early" then
+    return "Done now: no trip back here for it later" .. sv, "While you're here: no trip back for it later.", both
+  elseif k == "chain" then
+    return "Opens the next part right here" .. sv, "The chain goes on right here: hand it in and take the next.", both
+  elseif k == "pickupFirst" then
+    return "Its work is on your way: no trip back for it", "Picked up before you head out: its work fits on the same trip.", both
+  elseif k == "rejoin-trip" then
+    return "The " .. short(g.dest or "next", 18) .. " trip comes back here: these first" .. sv,
+      "Your plan's next step is a trip to " .. (g.dest or "another zone") .. ", then it quests here: these come first.", both
+  elseif k == "rejoin-near" then
+    return pn .. " is across the zone: this is close" .. sv, "Your plan's next step, " .. nameOf(p) .. ", is across the zone; these are right around you.", both
+  elseif k == "opt" then
+    return "In your log: handed in where it costs least" .. sv, "A quest you picked up on the way, handed in where it costs least.", both
+  elseif k == "insert" then
+    if s.k == "fp" then return "A flight path on your way, for later", "A flight path on your way: the plan flies from here later.", nil end
+    if s.k == "turnin" then return "Finished: hand it in as you pass" .. sv, "A quest you finished: handed in as you pass.", both end
+    return "Added on your way" .. sv, "A stop added to your route where it costs least.", both
+  elseif k == "focus" then
+    return "You're already working on it", "Your kills and loot count for it: it stays until you're done or move on.", nil
+  elseif k == "extra" then
+    return pn .. " is an extra stop: your plan goes on",
+      nameOf(p) .. " is a stop added to your route for later (your quest log says where); your plan's own steps go on.", nil
+  elseif k == "waits" then
+    if g.why == "level" and g.lv then return pn .. " opens at level " .. g.lv .. ": this first", "Your plan's step, " .. nameOf(p) .. ", opens at level " .. g.lv .. ": the next one you can do comes first.", nil end
+    return pn .. " isn't ready yet: this first", "Your plan's step, " .. nameOf(p) .. ", can't be done yet (an earlier quest, or room in your log): the next one you can do comes first.", nil
+  elseif k == "way" then
+    if (g.ahead or 0) > 0 and g.ahead <= 3 then return "Same stops, shorter order: " .. pn .. " right after" .. sv, "The same stops in a shorter order: " .. nameOf(p) .. " comes right after.", both end
+    if (g.ahead or 0) > 0 then return "Your plan has it " .. g.ahead .. " stops on: on your way now" .. sv, "Your plan has this " .. g.ahead .. " stops on; from here it's on your way.", both end
+    return "On your way to " .. pn .. sv, "On your way to " .. nameOf(p) .. ".", both
+  end
+end
+
+-- the card's one grounded line for step i (plain text, Explain.LINE_MAX at most), or nil
+function Explain.Ground(i)
+  if not i or ns.Engine.view then return nil end
+  local okD, d = pcall(devGround, i)
+  if okD and d then return fit(d) end
+  if ns.Engine.planned and i ~= ns.Engine.planned then return nil end -- (a pick with no reason: not the plan's line either)
+  local okP, p = pcall(planGround, i)
+  if okP and p then return fit(p) end
+  return fit(Explain.CardLine(i))
+end
+-- the "?": -> why, fact (nil when step i has no grounded line)
+function Explain.GroundLong(i)
+  local okD, _, why, fact = pcall(devGround, i)
+  if okD and why then return why, fact end
+  if ns.Engine.planned and i ~= ns.Engine.planned then return nil end
+  local okP, _, w2, f2 = pcall(planGround, i)
+  if okP and w2 then return w2, f2 end
+end
+
 -- the newest decision log entry of a kind (ns.Why), at most `within` seconds old
 local function recentWhy(kind, within, pattern)
   local w = BeelineDB and BeelineDB.why
@@ -185,9 +320,13 @@ function Explain.Lines(i)
   local why, fact
   -- 1. the solver took this stop out of your plan's order
   if planned and i ~= planned and list[planned] then
-    why = pickWhy(i)
-    if why then fact = "Your plan's next step after it: " .. ns.Card.Plain((ns.Card.Describe(list[planned]))) .. "." end
+    -- (grounded: what it connects to and the numbers both ways - Explain.GroundLong; the tag's words when it has none)
+    local gw, gf = Explain.GroundLong(i)
+    why = gw or pickWhy(i)
+    if why then fact = gf or ("Your plan's next step after it: " .. ns.Card.Plain((ns.Card.Describe(list[planned]))) .. ".") end
   end
+  -- 1b. your plan's own step that looks odd (its g): what it connects to later
+  if not why then why, fact = Explain.GroundLong(i) end
   -- 2. a trip out of the zone you picked that the planner kept because it pays: reassurance and the reason first
   local d = not why and leaves(i) and detourOf(i)
   if d then why, fact = Explain.Detour(d) end

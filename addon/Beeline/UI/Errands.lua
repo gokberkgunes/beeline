@@ -174,8 +174,9 @@ function Errands.Grimoire()
   end
 end
 
--- what to show (or nil): text, and a key so a dismissal lasts until things change
-function Errands.Current()
+-- what to show (or nil): text, and a key so a dismissal lasts until things change. due: what is due, hidden or not
+-- (the check below: a hidden errand still due is not a change)
+function Errands.Current(due)
   local free = Errands.FreeSlots()
   local needSell = free and free <= BAG_LOW
   -- (no repair reminder: other addons do that)
@@ -185,12 +186,12 @@ function Errands.Current()
     if gt then return gt, gk end
     if ns.db.remindFood ~= false and killing() and Errands.WellFed() == false then
       local food = Errands.Food()
-      if food and ns.char.errandDismissed ~= "food" then return "Eat " .. food.name .. " for Well Fed (about +5% kill XP)", "food" end
+      if food and (due or ns.char.errandDismissed ~= "food") then return "Eat " .. food.name .. " for Well Fed (about +5% kill XP)", "food" end
     end
     return nil
   end
   local key = "bags"
-  if ns.char.errandDismissed == key or ns.db.remindBags == false then return nil end
+  if (not due and ns.char.errandDismissed == key) or ns.db.remindBags == false then return nil end
   local v, d = Errands.Nearest()
   local where = v and string.format(": %s (%s), %s", v[3], v[4], ns.Style.Distance(d)) or " at the next vendor"
   -- the live solver fitted a vendor into your way (Next.lua): that one, and when
@@ -211,8 +212,9 @@ end
 
 local last
 local function check()
-  local text, key = Errands.Current()
-  if key ~= last then last = key; if not key then ns.char.errandDismissed = nil end; ns.Card.Repaint() end
+  -- (what is due, not what shows: a hidden errand read as gone, so its "x" was undone at the next bag update)
+  local _, key = Errands.Current(true)
+  if key ~= last then last = key; if key ~= ns.char.errandDismissed then ns.char.errandDismissed = nil end; ns.Card.Repaint() end
 end
 ns.On("BAG_UPDATE_DELAYED", check)
 ns.On("FR_LOADED", function() C_Timer.After(5, check); ns.NewTicker(15, ns.Guard("errands", check)) end)

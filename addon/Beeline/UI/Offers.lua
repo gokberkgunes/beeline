@@ -56,8 +56,8 @@ function Offers.Summary(level)
   return string.format("Level %d: %s", level, table.concat(parts, " - ")), better
 end
 
--- Near the end of your home base: once per base, "About 9k XP left here. Next bases: A, B, C" - when what is left
--- there is under a quarter of your level (the player picks the next one; nothing switches)
+-- Near the end of your home base: "About 9k XP left here. Next bases: A, B, C" - when what is left there is under a
+-- quarter of your level (the player picks the next one; nothing switches). Its x hides it until your next level
 Offers.BASE_SHARE = 0.25
 -- the next bases it names (ns.ZoneChoices: every zone route looked at) are kept for the card's layouts, until a quest,
 -- the step, the route, the zone or the level changes
@@ -82,8 +82,9 @@ end
 function Offers.BaseNudge()
   local d = BeelineData
   if not (d and d.zoneRoute and d.id and ns.char) then return nil end
-  if ns.char.baseNudged and ns.char.baseNudged[d.id] then return nil end
   local L = UnitLevel("player") or 1
+  -- (its "x" hides it until your next level, as the x says: the level it was hidden at is kept)
+  if ns.char.baseNudged and ns.char.baseNudged[d.id] == L then return nil end
   local need = ns.XP_TO_LEVEL and ns.XP_TO_LEVEL[L]
   local left = ns.ZoneXpLeft and ns.ZoneXpLeft(d, L)
   if not (left and need and need > 0 and left > 0 and left < Offers.BASE_SHARE * need) then return nil end
@@ -112,7 +113,7 @@ end
 -- base: the shown row's home-base nudge (false: the level-up line; nil: whatever Current last returned)
 function Offers.Dismiss(base)
   if base == nil then base = Offers.kind end
-  if base then ns.char.baseNudged = ns.char.baseNudged or {}; ns.char.baseNudged[base] = true
+  if base then ns.char.baseNudged = ns.char.baseNudged or {}; ns.char.baseNudged[base] = UnitLevel("player")
   else ns.char.offerDismissed = UnitLevel("player") end
   ns.Card.Repaint()
 end

@@ -103,7 +103,7 @@ function Card.BuildFooter(frame)
   f.change:SetScript("OnLeave", function() GameTooltip:Hide() end)
   -- a special reward not done yet (the Cozy Sleeping Bag): one line, Do it now, dismiss
   footRow("special", C.gold, { "Do it now", 70, function() local r = f.special.route; if r then ns.EnterDungeonRoute(r.id) end end, "Switch to this side trip now. \"Back to plan\" on the card returns you." },
-    { function() local r = f.special.route; if r then ns.char.hideSpecial = ns.char.hideSpecial or {}; ns.char.hideSpecial[r.id] = true; Card.Layout() end end, "Hide this here (it stays under Side trips)" })
+    { function() Card.HideSpecial(f.special) end, "Hide this (it stays under Side trips). A stop for it in another zone shows it there." })
   -- errands: bags nearly full, with the nearest vendor that can help
   footRow("errand", C.info, nil, { function() ns.Errands.Dismiss() end, "Hide until it changes" })
   -- a finished quest whose hand-in is close by (Engine.ReadyNearby): one line, Do it now
@@ -146,7 +146,7 @@ local FOOT = {
       local inside = ns.Dungeon and ns.Dungeon.Inside and select(2, ns.Dungeon.Inside())
       return (not ns.Engine.view and not inside and not (BeelineData and BeelineData.dungeon)) and Card.SpecialOffer() or nil
     end,
-    set = function(row, sp) row.route = sp.route; row.text:SetText(sp.text) end },
+    set = function(row, sp) row.route = sp.route; row.near = sp.near; row.text:SetText(sp.text) end },
   { key = "errand", log = true, extra = true,
     get = function() return ns.Errands and not ns.Engine.view and ns.Errands.Current() end,
     set = function(row, t) row.text:SetText(t) end },
@@ -392,7 +392,7 @@ function Card.SpecialOffer()
   local m = ns.State.Position()
   -- a stop near you first (worth the detour now), then the rest in plan order (class quests before the bag)
   local list, near, nextOf = {}, {}, {} -- (nextOf: each route's next stop, walked once)
-  for _, r in ipairs(ns.DungeonRoutes and ns.DungeonRoutes() or {}) do if r.special then local nx = Card.SpecialNext(r); nextOf[r] = nx or false; if nx and m and nx.m == m then near[#near + 1] = r else list[#list + 1] = r end end end
+  for _, r in ipairs(ns.DungeonRoutes and ns.DungeonRoutes() or {}) do if r.special then local nx = Card.SpecialNext(r); nextOf[r] = nx or false; if nx and m and nx.m == m and not ns.Engine.GroupTrip(r) then near[#near + 1] = r else list[#list + 1] = r end end end
   for _, r in ipairs(list) do near[#near + 1] = r end
   for _, r in ipairs(near) do
     if r.special and (UnitLevel("player") or 1) >= (tonumber(r.needsLevel) or 1) then
@@ -401,8 +401,9 @@ function Card.SpecialOffer()
       if total > 0 and done < total then
         local name = r.dungeonName or r.title
         local nx = nextOf[r]
-        -- its next stop is on this map: worth a detour, shown even if the row was hidden
-        if nx and m and nx.m == m then
+        -- its next stop is on this map: worth a detour, shown even if the row was hidden - unless you hid it on this map
+        -- (not a trip that takes a group - an attunement, a dungeon key: its stops are no detour on your way, Engine.GroupTrip)
+        if nx and m and nx.m == m and not ns.Engine.GroupTrip(r) and not (ns.char.hideSpecialNear and ns.char.hideSpecialNear[r.id] == m) then
           local px, py, pinst = HBDc:GetPlayerWorldPosition()
           local wx, wy, winst = HBDc:GetWorldCoordinatesFromZone(nx.x, nx.y, nx.m)
           local d = (px and wx and pinst == winst) and math.sqrt((px - wx) ^ 2 + (py - wy) ^ 2) or nil
@@ -414,6 +415,14 @@ function Card.SpecialOffer()
       end
     end
   end
+end
+-- the row's "x" (row: { route, near }): hides the row; a detour offered here is hidden on this map too
+function Card.HideSpecial(row)
+  local r = row and row.route
+  if not r then return end
+  ns.char.hideSpecial = ns.char.hideSpecial or {}; ns.char.hideSpecial[r.id] = true
+  if row.near then ns.char.hideSpecialNear = ns.char.hideSpecialNear or {}; ns.char.hideSpecialNear[r.id] = ns.State.Position() end
+  Card.Layout()
 end
 -- arriving in a zone with the next stop: one chat line
 local lastSpecialMap

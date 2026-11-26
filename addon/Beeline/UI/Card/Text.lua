@@ -141,8 +141,10 @@ function Card.TripLines(i, trip, headed)
   end
   local extra = ns.Travel.LegExtra(l1)
   if extra then lines[#lines + 1] = (l1.hostile and Style.Hex(C.warn) or "|cff8e99ad") .. extra:sub(1, 1):upper() .. extra:sub(2) .. ".|r" end
-  local why = ns.Explain and ns.Explain.CardLine(i)
-  if why then lines[#lines + 1] = "|cffffd25a" .. why .. "|r" end
+  -- why you go, grounded (Explain.Ground: why the card left the plan, the plan's odd step, or what the trip is for):
+  -- the card's one line of it (Card.Fill adds none of its own when a trip's lines have it)
+  local why = ns.Explain and ns.Explain.Ground(i)
+  if why then lines[#lines + 1] = "|cffffd25a" .. why .. "|r"; Card.groundShown = i end
   -- (the legs after this one are the timeline's first rows (Card.Layout); with no rows under the card - Minimal - the
   -- one after it here)
   if headed and legs[3] and (ns.db.showNext or 3) == 0 then lines[#lines + 1] = "|cff8a93a6Next: " .. ns.Travel.LegSay(legs[2]) .. "|r" end

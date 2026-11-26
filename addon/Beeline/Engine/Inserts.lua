@@ -199,6 +199,21 @@ end
 Engine.MERGE_MAX_YARDS = 3000
 Engine.MERGE_PATH_YARDS = 600
 Engine.FP_DETOUR_YARDS = 600
+-- a side trip that takes a group: an attunement or a dungeon key - a "Run <dungeon>" step or work done inside one, as
+-- a dungeon trip's (tools/special-routes.js). Its quests are the trip's alone: never folded into your path or another
+-- trip, and on your plan's card only once you pick it (Blackhand's Command and Attunement to the Core were added on
+-- the way through Searing Gorge at 55, Dragonkin Menace and Dark Iron Legacy through the Burning Steppes - gate sweep)
+function Engine.GroupTrip(r)
+  if not r then return false end
+  if r.dungeon and not r.special then return true end
+  if r.group == "attune" or r.group == "key" then return true end
+  if r._groupTrip == nil then
+    local g = false
+    for _, s in ipairs(ns.Steps(r) or {}) do if Engine.RunDungeon(s) or Engine.InsideOf(s) then g = true; break end end
+    r._groupTrip = g
+  end
+  return r._groupTrip
+end
 function Engine.MergeSideTrips()
   local d = BeelineData
   -- the flag lives on the step list: switching to the trip again unpacks a fresh list, which needs merging again
@@ -215,7 +230,7 @@ function Engine.MergeSideTrips()
   end
   index()
   for _, r in ipairs(ns.DungeonRoutes()) do
-    if r.special and r.id ~= d.id and (UnitLevel("player") or 1) >= (tonumber(r.needsLevel) or 1) then
+    if r.special and r.id ~= d.id and (UnitLevel("player") or 1) >= (tonumber(r.needsLevel) or 1) and not Engine.GroupTrip(r) then
       local minI = Engine.current or 1
       local rsteps = ns.Steps(r)
       for _, s in ipairs(rsteps) do
@@ -359,6 +374,20 @@ local function applyInserts()
   end
   return added
 end
-Engine.ApplyInserts = applyInserts
-ns.On("FR_STATE", function() if applyInserts() then Engine.Refresh() end end)
+-- The hand-ins are fitted to the log as State last read it (State.logGen): insGen is the generation they were fitted
+-- to (nil until the login's or a route change's pass has run them on this route). A refresh that comes before the
+-- log's FR_STATE - a quest with nothing to do, taken this moment, is finished at once - fits them first (Engine.Refresh-
+-- Inner: Engine.InsertsDue), so the solve never picks with a finished quest's hand-in missing; FR_STATE then skips
+-- that change. (Wine Shop Advert, taken in Stormwind at level 5: the next solve ran before its hand-in was in and the
+-- card sent a night elf to Teldrassil, then back a moment later.)
+local insGen, early = nil, false
+Engine.ApplyInserts = function() insGen, early = ns.State.logGen, false; return applyInserts() end
+function Engine.InsertsDue() return insGen ~= nil and insGen ~= ns.State.logGen end
+function Engine.InsertsNow() insGen, early = ns.State.logGen, true; return applyInserts() end
+ns.On("FR_ROUTE_CHANGED", function() insGen, early = nil, false end)
+ns.On("FR_STATE", function()
+  if early and insGen == ns.State.logGen then early = false; return end -- (this change: fitted by the refresh before)
+  insGen, early = ns.State.logGen, false
+  if applyInserts() then Engine.Refresh() end
+end)
 -- (and after a login or a route change: Engine.PASSES)

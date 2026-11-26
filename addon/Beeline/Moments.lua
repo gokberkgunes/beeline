@@ -194,6 +194,14 @@ function Moments.CheckStep(i)
   return nil
 end
 
+-- Sent out of town past a pick-up the plan has here (step j): does a player feel it? -> hard, why
+--   on your way out: its giver within Next.PF_WALK_YD of the straight way from you to the card's step - you walk past it
+--   (tools/feel.js's walk-past: within 40 yd);
+--   a return: no later step of this visit (until the plan's next flight, hearth or boat) is within Next.HERE_YD of it -
+--   the plan sends you back here for it.
+-- Otherwise it is picked up later on the way back through town: a note, no return. The card's own rule asks the same
+-- (Next.TownPickupNeeded in Next.PickupFirst).
+function Moments.HeadsOutKind(i, j) return ns.Next.TownPickupNeeded(i, j) end
 -- sent out while the plan picks up a quest here -> tag, why (as tools/replay.js's HEADS-OUT and the rule the card
 -- follows, Next.PickupFirst: from the plan's own step on, up to 60 steps, this visit only - stopping at a flight, a
 -- hearth, a boat or the first step with a known spot over 600 yd; a pick-up offered now, prerequisites and all,
@@ -218,7 +226,9 @@ function Moments.CheckHeadsOut(i)
     if j > from and t.m and not t.unknown and (not y or y < 0 or y > FAR) then break end
     if j ~= i and t.k == "accept" and t.q and E.Status(j) == "todo" and (not E.Available or E.Available(j)) and not (ns.Avail and ns.Avail.Unavailable(t.q))
       and not (ns.Nope and ns.Nope(t.q)) and not (E.Outlevelled and E.Outlevelled(t)) and y and y >= 0 and y <= NEAR then
-      return "heads-out", string.format("sends you out (%s %s) while %s is picked up here, %d yd", tostring(s.k), tostring(s.name or s.text or ""), tostring(t.name or "?"), math.floor(y))
+      local hard, why = Moments.HeadsOutKind(i, j)
+      if not hard then return nil end
+      return "heads-out", string.format("sends you out (%s %s) while %s is picked up here, %d yd: %s", tostring(s.k), tostring(s.name or s.text or ""), tostring(t.name or "?"), math.floor(y), why)
     end
   end
   return nil

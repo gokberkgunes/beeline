@@ -128,7 +128,7 @@ end
 local function buildBar()
   local b = Style.CardBar("BeelineNewsBar", 1, C.gold, function() News.Dismiss() end, "Dismiss")
   if not b then return nil end
-  Style.CardBarButton(b, "What's new", 80, function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(ns.db.newsSeen) end end, "What changed since your last version")
+  b.go = Style.CardBarButton(b, "What's new", 80, function() if ns.Options and ns.Options.Open then ns.Options.Open("news") else News.Show(ns.db.newsSeen) end end, "What changed since your last version")
   News.bar = b
   return b
 end

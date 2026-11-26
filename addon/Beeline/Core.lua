@@ -13,7 +13,7 @@ ns.DEFAULTS = {
   pins = true,
   pinCount = 4,          -- current + next N-1 on the maps
   miniPin = true,        -- the card step's pin on the minimap (off: the game's own marker, with its above/below arrow, shows alone)
-  miniPinScale = 1.0,    -- its size
+  miniPinScale = 0.5,    -- its size (small: the game's own marker and its above/below arrow show)
   pathLine = true,       -- dotted walking path on the world map and minimap
   trails = true,         -- record where you walk in the capital cities (improves city paths)
   locked = false,
@@ -372,6 +372,8 @@ ns.On("ADDON_LOADED", function(name)
   ns.Style.UseSkin(ns.db.skin) -- (before any frame is built: FR_LOADED builds the card)
   -- combat fade used to default on: off once for everyone (anyone can turn it back on)
   if not ns.db.combatFadeReset then ns.db.combatFade = false; ns.db.combatFadeReset = true end
+  -- the minimap marker's size used to default to 1.0: still on that old default, moved to the new one once
+  if not ns.db.miniPinReset then if ns.db.miniPinScale == 1 then ns.db.miniPinScale = ns.DEFAULTS.miniPinScale end; ns.db.miniPinReset = true end
   ns.char = BeelineChar
   ns.char.perf = nil -- (a logout record nothing read: out of the save)
   -- stay on the path you were on; nothing switches unless you choose (the zone you asked for is the one exception)

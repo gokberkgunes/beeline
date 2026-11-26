@@ -36,8 +36,12 @@ ns.DUNGEONS = {
   [2921] = "Naxxramas",
   [2959] = "City of Dalaran",
   [2970] = "The Drowned City",
+  [2974] = "Blackmaw Hold",
+  [2994] = "Alcaz Prison",
   [2998] = "Excavation Site: Wetlands",
   [2999] = "Ruins of Lordaeron",
+  [3001] = "The Shaper's Terrace",
+  [3039] = "Krol'dok Stronghold",
   [3065] = "The Hall of Thanes",
 }
 ns.DUNGEON_QUESTS = {
@@ -560,6 +564,28 @@ ns.DUNGEON_QUESTS = {
       { 97130, "Ancient Gurubashi Secrets", 34, "A", nil, "Archmage Timear, Alterac Mountains" },
     },
   },
+  [2974] = { -- Blackmaw Hold
+    ids = "92066 92343 92344 97173 97198 99187",
+    open = {
+      { 92066, "The Twin Bears", 47, nil, nil, "Lorekeeper Nok, Azshara" },
+      { 92343, "Get to the Roots of It", 45, "H", nil, "Nara Wildmane, Thunder Bluff", any = { 92345, 92346 } },
+      { 92344, "Get to the Roots of It", 45, "A", nil, "Mathrengyl Bearwalker, Darnassus", any = { 92345, 92346 } },
+      { 97173, "Blackmaw Magic", 52, "A", nil, "Archmage Timear, Alterac Mountains" },
+      { 97198, "Blackmaw Magic", 52, "H", nil, "Muln Earthfury, Mulgore" },
+      { 99187, "The Reliquary of Tyr", 50, "H", 2, "Knight of Mourning, Tirisfal Glades" },
+    },
+  },
+  [2994] = { -- Alcaz Prison
+    ids = "95262 95309 95454 96332 96334 96335 96369 96381 96772",
+    open = {
+      { 95262, "The Secret Prison", 48, "A", nil, "Sully McCleary, Dustwallow Marsh", any = { 95198 } },
+      { 95309, "No Orc Left Behind", 48, "H", nil, "Sergeant Ulka, Dustwallow Marsh", any = { 95285 } },
+      { 96332, "A Little Payback", 48, "H", nil, "Sergeant Ulka, Dustwallow Marsh", any = { 95285 } },
+      { 96334, "Blood Red Bandanas", 48, "H", nil, "Sergeant Ulka, Dustwallow Marsh", any = { 95285 } },
+      { 96381, "A Bit of Wet Work", 48, "A", nil, "Sully McCleary, Dustwallow Marsh", any = { 95198 } },
+      { 96772, "The Dragon's Journal", 46, "A", nil, "Archmage Lan'dalock, Alterac Mountains" },
+    },
+  },
   [2998] = { -- Excavation Site: Wetlands
     ids = "95664 95682 95697 95810 98815",
     open = {
@@ -578,6 +604,30 @@ ns.DUNGEON_QUESTS = {
       { 92422, "The Wrath of Rath'mael", 15, "H", nil, "Deathguard Kristof, Tirisfal Glades", any = { 99156 } },
       { 95195, "Bloodied Insignia", 15, "A", nil, "a drop inside", true },
       { 95216, "The New Plague", 15, "H", nil, "Theodore Griffs, Undercity", any = { 451 } },
+    },
+  },
+  [3001] = { -- The Shaper's Terrace
+    ids = "95790 95924 95925 95926 95928 97049",
+    open = {
+      { 95924, "Panic at the Digsite", 55, "A", nil, "Curator Thorius, Ironforge" },
+      { 95925, "Mapping the Way Forward", 55, "A", nil, "Curator Thorius, Ironforge" },
+      { 95926, "The Dark Crystal", 55, "H", nil, "Master Apothecary Faranell, Undercity" },
+      { 95928, "Crystalline Elements", 55, "H", nil, "Mayena Earthseeker, Mulgore" },
+      { 97049, "Essence of Seeping Slimes", 55, "H", nil, "Chemist Fuely, Undercity" },
+    },
+  },
+  [3039] = { -- Krol'dok Stronghold
+    ids = "94968 94969 94972 94973 94975 94980 94982 94983 94984 96771",
+    open = {
+      { 94968, "Eye of Mugg", 40, "H", nil, "Krom'rosh, Riverglades", any = { 95278 } },
+      { 94972, "Tome of Twilight", 39, "H", nil, "Tran'gul, Riverglades", any = { 95278 } },
+      { 94973, "Krol'dok Moulding", 38, "H", nil, "a drop inside", true },
+      { 94975, "A Token of Vengeance", 38, "H", nil, "Da'grosh, Riverglades", any = { 94768 } },
+      { 94980, "Krol'dok Moulding", 38, "A", nil, "a drop inside", true },
+      { 94982, "Eye of Mugg", 40, "A", nil, "Demar Brant, Riverglades" },
+      { 94983, "Twilight Mementos", 38, "A", nil, "Sergeant Riftan, Riverglades", any = { 94890 } },
+      { 94984, "Tome of Twilight", 39, "A", nil, "Ashe Amberhall, Riverglades", any = { 94907 } },
+      { 96771, "Vengeance of the Highborne", 37, "A", nil, "Ranath Nightstride, Alterac Mountains" },
     },
   },
   [3065] = { -- The Hall of Thanes

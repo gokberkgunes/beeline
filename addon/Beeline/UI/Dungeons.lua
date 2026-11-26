@@ -41,7 +41,7 @@ local function card(k)
   c.name = Style.Text(c, 13, C.text, "OUTLINE"); c.name:SetPoint("TOPLEFT", 14, -10); c.name:SetWordWrap(false)
   c.cur = Style.Pill(c, "FOLLOWING", C.gold)
   c.quick = Style.Pill(c, "QUICK", C.good)
-  c.special = Style.Pill(c, "SPECIAL REWARD", C.gold)
+  c.special = Style.Pill(c, "SPECIAL REWARD", C.gold) -- (its text: the trip's group, Dungeons.GROUPS)
   c.time = Style.Text(c, 12, C.gold); c.time:SetPoint("TOPRIGHT", -14, -11); c.time:SetJustifyH("RIGHT")
   c.lvl = Style.Text(c, 10, C.sub); c.lvl:SetPoint("TOPLEFT", c.name, "BOTTOMLEFT", 0, -5); c.lvl:SetWordWrap(true); c.lvl:SetWidth(W - 150) -- clear of the button
   c.quests = Style.Text(c, 10, C.dim); c.quests:SetPoint("TOPLEFT", c.lvl, "BOTTOMLEFT", 0, -4); c.quests:SetWidth(W - 160)
@@ -86,9 +86,11 @@ function Dungeons.Draw()
   end
   local lastKind
   for k, r in ipairs(list) do
-    local kind = r.special and "special" or "dungeon"
-    if kind ~= lastKind then head(kind, kind == "dungeon" and "Dungeons" or "Special rewards"); lastKind = kind end
+    local g = r.special and Dungeons.Group(r) or nil
+    local kind = g and g.key or "dungeon"
+    if kind ~= lastKind then head(kind, g and g.head or "Dungeons"); lastKind = kind end
     local c = card(k)
+    if g then c.special:Set(g.pill) end
     c.route = r
     local isCur = (BeelineData == r)
     local zc = Style.ZoneColor(r.dungeonName or r.title)
@@ -139,6 +141,17 @@ end
 -- Returns the list, how many were left out as done, how many dungeons more "all" would list, and each listed route's
 -- progress ({ done, total, in your log }).
 local SHOWN = 6
+-- the side trips that aren't dungeons, by what they get you (the plan's group = ..., tools/reviewed-<faction>.json), in
+-- the window's order: a heading and a tag each
+Dungeons.GROUPS = {
+  { key = "class", head = "Class quests", pill = "CLASS QUEST" },
+  { key = "attune", head = "Attunements", pill = "ATTUNEMENT" },
+  { key = "key", head = "Dungeon keys", pill = "DUNGEON KEY" },
+  { key = "reward", head = "Special rewards", pill = "SPECIAL REWARD" },
+}
+local groupBy = {}; for i, g in ipairs(Dungeons.GROUPS) do g.order = i; groupBy[g.key] = g end
+-- (a plan from before trips had a group: special rewards, as they all were)
+function Dungeons.Group(r) return groupBy[r.group] or groupBy.reward end
 function Dungeons.List(level, all)
   level = level or (UnitLevel and UnitLevel("player")) or 1
   -- 0: around your level (from 4 below to 4 above), 1: above it, 2: below it (gray to you: little XP)
@@ -168,6 +181,9 @@ function Dungeons.List(level, all)
     if qa ~= qb then if ba == 2 then return qa > qb end return qa < qb end
     return (a.dungeonName or a.title or "") < (b.dungeonName or b.title or "")
   end)
+  -- (by group, each in the plan's own order)
+  local at = {}; for i, r in ipairs(spec) do at[r] = i end
+  table.sort(spec, function(a, b) local ga, gb = Dungeons.Group(a).order, Dungeons.Group(b).order; if ga ~= gb then return ga < gb end return at[a] < at[b] end)
   for _, r in ipairs(spec) do dung[#dung + 1] = r end
   return dung, finished, more, prog
 end

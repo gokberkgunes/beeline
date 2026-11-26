@@ -166,7 +166,9 @@ local function build()
     end
     lastX, lastY, lastInst = px, py, pinst
     focusAcc = (focusAcc or 0) + el
-    if focusAcc >= 1 then focusAcc = 0; ns.Engine.UpdateFocus(px, py, pinst) end
+    -- (a refresh this look or arriving asks for runs once, after it, with its solve in the background (Engine.Coalesce):
+    -- solved here, in the arrow's frame, a kill hold running out or a step reached was a 30-60 ms hitch)
+    if focusAcc >= 1 then focusAcc = 0; ns.Engine.Coalesce(ns.Engine.UpdateFocus, nil, px, py, pinst) end
     if not target then return end
     if not (px and target.wx) or pinst ~= target.winst then
       if f:IsShown() then
@@ -250,7 +252,7 @@ local function build()
     if arrived ~= target.arrived then
       target.arrived = arrived
       local t = target
-      if arrived and not t.corpse then ns.Engine.Arrived(t.index) end
+      if arrived and not t.corpse then ns.Engine.Coalesce(ns.Engine.Arrived, nil, t.index) end
       if not t.corpse then ns.Fire("FR_ARRIVED", t.index, arrived) end
       if target ~= t then return end -- arriving ticked the step: the next one has its own target now (or none)
       if f:IsShown() then

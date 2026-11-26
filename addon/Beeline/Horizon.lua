@@ -82,7 +82,7 @@ function Horizon.Solve(P)
   local ANCHOR = n + 1
   -- travel, memoised by index (0: the start, n+1: the anchor)
   local tmemo = {}
-  local function place(i) if i == 0 then return P.start elseif i == ANCHOR then return P.anchor else return stops[i] end end
+  local function place(i) if i == 0 then return P.start elseif i == ANCHOR then return P.anchor elseif i == n + 2 then return P.clock.ex else return stops[i] end end
   local function trip(i, j)
     if j == ANCHOR and P.anchor == nil then return 0 end
     local k = i * 4096 + j
@@ -124,7 +124,35 @@ function Horizon.Solve(P)
       if can(pending[k]) then take(table.remove(pending, k)); tnp = tnp - 1; k = 1 else k = k + 1 end
     end
   end
+  -- With the plan's clock (P.clock, from the plan's own dt / dd: tools/plan-clock.js), the rest is the plan's own time
+  -- from where you rejoin it: its first stop not done (r: a planned stop of the window, or the first of the plan's stops
+  -- the window left out - P.clock.ex, work of a quest not picked up yet, a pick-up with no room), the way to it, and the
+  -- plan from there to the anchor (stop.R / ex.R: its clock, less what is already done), less what each stop the
+  -- window did past r saves the plan (stop.save: its detour there and itself). Every step of the plan past r counts,
+  -- in the window or not - the window's stops are only the ones the solve may reorder.
+  local CK = P.clock
+  local EX = n + 2
+  local ex1 = CK and CK.ex
+  local function tailClock(mask, last)
+    local r
+    for x = 1, np0 do local j = planned[x]; if (mask % bit2[j]) < bit[j] then r = j; break end end
+    local rs, rplan
+    if ex1 and (not r or ex1.plan < stops[r].plan) then rs, rplan = EX, ex1.plan else rs = r; rplan = r and stops[r].plan end
+    if not rs then return trip(last, ANCHOR) + (CK.anchorService or 0) end
+    local v = trip(last, rs)
+    if v == huge then return huge end
+    local R = rs == EX and ex1 or stops[rs]
+    v = v + (R.service or 0) + (R.R or 0)
+    for x = np0, 1, -1 do
+      local j = planned[x]
+      local sj = stops[j]
+      if sj.plan <= rplan then break end
+      if (mask % bit2[j]) >= bit[j] then v = v - (sj.save or 0) end
+    end
+    return v
+  end
   local function tail(mask, last, load, order)
+    if CK and not order then return tailClock(mask, last) end
     tt, tat, tm, tld, torder, tnp = 0, last, mask, load, order, 0
     for x = 1, np0 do
       local j = planned[x]
@@ -239,12 +267,26 @@ function Horizon.Solve(P)
   end
   local chosen = #order
   tail(best.mask, best.last, best.load, order)
+  -- (with the clock the tail isn't played out to score: planned stops the plan-order pass couldn't fit follow in plan
+  -- order)
+  if CK then
+    local inOrder = {}
+    for _, i in ipairs(order) do inOrder[i] = true end
+    for x = 1, np0 do local j = planned[x]; if not inOrder[j] then order[#order + 1] = j end end
+  end
   local seq = {}
   for q, i in ipairs(order) do seq[q] = stops[i] end
   -- the stops left out (prizes not worth it now): for the card's "later" line
   local inSeq, skipped = {}, {}
   for _, i in ipairs(order) do inSeq[i] = true end
   for i, s in ipairs(stops) do if not inSeq[i] then skipped[#skipped + 1] = s end end
+  -- (with the clock, nothing chosen and the plan going on at a step the window left out, before its own planned
+  -- stops: the plan's own way is best - no stop of the window comes first; hold = true, first = nil)
+  if CK and ex1 and chosen == 0 then
+    local r
+    for x = 1, np0 do local j = planned[x]; if (best.mask % bit2[j]) < bit[j] then r = j; break end end
+    if not r or ex1.plan < stops[r].plan then return { seq = seq, score = bestScore, first = nil, hold = true, chosen = 0, skipped = skipped } end
+  end
   return { seq = seq, score = bestScore, first = seq[1], chosen = chosen, skipped = skipped }
 end
 

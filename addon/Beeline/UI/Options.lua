@@ -260,7 +260,7 @@ function BUILD.map(p)
   slider(p, "Steps pinned", "pinCount", 1, 8, 1, "%d", 4, "pins", "pins map minimap")
   toggle(p, "Walking path", "pathLine")
   toggle(p, "Minimap marker", "miniPin", "Off: only the game's marker, with its above/below arrow.")
-  slider(p, "Minimap marker size", "miniPinScale", 0.5, 1.5, 0.05, nil, 1, "miniPin", "minimap marker pin size smaller bigger hide")
+  slider(p, "Minimap marker size", "miniPinScale", 0.5, 1.5, 0.05, nil, 0.5, "miniPin", "minimap marker pin size smaller bigger hide")
 end
 
 function BUILD.size(p)
