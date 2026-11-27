@@ -43,6 +43,40 @@ local function world(m, x, y)
 end
 local mapName = ns.Util.MapName
 local function d(a, b) return math.sqrt((a.w[1] - b.w[1]) ^ 2 + (a.w[2] - b.w[2]) ^ 2) end
+-- the walk to a key point of your map beyond its straight line x OFFNET, from the cell of the map you stand in
+-- (Travel.NET.walkEx, tools/offnet.js: per map a G x G grid, per key point the least excess of any walkable spot in the
+-- cell; only big ones kept). Across a mountain the line is far too short: in Blasted Lands by Nethergarde the crossing
+-- on the ridge (x4-8-45) is 394 yd away in a line and 850 on foot (round through the Swamp of Sorrows), and the trip
+-- went that way instead of up the pass (x4-8-44, 379 yd). Decoded per key point on first use.
+local exNet, exMaps
+local B64 = {}
+do local A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; for i = 1, 64 do B64[A:byte(i)] = i - 1 end end
+local function walkEx(m, x, y, id)
+  local X = Travel.NET and Travel.NET.walkEx
+  if not (X and x and y) then return 0 end
+  if exNet ~= Travel.NET then exNet, exMaps = Travel.NET, {} end
+  local byId = exMaps[m]
+  if byId == nil then byId = (X.maps and X.maps[m]) and {} or false; exMaps[m] = byId end
+  if not byId then return 0 end
+  local cells = byId[id]
+  if cells == nil then
+    local s = X.maps[m][id]
+    cells = false
+    if s then
+      cells = {}
+      local unit = X.UNIT or 32
+      for i = 1, #s - 2, 3 do cells[B64[s:byte(i)] * 64 + B64[s:byte(i + 1)]] = B64[s:byte(i + 2)] * unit end
+    end
+    byId[id] = cells
+  end
+  if not cells then return 0 end
+  local G = X.G or 32
+  local cx, cy = math.floor(x * G), math.floor(y * G)
+  if cx < 0 or cy < 0 or cx >= G or cy >= G then return 0 end
+  return cells[cy * G + cx] or 0
+end
+-- yards to walk from p (on its own map) to key point n of that map: the straight line x OFFNET, plus the excess above
+local function joinYd(p, n) return d(p, n) * Travel.OFFNET + walkEx(p.m, p.x, p.y, n.id) end
 -- the other faction's towns and camps (TravelData HOSTILE, from tools/hostile-towns.json): a ride through one costs
 -- HOSTILE_SEC more - guards, players, a detour. Possible (fine for PvP), just trouble.
 Travel.HOSTILE, Travel.HOSTILE_SEC = TD.HOSTILE or {}, TD.HOSTILE_SEC or 0
@@ -381,7 +415,12 @@ local function buildGraph(ground, lvl, side, myRace, myClass, learned, here)
   local nodes = net()
   if camps.borderNet ~= nodes then
     local cb = {}
-    for _, n in ipairs(nodes) do if n.kind == "cross" and not inCamp(n) then cb[border(n)] = true end end
+    -- (a crossing whose walk from its zone's town goes by another one and through the other zone - NET.walkEx.via,
+    -- tools/offnet.js - is no way clear of that one's camp: Blasted Lands' ridge crossing into the Swamp of Sorrows is
+    -- reached up the pass by Stonard, and an Alliance player by Nethergarde was sent over the ridge to it)
+    local V = Travel.NET and Travel.NET.walkEx and Travel.NET.walkEx.via
+    local function byAnother(n) return V and ((V[n.m] and V[n.m][n.id]) or (n.m2 and V[n.m2] and V[n.m2][n.id])) end
+    for _, n in ipairs(nodes) do if n.kind == "cross" and not inCamp(n) and not byAnother(n) then cb[border(n)] = true end end
     for _, g in ipairs(gates) do cb[border({ m = g.a, m2 = g.b })] = true end -- (a gate of your side: the breach past Mor'shan Rampart)
     camps.clearBorder, camps.borderNet = cb, nodes
   end
@@ -543,7 +582,7 @@ local function planTrip(from, to, opts, G)
         -- the danger rule holds where you join and leave the network too (a town walk is fine anywhere)
         local H = G.here
         if ok and d(p, n) > Travel.TOWN_WALK and ((risky(n.m) and n.m ~= H) or (risky(p.m) and p.m ~= H) or ((n.m == H or p.m == H) and d(p, n) > Travel.DANGER_HERE_YD)) then ok = false end
-        if ok then edge(e, v, d(p, n) * Travel.OFFNET / Travel.Speed() * ((G.here and (n.m == G.here or p.m == G.here)) and Travel.DANGER_HERE or 1), "ride") end
+        if ok then edge(e, v, joinYd(p, n) / Travel.Speed() * ((G.here and (n.m == G.here or p.m == G.here)) and Travel.DANGER_HERE or 1), "ride") end
       end
     end
   end
@@ -569,7 +608,7 @@ local function planTrip(from, to, opts, G)
       for v = 3, #N - 1 do
         if v % 32 == 0 then ns.MaybeYield() end
         local n = N[v]
-        if n.w[3] == w[3] and (n.m == inn.m or n.m2 == inn.m) then edge(h, v, d(N[h], n) * Travel.OFFNET / Travel.Speed(), "ride") end
+        if n.w[3] == w[3] and (n.m == inn.m or n.m2 == inn.m) then edge(h, v, joinYd(N[h], n) / Travel.Speed(), "ride") end
       end
       if N[2].w[3] == w[3] and N[2].m == inn.m then edge(h, 2, d(N[h], N[2]) * Travel.OFFNET / Travel.Speed(), "ride") end
     end

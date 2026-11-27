@@ -108,6 +108,11 @@ function LogCheck.Classify()
     if not i and path ~= here then i, planLvl = findIn(path, e.id); where = path end
     local inDungeon = false
     if not i then dungeons = dungeons or ns.DungeonRoutes(); for _, r in ipairs(dungeons) do if ns.QuestIds(r)[e.id] then inDungeon = r.dungeonName; break end end end
+    -- (a quest done in a dungeon is that dungeon's, not "off-route", even when no trip of this plan carries it - Into
+    -- the Depths and Secret of the Circle were "off-route" on a Sunken Temple run: the trip had left them out)
+    if not i and not inDungeon and ns.Dungeon and ns.Dungeon.OfQuest then
+      local d = ns.Dungeon.OfQuest(e.id); if d then inDungeon = (ns.DUNGEONS and ns.DUNGEONS[d]) or "a dungeon" end
+    end
     local verdict, why
     local keep = keepReason(e)
     local gray, via = grayRule(e, myLevel)

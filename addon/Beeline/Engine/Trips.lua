@@ -155,6 +155,8 @@ function Engine.TravelForUncached(s)
       tm, tx, ty, tname = s.to, (st and st.x) or (fm and fm[1]) or 0.5, (st and st.y) or (fm and fm[2]) or 0.5, s.dest or s.text
       tstop = st and st.npc
     elseif s.m and s.x then tm, tx, ty, tname, tstop = s.m, s.x, s.y, s.zone, s.npc end
+    -- (a stop added to the route has no zone name: its map's - the why read "to another continent" for a hand-in in Ironforge)
+    if tm and not tname then local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(tm); tname = info and info.name or nil end
     if tm then
       local a1, a2, ai = HBD:GetWorldCoordinatesFromZone(px, py, pm)
       local b1, b2, bi = HBD:GetWorldCoordinatesFromZone(tx, ty, tm)
